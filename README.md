@@ -1,5 +1,5 @@
 # Flow
-The Flow language is a 3D visual dataflow language, which was built to compliment Newbound's support of Java and Python for server-side commands in the Newbound runtime. This repository contains a port of the flow language interpreter from the original Java, Python and Javascript versions included with Newbound.
+The Flow language is a 3D visual dataflow language, which was built to compliment Newbound's support of Java and Python for server-side commands, and Javascript on the front-end, in the Newbound runtime. This repository contains a port of the flow language interpreter from the original Java, Python and Javascript versions included with Newbound.
 
 Java: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/Code.java
 
