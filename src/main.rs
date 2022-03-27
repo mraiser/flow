@@ -13,8 +13,8 @@ fn main() {
   let path = Path::new("data");
   let store = DataStore::new(path.to_path_buf());
 	let data = store.get_data("test", "qkjown179091cc94fz1a");
-	let codeval = data["data"]["flow"].to_owned();
-  let code = Code::new(codeval);
+	let codeval = data["data"]["flow"].to_string();
+  let code = Code::new(&codeval).unwrap();
   
   let argstr = r#"
   {

@@ -68,17 +68,16 @@ pub struct Dest {
 }
 
 impl Code {
-  pub fn new(data: Value) -> Code {
-    let s = data.to_string();
-    let c: Code = serde_json::from_str(&s).unwrap();
-    c
+  pub fn new(data: &str) -> Result<Code> {
+    let c: Code = serde_json::from_str(data)?;
+    Ok(c)
   }
 
-  pub fn execute(mut self, args: Value) -> Value {
+  pub fn execute(mut self, args: Value) -> Result<Value> {
     let mut done = false;
     let mut out = json!({});
     
-    let mut current_case = &mut self;
+    let current_case = &mut self;
     
     while !done {
       let cmds = &mut current_case.cmds;
@@ -176,7 +175,7 @@ impl Code {
       }
     }
     // FIXME - Add NextCaseException and TerminateCaseException
-    out
+    Ok(out)
   }
 }
   
@@ -197,7 +196,7 @@ fn lookup_con<'m>(cons: &'m Vec<Connection>, key: &str, which: &str) -> Option<&
   None
 }
 
-fn evaluate<'m>(cmd: &'m mut Command) {
+fn evaluate(cmd: &mut Command) {
   let mut in1 = json!({});
   let in2 = &cmd.cmd_in;
   let mut list_in:Vec<String> = Vec::new();
@@ -243,9 +242,9 @@ fn evaluate_operation(cmd:&mut Command, in1:Value) {
     out = p.execute(in1);
   }
   else if cmd.cmd_type == "local" {
-    let src = cmd.localdata.as_ref().unwrap().to_owned();
-    let code = Code::new(src);
-    out = code.execute(in1);
+    let src = &cmd.localdata.as_ref().unwrap();
+    let code = Code::new(&src.to_string()).unwrap();
+    out = code.execute(in1).unwrap();
   }
   else if cmd.cmd_type == "constant" {
     for (key, _valmeta) in &cmd.out {
