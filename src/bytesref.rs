@@ -72,7 +72,7 @@ impl BytesRef {
 
   pub fn from_f64(val:f64) -> BytesRef {
     let i1:i32 = val as i32;
-    let i2:i32 = i32::MAX * ((val - (i1 as f64)) as i32);
+    let i2:i32 = (f32::MAX as f64 * (val - (i1 as f64))) as i32;
     let mut bytes = BytesRef::i32_to_bytes(i1);
     bytes.append(&mut BytesRef::i32_to_bytes(i2));
     HEAP.lock().unwrap().push(bytes)
