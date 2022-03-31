@@ -1,15 +1,17 @@
+use std::collections::HashMap;
 use once_cell::sync::Lazy; // 1.3.1
 use std::sync::Mutex;
 
 use crate::heap::*;
+use crate::dataproperty::*;
 
 static HEAP: Lazy<Mutex<Heap>> = Lazy::new(|| Mutex::new(Heap::new()));
 
 #[derive(Debug)]
 pub struct BytesRef {
-  byte_ref: usize,
-  off: usize,
-  len:usize,
+  pub byte_ref: usize,
+  pub off: usize,
+  pub len:usize,
 }
 
 impl BytesRef {
@@ -27,6 +29,39 @@ impl BytesRef {
 //    let ba = heap.push(bytes);
 //    println!("PUSH {:?}", &heap);
 //    ba
+  }
+      
+  pub fn get(index:usize, off: usize, len: usize) -> BytesRef {
+    HEAP.lock().unwrap().child(index, off, len)
+  }
+  
+  pub fn to_handle(&self) -> BytesRef {
+    self.incr();
+    let mut bytes = Vec::<u8>::new();
+    bytes.append(&mut BytesRef::i64_to_bytes(self.byte_ref as i64));
+    bytes.append(&mut BytesRef::i64_to_bytes(self.off as i64));
+    bytes.append(&mut BytesRef::i64_to_bytes(self.len as i64));
+    BytesRef::push(bytes)
+  }
+
+  pub fn from_handle(&mut self) -> BytesRef {
+    let bytes = self.get_bytes();
+    let byte_ref: usize = BytesRef::bytes_to_i64(&bytes, 0) as usize;
+    let off: usize = BytesRef::bytes_to_i64(&bytes, 8) as usize;
+    let len: usize = BytesRef::bytes_to_i64(&bytes, 16) as usize;
+    BytesRef::get(byte_ref, off, len)
+  }
+
+  pub fn release_handle(&mut self) {
+    self.from_handle().decr();
+  }
+        
+  pub fn child(&mut self, off: usize, len: usize) -> BytesRef {
+    HEAP.lock().unwrap().child(self.byte_ref, self.off + off, len)
+  }
+  
+  pub fn duplicate(&mut self) -> BytesRef {
+    HEAP.lock().unwrap().child(self.byte_ref, self.off, self.len)
   }
   
   pub fn lookup_prop(name: &str) -> usize {
@@ -48,7 +83,7 @@ impl BytesRef {
     HEAP.lock().unwrap().push(bytes)
   }
 
-  pub fn from_i64(val:i64) -> BytesRef {
+  pub fn i64_to_bytes(val:i64) -> Vec<u8> {
     let mut bytes: Vec<u8> = Vec::<u8>::new();
     let mut i = 0;
     while i<8 {
@@ -56,6 +91,11 @@ impl BytesRef {
       bytes.push(((val >> shift) & 0xFF) as u8);
       i = i + 1;
     }
+    bytes
+  }
+  
+  pub fn from_i64(val:i64) -> BytesRef {
+    let mut bytes: Vec<u8> = BytesRef::i64_to_bytes(val);
     HEAP.lock().unwrap().push(bytes)
   }
   
@@ -77,14 +117,6 @@ impl BytesRef {
     bytes.append(&mut BytesRef::i32_to_bytes(i2));
     HEAP.lock().unwrap().push(bytes)
   }
-      
-  pub fn child(&mut self, off: usize, len: usize) -> BytesRef {
-    HEAP.lock().unwrap().child(self.byte_ref, self.off + off, len)
-  }
-  
-  pub fn duplicate(&mut self) -> BytesRef {
-    HEAP.lock().unwrap().child(self.byte_ref, self.off, self.len)
-  }
   
   pub fn as_i32(&self) -> i32{
     let bytes = self.get_bytes();
@@ -98,16 +130,60 @@ impl BytesRef {
     val
   }
   
-  pub fn as_i64(&self) -> i64{
-    let bytes = self.get_bytes();
+  pub fn bytes_to_i64(bytes:&Vec<u8>, off:usize) -> i64{
     let mut i = 0;
     let mut val:i64 = 0;
     while i<8 {
       let shift = (7 - i) * 8;
-      val += ((bytes[i + self.off] as i64) & 0xFF) << shift;
+      val += ((bytes[i + off] as i64) & 0xFF) << shift;
       i = i + 1;
     }
     val
+  }
+
+  pub fn as_i64(&self) -> i64{
+    let bytes = self.get_bytes();
+    BytesRef::bytes_to_i64(&bytes, self.off)
+  }
+
+  pub fn bytes_to_properties(bytes:Vec<u8>, off:usize, len:usize) -> HashMap<usize, DataProperty>{
+    let mut map: HashMap<usize, DataProperty> = HashMap::new();
+    let n = len - off;
+    let mut i = off;
+    while i<n {
+      let mut dp:DataProperty = DataProperty::from_bytes(&bytes, i);
+      map.insert(dp.id, dp);
+      i = i + PROPERTY_SIZE as usize;
+    }
+    map
+  }  
+  
+  pub fn as_properties(&self) -> HashMap<usize, DataProperty>{
+    BytesRef::bytes_to_properties(self.get_bytes(), self.off, self.len)
+  }  
+  
+  pub fn properties_to_bytes(props: HashMap<usize, DataProperty>) -> Vec<u8> {
+    let mut bytes: Vec<u8> = Vec::new();
+    for (key, val) in props {
+      bytes.append(&mut val.to_bytes());
+    }
+    bytes
+  }
+  
+  pub fn incr(&self) {
+    HEAP.lock().unwrap().incr(self.byte_ref);
+  }
+  
+  pub fn decr(&self) {
+    HEAP.lock().unwrap().decr(self.byte_ref);
+  }
+  
+  pub fn swap_handle_pointer(&self, bytes:Vec<u8>) {
+    HEAP.lock().unwrap().swap(self.byte_ref, bytes);
+  }
+  
+  pub fn print_heap() {
+    println!("{:?}", HEAP);
   }
   
   fn get_bytes(&self) -> Vec<u8> {
@@ -117,7 +193,7 @@ impl BytesRef {
 
 impl Drop for BytesRef {
   fn drop(&mut self) {
-    HEAP.lock().unwrap().drop_ref(self.byte_ref);
+    HEAP.lock().unwrap().decr(self.byte_ref);
 //    let mut heap = HEAP.lock().unwrap();
 //    heap.drop_ref(self.byte_ref);
 //    println!("DROP {:?}", &heap);

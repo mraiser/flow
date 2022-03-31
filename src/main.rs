@@ -24,6 +24,18 @@ use dataobject::*;
 
 fn main() {
   if true {
+    let argstr = r#"
+    {
+      "a": 299,
+      "b": 121
+    }
+    "#;
+    let args: Value = serde_json::from_str(argstr).unwrap();
+    let o = DataObject::from_json(args);
+
+    BytesRef::print_heap();
+  }
+  else if true {
     let path = Path::new("data");
     let store = DataStore::new(path.to_path_buf());
     let data = store.get_data("test", "qkjown179091cc94fz1a");
@@ -43,6 +55,8 @@ fn main() {
     
     let o = DataObject::from_json(data);
     println!("Hello, my dudes! {:?}", o);
+
+    BytesRef::print_heap();
   }
   else {
     let mut bytes = Vec::<u8>::new();
@@ -71,4 +85,6 @@ fn main() {
    let mut ba1 = BytesRef::push(Vec::<u8>::new());
    //println!("YO {:?}", &heap);
   }
+  
+  BytesRef::print_heap();
 }

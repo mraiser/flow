@@ -33,18 +33,31 @@ impl Heap {
   pub fn child(&mut self, index: usize, off: usize, len: usize) -> BytesRef {
     let c = self.count[&index] + 1;
     self.count.insert(index, c);
+    println!("c New count for {}: {}", index, c);
     BytesRef::new(index, off, len)
   }
   
-  pub fn drop_ref(&mut self, index: usize) {
+  pub fn incr(&mut self, index:usize) {
+    let c = self.count[&index];
+    self.count.insert(index, c+1);
+    println!("+ New count for {}: {}", index, c+1);
+  }
+  
+  pub fn decr(&mut self, index: usize) {
     let c = self.count[&index];
     if c == 1 {
       self.data.remove(&index);
       self.count.remove(&index);
+      println!("Removing {}", index);
     }
     else {
       self.count.insert(index, c-1);
+      println!("- New count for {}: {}", index, c-1);
     }
+  }
+  
+  pub fn swap(&mut self, index:usize, bytes:Vec<u8>) {
+    self.data.insert(index, bytes);
   }
   
   pub fn lookup_prop_string(&self, i: usize) -> String {
