@@ -61,6 +61,11 @@ impl DataObject {
     let mut props = bytes.as_properties();
     if let Some(old) = props.insert(id, dp){
       BytesRef::get(old.byte_ref, old.off, old.len).decr();
+      if old.typ == TYPE_OBJECT { // FIXME - Need to handle lists, too
+        let mut o = DataObject {
+          byte_ref: old.byte_ref,
+        };
+      }
     }
     let nubytes = BytesRef::properties_to_bytes(props);
     let n = nubytes.len();
@@ -114,7 +119,7 @@ impl Drop for DataObject {
       //println!("Trying to drop {}", old.byte_ref);
       let mut ba = BytesRef::get(old.byte_ref, old.off, old.len);
       ba.decr();
-      if old.typ == TYPE_OBJECT {
+      if old.typ == TYPE_OBJECT { // FIXME - Need to handle lists, too
         let mut o = DataObject {
           byte_ref: ba.byte_ref,
         };
