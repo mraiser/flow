@@ -35,12 +35,17 @@ impl BytesRef {
     HEAP.lock().unwrap().child(index, off, len)
   }
   
-  pub fn to_handle(&self) -> BytesRef {
-    self.incr();
+  pub fn to_handle_bytes(&self) -> Vec<u8> {
     let mut bytes = Vec::<u8>::new();
     bytes.append(&mut BytesRef::i64_to_bytes(self.byte_ref as i64));
     bytes.append(&mut BytesRef::i64_to_bytes(self.off as i64));
     bytes.append(&mut BytesRef::i64_to_bytes(self.len as i64));
+    bytes
+  }
+
+  pub fn to_handle(&self) -> BytesRef {
+    self.incr();
+    let mut bytes = self.to_handle_bytes();
     BytesRef::push(bytes)
   }
 
@@ -52,8 +57,16 @@ impl BytesRef {
     BytesRef::get(byte_ref, off, len)
   }
 
-  pub fn release_handle(&mut self) {
-    self.from_handle().decr();
+//  pub fn release_handle(&mut self) {
+//    self.from_handle().decr();
+//  }
+  
+  pub fn swap(&self, bytes:Vec<u8>) {
+//    println!("BEFORE");
+//    BytesRef::print_heap();
+    HEAP.lock().unwrap().swap(self.byte_ref, bytes);
+//    println!("AFTER");
+//    BytesRef::print_heap();
   }
         
   pub fn child(&mut self, off: usize, len: usize) -> BytesRef {
@@ -176,10 +189,6 @@ impl BytesRef {
   
   pub fn decr(&self) {
     HEAP.lock().unwrap().decr(self.byte_ref);
-  }
-  
-  pub fn swap_handle_pointer(&self, bytes:Vec<u8>) {
-    HEAP.lock().unwrap().swap(self.byte_ref, bytes);
   }
   
   pub fn print_heap() {

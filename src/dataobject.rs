@@ -6,17 +6,17 @@ use crate::dataproperty::*;
 
 #[derive(Debug)]
 pub struct DataObject {
-  pub bytes: BytesRef,
+  pub byte_ref: usize,
 }
 
 impl DataObject {
   pub fn from_json(value:Value) -> DataObject {
-    let mut bytes: Vec<u8> = Vec::<u8>::new();
+    let mut bytes: Vec<u8> = Vec::<u8>::new(); // vec![0; 24];
     let mut ba = BytesRef::push(bytes);
     let mut ba = ba.to_handle();
-    
+    ba.incr();
     let mut o = DataObject {
-      bytes: ba,
+      byte_ref: ba.byte_ref,
     };
     
     for (key, val) in value.as_object().unwrap().iter() {
@@ -41,22 +41,33 @@ impl DataObject {
     BytesRef::lookup_prop_string(i)
   }  
 
-  pub fn bytes(&mut self) -> BytesRef {
-    let mut bytes:BytesRef = self.bytes.from_handle();
-    BytesRef::get(bytes.byte_ref, bytes.off, bytes.len)
-  }
+//  pub fn bytes(&mut self) -> BytesRef {
+//    let mut bytes:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+//    bytes.from_handle()
+    //BytesRef::get(bytes.byte_ref, bytes.off, bytes.len)
+//  }
     
   pub fn set_property(&mut self, key:&str, typ:u8, bytesref:BytesRef) {
     // FIXME - Not thread safe. Call should be synchronized
     bytesref.incr();
+
+    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+    let mut bytes = handle.from_handle();
+    
     let dp = DataProperty::new(key, typ, bytesref);
     let id = dp.id;
-    let bytes = self.bytes();
+
+    //println!("Old property list {:?}", bytes.len);    
     let mut props = bytes.as_properties();
     if let Some(old) = props.insert(id, dp){
       BytesRef::get(old.byte_ref, old.off, old.len).decr();
     }
-    bytes.swap_handle_pointer(BytesRef::properties_to_bytes(props));
+    let nubytes = BytesRef::properties_to_bytes(props);
+    let n = nubytes.len();
+    bytes.len = n;
+    //println!("New property list {:?}", nubytes.len());
+    bytes.swap(nubytes);
+    handle.swap(bytes.to_handle_bytes());
   }
   
   pub fn put_str(&mut self, key:&str, val:&str) {
@@ -81,7 +92,7 @@ impl DataObject {
   
   pub fn put_object(&mut self, key:&str, val:Value) {
     let mut o = DataObject::from_json(val);
-    let ba = o.bytes();
+    let ba = BytesRef::get(o.byte_ref, 0, 24);
     self.set_property(key, TYPE_OBJECT, ba);
   }
   
@@ -96,19 +107,20 @@ impl DataObject {
 
 impl Drop for DataObject {
   fn drop(&mut self) {
-    for (key, old) in self.bytes().as_properties().iter() {
-    
-      // FIXME - Object and list members not released properly
-      
+    let mut handle = BytesRef::get(self.byte_ref, 0, 24);
+    let mut bytes = handle.from_handle();
+    println!("Dropping data object {:?}", bytes);
+    for (key, old) in bytes.as_properties().iter() {
+      //println!("Trying to drop {}", old.byte_ref);
       let mut ba = BytesRef::get(old.byte_ref, old.off, old.len);
-//      ba.decr();
+      ba.decr();
       if old.typ == TYPE_OBJECT {
         let mut o = DataObject {
-          bytes: ba,
+          byte_ref: ba.byte_ref,
         };
       }
-//      BytesRef::get(old.byte_ref, old.off, old.len).decr();
     }
-    self.bytes.release_handle();
+    bytes.decr();
+    handle.decr();
   }
 }
