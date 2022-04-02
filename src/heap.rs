@@ -31,10 +31,15 @@ impl Heap {
   }
   
   pub fn child(&mut self, index: usize, off: usize, len: usize) -> BytesRef {
+    //println!("NEW CHILD {}", index);
     let c = self.count[&index] + 1;
     self.count.insert(index, c);
     //println!("c New count for {}: {}", index, c);
     BytesRef::new(index, off, len)
+  }
+  
+  pub fn count(&mut self, index:usize) -> usize {
+    self.count[&index]
   }
   
   pub fn incr(&mut self, index:usize) {
@@ -44,6 +49,7 @@ impl Heap {
   }
   
   pub fn decr(&mut self, index: usize) {
+    //println!("Decreasing {}", index);
     let c = self.count[&index];
     if c == 1 {
       self.data.remove(&index);

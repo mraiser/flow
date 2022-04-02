@@ -13,7 +13,7 @@ pub static TYPE_LIST:u8 = 7;
 
 pub static PROPERTY_SIZE:u8 = 33;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct DataProperty {
   pub id: usize,
   pub typ: u8,

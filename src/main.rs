@@ -23,15 +23,22 @@ mod dataobject;
 use dataobject::*;
 
 fn main() {
-  if true {
+  if false {
     let argstr = r#"
     {
       "a": 299,
-      "b": 121
+      "b": 121,
+      "c": {
+        "x": 10,
+        "y": {
+          "z": 7
+        }
+      }
     }
     "#;
     let args: Value = serde_json::from_str(argstr).unwrap();
     let o = DataObject::from_json(args);
+    println!("OK: {:?} {:?}", o.get_i64("a"), o.get_i64("b"));
 
     BytesRef::print_heap();
   }
@@ -54,9 +61,8 @@ fn main() {
     println!("Hello, my dudes! {:?}", res);
     
     let o = DataObject::from_json(data);
-    println!("Hello, my dudes! {:?}", o);
-
     BytesRef::print_heap();
+    println!("Hello, my dudes! {:?}", o);
   }
   else {
     let mut bytes = Vec::<u8>::new();

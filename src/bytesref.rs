@@ -183,6 +183,10 @@ impl BytesRef {
     bytes
   }
   
+  pub fn count(&self) -> usize {
+    HEAP.lock().unwrap().count(self.byte_ref)
+  }
+  
   pub fn incr(&self) {
     HEAP.lock().unwrap().incr(self.byte_ref);
   }
