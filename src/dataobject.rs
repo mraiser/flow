@@ -41,12 +41,6 @@ impl DataObject {
     BytesRef::lookup_prop_string(i)
   }  
 
-//  pub fn bytes(&mut self) -> BytesRef {
-//    let mut bytes:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-//    bytes.from_handle()
-    //BytesRef::get(bytes.byte_ref, bytes.off, bytes.len)
-//  }
-  
   pub fn get_property(&self, key:&str) -> DataProperty {
     let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
     let mut bytes = handle.from_handle();
@@ -71,7 +65,6 @@ impl DataObject {
     let dp = DataProperty::new(key, typ, bytesref);
     let id = dp.id;
 
-    //println!("Old property list {:?}", bytes.len);    
     let mut props = bytes.as_properties();
     if let Some(old) = props.insert(id, dp){
       BytesRef::get(old.byte_ref, old.off, old.len).decr();
@@ -84,7 +77,6 @@ impl DataObject {
     let nubytes = BytesRef::properties_to_bytes(props);
     let n = nubytes.len();
     bytes.len = n;
-    //println!("New property list {:?}", nubytes.len());
     bytes.swap(nubytes);
     handle.swap(bytes.to_handle_bytes());
   }
@@ -108,20 +100,8 @@ impl DataObject {
     let ba = BytesRef::from_f64(val);
     self.set_property(key, TYPE_FLOAT, ba);
   }
-/*  
-  fn incr_all(&self) {
-    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let mut bytes = handle.from_handle();
-    let mut props = bytes.as_properties();
-    for (key, val) in bytes.as_properties().iter() {
-      println!("Inflating {}", val.byte_ref);
-      BytesRef::get(val.byte_ref, val.off, val.len).incr();
-    }
-  }
-*/  
+
   pub fn put_object(&mut self, key:&str, o:DataObject) {
-//    let mut o = DataObject::from_json(val);
-//    o.incr_all();
     let mut handle = BytesRef::get(o.byte_ref, 0, 24);
     handle.from_handle().incr();
     self.set_property(key, TYPE_OBJECT, handle);
@@ -141,16 +121,12 @@ impl Drop for DataObject {
     let mut handle = BytesRef::get(self.byte_ref, 0, 24);
     let n = handle.count();
     let mut bytes = handle.from_handle();
-    //println!("Dropping data object {:?}, count: {}", self.byte_ref, n);
     let mut vec = Vec::<DataObject>::new();
     if n == 2 {
       for (key, old) in bytes.as_properties().iter() {
-        //println!("Trying to drop {}", old.byte_ref);
         let mut ba = BytesRef::get(old.byte_ref, old.off, old.len);
-        //ba.decr();
         if old.typ == TYPE_OBJECT { // FIXME - Need to handle lists, too
           {
-            //println!("pre-drop count for {} is {}", ba.byte_ref, ba.count());
             let mut o = DataObject {
               byte_ref: ba.byte_ref,
             };
@@ -160,9 +136,7 @@ impl Drop for DataObject {
         else { ba.decr(); }
       }
     }
-    //println!("Bye-bye handle {}", handle.byte_ref);
     handle.decr();
-    //println!("Bye-bye data {}", bytes.byte_ref);
     bytes.decr();
   }
 }
