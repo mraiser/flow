@@ -24,9 +24,9 @@ pub struct DataProperty {
 }
 
 impl DataProperty {
-  pub fn new(id: &str, typ: u8, value: BytesRef) -> DataProperty {
+  pub fn new(id: usize, typ: u8, value: BytesRef) -> DataProperty {
     DataProperty {
-      id: BytesRef::lookup_prop(id),
+      id: id,
       typ: typ,
       byte_ref: value.byte_ref,
       off: value.off,

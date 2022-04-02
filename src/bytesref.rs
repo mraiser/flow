@@ -91,13 +91,23 @@ impl BytesRef {
   }
   
   pub fn from_f64(val:f64) -> BytesRef {
-    let i1:i32 = val as i32;
-    let i2:i32 = (f32::MAX as f64 * (val - (i1 as f64))) as i32;
-    let mut bytes = i32_to_bytes(i1);
-    bytes.append(&mut i32_to_bytes(i2));
+    let mut bytes: Vec<u8> = f64_to_bytes(val);
     HEAP.lock().unwrap().push(bytes)
   }
   
+  pub fn as_string(&self) -> String {
+    let n = self.off + self.len;
+    let bytes = self.get_bytes()[self.off..n].to_vec();
+    String::from_utf8(bytes).unwrap()
+  }
+
+  pub fn as_bool(&self) -> bool {
+    let n = self.off + self.len;
+    let bytes = self.get_bytes()[self.off..n].to_vec();
+    if bytes[0] == 1 { return true; }
+    false
+  }
+
   pub fn as_i32(&self) -> i32{
     let bytes = self.get_bytes();
     let mut i = 0;
@@ -115,8 +125,17 @@ impl BytesRef {
     bytes_to_i64(&bytes, self.off)
   }
 
-  pub fn as_properties(&self) -> HashMap<usize, DataProperty>{
-    bytes_to_properties(self.get_bytes(), self.off, self.len)
+  pub fn as_f64(&self) -> f64{
+    let bytes = self.get_bytes();
+    bytes_to_f64(&bytes, self.off)
+  }
+
+  pub fn as_propertymap(&self) -> HashMap<usize, DataProperty>{
+    bytes_to_propertymap(self.get_bytes(), self.off, self.len)
+  }  
+  
+  pub fn as_propertyvec(&self) -> Vec<DataProperty>{
+    bytes_to_propertyvec(self.get_bytes(), self.off, self.len)
   }  
   
   pub fn count(&self) -> usize {

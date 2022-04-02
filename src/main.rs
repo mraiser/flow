@@ -25,6 +25,9 @@ use dataproperty::*;
 mod dataobject;
 use dataobject::*;
 
+mod dataarray;
+use dataarray::*;
+
 fn main() {
   if false {
     let argstr = r#"
