@@ -2,6 +2,7 @@ use serde_json::*;
 use std::collections::HashMap;
 
 use crate::bytesref::*;
+use crate::bytesutil::*;
 use crate::dataproperty::*;
 
 #[derive(Debug)]
@@ -74,7 +75,7 @@ impl DataObject {
         };
       }
     }
-    let nubytes = BytesRef::properties_to_bytes(props);
+    let nubytes = properties_to_bytes(props);
     let n = nubytes.len();
     bytes.len = n;
     bytes.swap(nubytes);

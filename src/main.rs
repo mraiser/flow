@@ -13,6 +13,9 @@ mod primitives;
 mod bytesref;
 use bytesref::*;
 
+mod bytesutil;
+use bytesutil::*;
+
 mod heap;
 use heap::*;
 

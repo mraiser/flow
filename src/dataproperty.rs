@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::bytesref::*;
+use crate::bytesutil::*;
 use crate::heap::*;
 
 pub static TYPE_RAW:u8 = 0;
@@ -34,11 +35,11 @@ impl DataProperty {
   }
   
   pub fn from_bytes(bytes:&Vec<u8>, off:usize) -> DataProperty {
-    let id:usize = BytesRef::bytes_to_i64(bytes, off) as usize;
+    let id:usize = bytes_to_i64(bytes, off) as usize;
     let typ:u8 = bytes[off + 8];
-    let byte_ref:usize = BytesRef::bytes_to_i64(bytes, off+9) as usize;
-    let off:usize = BytesRef::bytes_to_i64(bytes, off+17) as usize;
-    let len:usize = BytesRef::bytes_to_i64(bytes, off+25) as usize;
+    let byte_ref:usize = bytes_to_i64(bytes, off+9) as usize;
+    let off:usize = bytes_to_i64(bytes, off+17) as usize;
+    let len:usize = bytes_to_i64(bytes, off+25) as usize;
     DataProperty {
       id: id,
       typ: typ,
@@ -50,11 +51,11 @@ impl DataProperty {
   
   pub fn to_bytes(&self) -> Vec<u8>{
     let mut bytes: Vec<u8> = Vec::new();
-    bytes.append(&mut BytesRef::i64_to_bytes(self.id as i64));
+    bytes.append(&mut i64_to_bytes(self.id as i64));
     bytes.append(&mut vec![self.typ]);
-    bytes.append(&mut BytesRef::i64_to_bytes(self.byte_ref as i64));
-    bytes.append(&mut BytesRef::i64_to_bytes(self.off as i64));
-    bytes.append(&mut BytesRef::i64_to_bytes(self.len as i64));
+    bytes.append(&mut i64_to_bytes(self.byte_ref as i64));
+    bytes.append(&mut i64_to_bytes(self.off as i64));
+    bytes.append(&mut i64_to_bytes(self.len as i64));
     bytes
   }
 }
