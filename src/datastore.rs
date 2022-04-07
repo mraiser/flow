@@ -3,6 +3,8 @@ use std::fs::File;
 use std::path::*;
 use std::io::Read;
 
+use crate::dataobject::*;
+
 #[derive(Debug)]
 pub struct DataStore {
   pub root: PathBuf,
@@ -15,7 +17,7 @@ impl DataStore {
     };
   }
   
-  pub fn get_data(&self, db: &str, id: &str) -> Value {
+  pub fn get_data(&self, db: &str, id: &str) -> DataObject {
     let path = self.get_data_file(db, id);
     let s = self.read_file(path);
     let mut data: Value = serde_json::from_str(&s).unwrap();
@@ -31,7 +33,7 @@ impl DataStore {
         data["data"][b] = serde_json::Value::String(astr); 
       }
     }
-    return data;
+    DataObject::from_json(data)
   }
   
   fn get_data_file(&self, db: &str, id: &str) -> PathBuf {

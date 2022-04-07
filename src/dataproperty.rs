@@ -1,10 +1,8 @@
-use std::collections::HashMap;
 use crate::bytesref::*;
 use crate::bytesutil::*;
-use crate::heap::*;
 
-pub static TYPE_RAW:u8 = 0;
-pub static TYPE_INT:u8 = 1;
+//pub static TYPE_RAW:u8 = 0;
+pub static TYPE_NULL:u8 = 1;
 pub static TYPE_LONG:u8 = 2;
 pub static TYPE_FLOAT:u8 = 3;
 pub static TYPE_BOOLEAN:u8 = 4;
@@ -34,17 +32,61 @@ impl DataProperty {
     }
   }
   
+  pub fn is_number(&self) -> bool {
+    self.is_f64() || self.is_i64() //|| self.is_i32()
+  }
+  
+  pub fn is_i64(&self) -> bool {
+    self.typ == TYPE_LONG
+  }
+  
+//  pub fn is_i32(&self) -> bool {
+//    self.typ == TYPE_INT
+//  }
+  
+  pub fn is_f64(&self) -> bool {
+    self.typ == TYPE_FLOAT
+  }
+  
+  pub fn is_string(&self) -> bool {
+    self.typ == TYPE_STRING
+  }
+  
+  pub fn is_bool(&self) -> bool {
+    self.typ == TYPE_BOOLEAN
+  }
+  
+  pub fn to_bytes_ref(&self) -> BytesRef {
+    BytesRef::get(self.byte_ref, self.off, self.len)
+  }
+  
+  pub fn as_i64(&self) -> i64 {
+    self.to_bytes_ref().as_i64()
+  }
+  
+  pub fn as_f64(&self) -> f64 {
+    self.to_bytes_ref().as_f64()
+  }
+  
+  pub fn as_bool(&self) -> bool {
+    self.to_bytes_ref().as_bool()
+  }
+  
+  pub fn as_string(&self) -> String {
+    self.to_bytes_ref().as_string()
+  }
+  
   pub fn from_bytes(bytes:&Vec<u8>, off:usize) -> DataProperty {
     let id:usize = bytes_to_i64(bytes, off) as usize;
     let typ:u8 = bytes[off + 8];
     let byte_ref:usize = bytes_to_i64(bytes, off+9) as usize;
-    let off:usize = bytes_to_i64(bytes, off+17) as usize;
+    let off2:usize = bytes_to_i64(bytes, off+17) as usize;
     let len:usize = bytes_to_i64(bytes, off+25) as usize;
     DataProperty {
       id: id,
       typ: typ,
       byte_ref: byte_ref,
-      off: off,
+      off: off2,
       len: len,
     }
   }

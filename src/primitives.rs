@@ -1,49 +1,53 @@
-use serde_json::*;
+use crate::dataobject::*;
+use crate::dataproperty::*;
 
 #[derive(Debug)]
 pub struct Primitive {
   pub name: String,
-  pub inputs: Value,
-  pub outputs: Value,
-  pub func: fn(args:Value) -> Value,
+  pub inputs: DataObject,
+  pub outputs: DataObject,
+  pub func: fn(args:DataObject) -> DataObject,
 }
 
 impl Primitive {
   pub fn new(name: &str) -> Primitive {
-    return Primitive {
+    // FIXME - Hard-coded for Plus. Return primitive based on name, with inputs & outputs
+    return Primitive { 
       name: name.to_string(),
-      inputs: json!("{}"),
-      outputs: json!("{}"),
+      inputs: DataObject::new(),
+      outputs: DataObject::new(),
       func: plus,
     };
   }
   
-  pub fn execute(&self, args:Value) -> Value {
+  pub fn execute(&self, args:DataObject) -> DataObject {
     (self.func)(args)
   }
 }
 
-fn plus(args:Value) -> Value{
-  let a = args["a"].to_owned();
-  let b = args["b"].to_owned();
-  let c;
-  //println!("PLUS {} {} {}", args, a, b);
-  if a.is_number() && b.is_number() {
-    if a.is_f64() || b.is_f64() { c = json!(a.as_f64().unwrap() + b.as_f64().unwrap()); }
-    else { c = json!(a.as_i64().unwrap() + b.as_i64().unwrap()); }
+fn plus(args:DataObject) -> DataObject{
+  //println!("PRIM PLUS IN {:?}", &args);
+  let a = args.get_property("a");
+  let b = args.get_property("b");
+  let mut out = DataObject::new();
+  if a.is_number() && b.is_number() { // FIXME - Use match
+    if a.is_f64() || b.is_f64() { 
+      out.put_float("c", a.as_f64() + b.as_f64()); 
+    }
+    else {
+      out.put_i64("c", a.as_i64() + b.as_i64()); 
+    }
   }  
   else {
-    c = json!(as_string(a)+&as_string(b));
+    out.put_str("c", &(as_string(a)+&as_string(b)));
   }
-  
-  let mut out = json!({});
-  out["c"] = c;
+  //println!("PRIM PLUS OUT {:?}", &out);
   out
 }
 
-fn as_string(a:Value) -> String {
-  if a.is_f64() { return a.as_f64().unwrap().to_string(); }
-  if a.is_i64() { return a.as_i64().unwrap().to_string(); }
-  if a.is_string() { return a.as_str().unwrap().to_string(); }
+fn as_string(a:DataProperty) -> String {
+  if a.is_f64() { return a.as_f64().to_string(); }
+  if a.is_i64() { return a.as_i64().to_string(); }
+  if a.is_string() { return a.as_string(); }
   "".to_string()
 }

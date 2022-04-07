@@ -1,109 +1,54 @@
-use serde::*;
-use serde_json::*;
-use std::collections::HashMap;
-//use std::process::exit;
+use crate::primitives::Primitive;
+use crate::dataobject::*;
+use crate::dataarray::*;
+use crate::bytesref::*;
+use crate::dataproperty::*;
 
-use super::primitives::Primitive;
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct Code {
-  pub input: HashMap<String, Node>,
-  pub output: HashMap<String, Node>,
-  pub cmds: Vec<Command>,
-  pub cons: Vec<Connection>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Node {
-  #[serde(default)]
-  pub mode: String,
-  #[serde(default)]
-  #[serde(rename = "type")]
-  pub cmd_type: String,
-  #[serde(default)]
-  pub x:f32,
-  #[serde(default)]
-  pub val:Value,
-  #[serde(default)]
-  pub done: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Command {
-  #[serde(rename = "in")]
-  pub cmd_in: HashMap<String, Node>,
-  pub out: HashMap<String, Node>,
-  pub pos: Pos,
-  pub name: String,
-  pub width: f64,
-  #[serde(rename = "type")]
-  pub cmd_type: String,
-  pub ctype: Option<String>,
-  pub localdata: Option<Value>,
-  
-  #[serde(default)]
-  pub done: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Connection {
-  pub src: Dest,
-  pub dest: Dest,
-
-  #[serde(default)]
-  pub done: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Pos {
-  pub x: f64,
-  pub y: f64,
-  pub z: f64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Dest {
-  index: i64,
-  name: String,
+  pub data: DataObject,
 }
 
 impl Code {
-  pub fn new(data: &str) -> Result<Code> {
-    let c: Code = serde_json::from_str(data)?;
-    Ok(c)
+  pub fn new(data: DataObject) -> Code {
+    Code {
+      data: data,
+    }
   }
 
-  pub fn execute(mut self, args: Value) -> Result<Value> {
+  pub fn execute(self, args: DataObject) -> DataObject {
     let mut done = false;
-    let mut out = json!({});
+    let mut out = DataObject::new();
     
-    let current_case = &mut self;
+    let current_case = self.data;
     
     while !done {
-      let cmds = &mut current_case.cmds;
+      let cmds = current_case.get_array("cmds");
       let n2 = cmds.len();
-      let cons = &mut current_case.cons;
+      let cons = current_case.get_array("cons");
       let n = cons.len();
       
       let mut i = 0;
       while i<n2{
-        let mut cmd = &mut cmds[i];
-        if !cmd.done {
+        let mut cmd = cmds.get_object(i);
+        if !cmd.has("done") { cmd.put_bool("done", false); }
+        if !cmd.get_bool("done") {
           let mut count = 0;
           let mut b = true;
-          for (key, mut value) in cmd.cmd_in.iter_mut() {
+          for dp in &cmd.get_object("in") {
+            let key = cmd.lookup_prop_string(dp.id);
             count = count + 1;
-            if let Some(_con) = lookup_con(cons, &key, "in"){
+            if let Some(_con) = lookup_con(&cons, &key, "in"){
               b = false;
               break;
             }
             else {
               //println!("No input found!");
-              value.done = true;
+              cmd.get_object(&key).put_bool("done", true);
             }
           }
           if count == 0 || b {
-            evaluate(&mut cmd)
+            evaluate(cmd)
           }
         }
         i = i + 1;
@@ -113,53 +58,56 @@ impl Code {
         let mut c = true;
         let mut i = 0;
         while i<n {
-          let mut con = &mut cons[i];
-          if !con.done {
+          let mut con = cons.get_object(i);
+          if !con.has("done") { con.put_bool("done", false); }
+          if !con.get_bool("done") {
             c = false;
             let mut b = false;
-            let mut val = json!(null);
-            let src = con.src.index;
-            let srcname = &con.src.name;
-            let dest = con.dest.index;
-            let destname = &con.dest.name;
+            let mut val = DataProperty::new(0, TYPE_NULL, BytesRef::push(Vec::<u8>::new()));
+            let ja = con.get_array("src");
+            let src = ja.get_i64(0);
+            let srcname = ja.get_string(1);
+            let ja = con.get_array("dest");
+            let dest = ja.get_i64(0);
+            let destname = ja.get_string(1);
             if src == -1 {
-              if let Some(v) = args.get(srcname){
-                val = v.to_owned();
-                // FIXME - pretty sure this passes a copy-- should pass the instance.
+              if args.has(&srcname){
+                val = args.get_property(&srcname);
               }
               b = true;
-              //println!("FROM INPUTBAR {} {}", val, args);
             }
             else {
-              let cmd = &mut cmds[src as usize];
-              if cmd.done {
-                val = cmd.out[srcname].val.to_owned();
-                // FIXME - pretty sure this passes a copy-- should pass the instance.
-                //println!("FROM CMD OUTPUT {}", val);
+              let cmd = cmds.get_object(src as usize);
+              if cmd.get_bool("done") {
+                val = cmd.get_object("out").get_object(&srcname).get_property("val");
                 b = true;
               }
             }
             
             if b {
-              con.done = true;
+              let newbr = BytesRef::get(val.byte_ref, val.off, val.len);
+              con.put_bool("done", true);
               if dest == -2 {
-                //println!("TO OUTPUTBAR {}", &val);
-                out[destname] = val;
+                out.set_property(&destname, val.typ, newbr);
               }
               else {
-                let mut cmd = &mut cmds[dest as usize];
-                if cmd.cmd_type == "undefined" {
+                let mut cmd = cmds.get_object(dest as usize);
+                if cmd.get_string("type") == "undefined" {
                   // FIXME - is this used?
                   println!("Marking undefined command as done");
-                  cmd.done = true;
+                  cmd.put_bool("done", true);
                 }
                 else {
-                  let mut var = cmd.cmd_in.get_mut(destname).unwrap();
-                  var.val = val;
-                  var.done = true;
+                  let mut var = cmd.get_object("in").get_object(&destname);
+                  var.set_property("val", val.typ, newbr);
+                  var.put_bool("done", true);
                   
-                  for (_key, value) in cmd.cmd_in.iter_mut() {
-                    b = b && value.done;
+                  let input = cmd.get_object("in");
+                  for dp in &input {
+                    let key = cmd.lookup_prop_string(dp.id);
+                    let mut value = input.get_object(&key);
+                    if !value.has("done") { value.put_bool("done", false); }
+                    b = b && value.get_bool("done");
                     if !b { break; }
                   }
                   if b { evaluate(cmd); }
@@ -173,20 +121,34 @@ impl Code {
           done = true;
         }
       }
+      
+      
+      
+      
+      
+      
+      
+      
+      
+      
     }
     // FIXME - Add NextCaseException and TerminateCaseException
-    Ok(out)
+    
+    out
   }
 }
   
-fn lookup_con<'m>(cons: &'m Vec<Connection>, key: &str, which: &str) -> Option<&'m Connection> {
+fn lookup_con<'m>(cons: &DataArray, key: &str, which: &str) -> Option<DataObject> {
+  //println!("Looking into {:?}", cons); 
   let n = cons.len();
   let mut j = 0;
   while j<n{
-    let con = &cons[j];
-    let mut bar = &con.src;
-    if which == "in" { bar = &con.dest }
-    if bar.name == key {
+    let con = cons.get_object(j);
+    //println!("Looking at {:?}", con); 
+    let mut bar = con.get_array("src");
+    if which == "in" { bar = con.get_array("dest") } // FIXME - Use match instead
+    //println!("Looking up '{}'/'{}' {:?}", key, which, bar);
+    if bar.get_string(1) == key {
 //      println!("CON/KEY {:?} / {:?}", con, key);
       return Some(con);
     }
@@ -196,25 +158,33 @@ fn lookup_con<'m>(cons: &'m Vec<Connection>, key: &str, which: &str) -> Option<&
   None
 }
 
-fn evaluate(cmd: &mut Command) {
-  let mut in1 = json!({});
-  let in2 = &cmd.cmd_in;
+fn evaluate(cmd: DataObject) {
+  let mut in1 = DataObject::new();
+  let in2 = cmd.get_object("in");
   let mut list_in:Vec<String> = Vec::new();
-  for (name, in3) in in2 {
+  for dp in &in2 {
+    let name = cmd.lookup_prop_string(dp.id);
+    let in3 = in2.get_object(&name);
     //println!("checking {:?}", in3);
     
-    in1[name] = in3.val.to_owned();
-    // FIXME - pretty sure this passes a copy-- should pass the instance.
+    let dp3 = in3.get_property("val");
+    let br3 = BytesRef::get(dp3.byte_ref, dp3.off, dp3.len);
+    in1.set_property(&name, dp3.typ, br3);
     
-    if in3.mode == "list" { list_in.push(name.to_owned()); }
+    if in3.has("mode") && in3.get_string("mode") == "list" { list_in.push(name); }
   }
   
-  let out2 = &cmd.out;
+  let out2 = cmd.get_object("out");
   let mut list_out:Vec<String> = Vec::new();    
   let mut loop_out:Vec<String> = Vec::new();    
-  for (name, out3) in out2 {
-    if out3.mode == "list" { list_out.push(name.to_owned()); }
-    else if out3.mode == "loop" { loop_out.push(name.to_owned()); }    
+  for dp in &out2 {
+    let name = cmd.lookup_prop_string(dp.id);
+    let out3 = out2.get_object(&name);
+    if out3.has("mode") {
+      let mode = out3.get_string("mode");
+      if mode == "list" { list_out.push(name); }
+      else if mode == "loop" { loop_out.push(name); }    
+    }
   }
   
   let n = list_in.len();
@@ -234,38 +204,39 @@ fn evaluate(cmd: &mut Command) {
   }
 }
 
-fn evaluate_operation(cmd:&mut Command, in1:Value) {
-  let mut out = json!({});
-  
-  if cmd.cmd_type == "primitive" {
-    let p = Primitive::new(&cmd.name);
+fn evaluate_operation(mut cmd:DataObject, in1:DataObject) {
+  let mut out = DataObject::new();
+  let cmd_type = cmd.get_string("type");
+  let v = &cmd.get_string("name");
+  if cmd_type == "primitive" { // FIXME - use match
+    let p = Primitive::new(v);
     out = p.execute(in1);
   }
-  else if cmd.cmd_type == "local" {
-    let src = &cmd.localdata.as_ref().unwrap();
-    let code = Code::new(&src.to_string()).unwrap();
-    out = code.execute(in1).unwrap();
+  else if cmd_type == "local" {
+    let src = cmd.get_object("localdata");
+    let code = Code::new(src);
+    out = code.execute(in1);
   }
-  else if cmd.cmd_type == "constant" {
-    for (key, _valmeta) in &cmd.out {
-      let mut val = json!(null);
-      let v = &cmd.name;
-      let ctype = cmd.ctype.as_ref().unwrap();
-      if ctype == "int" { val = json!(v.parse::<i64>().unwrap()); }
-      else if ctype == "decimal" { val = json!(v.parse::<f64>().unwrap()); }
-      else if ctype == "boolean" { val = json!(v.parse::<bool>().unwrap()); }
-      else if ctype == "string" { val = json!(v); }
-      else if ctype == "object" { val = serde_json::from_str(v).unwrap(); }
-      else if ctype == "array" { val = serde_json::from_str(v).unwrap(); }
-              
-      //println!("key/val/ctype {} / {} / {}", key, val, ctype);
-      out[key] = val;
+  else if cmd_type == "constant" {
+    for dp in &cmd.get_object("out") {
+      let key = &cmd.lookup_prop_string(dp.id);
+      let ctype = cmd.get_string("ctype");
+      if ctype == "int" { out.put_i64(key, v.parse::<i64>().unwrap()); }
+      else if ctype == "decimal" { out.put_float(key, v.parse::<f64>().unwrap()); }
+      else if ctype == "boolean" { out.put_bool(key, v.parse::<bool>().unwrap()); }
+      else if ctype == "string" { out.put_str(key, v); }
+      else if ctype == "object" { 
+        out.put_object(key, DataObject::from_json(serde_json::from_str(v).unwrap())); 
+      }
+      else if ctype == "array" { 
+        out.put_list(key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
+      }
+      else { out.put_null(v); }
     }
   }  
   else {
-    println!("UNIMPLEMENTED {}", cmd.cmd_type);
+    println!("UNIMPLEMENTED {}", cmd_type);
   }
-  
   
   
   
@@ -284,13 +255,16 @@ fn evaluate_operation(cmd:&mut Command, in1:Value) {
   // FIXME - Handle failexception & conditionals
   
   
-  
-  for (key, mut value) in cmd.out.iter_mut() {
-    value.val = out[key].to_owned();
-    // FIXME - pretty sure this passes a copy-- should pass the instance.
+  let cmd_out = cmd.get_object("out");
+  for dp in &cmd_out {
+    let key = &cmd.lookup_prop_string(dp.id);
+    let mut value = cmd_out.get_object(key);
+    let newdp = out.get_property(key);
+    let newbr = BytesRef::get(newdp.byte_ref, newdp.off, newdp.len);
+    value.set_property("val", newdp.typ, newbr);
   }
   
-  cmd.done = true;
+  cmd.put_bool("done", true);
 }
 
 

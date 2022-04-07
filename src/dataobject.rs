@@ -1,25 +1,29 @@
 use serde_json::*;
-use std::collections::HashMap;
+use std::fmt;
 
 use crate::bytesref::*;
 use crate::bytesutil::*;
 use crate::dataproperty::*;
 use crate::dataarray::*;
 
-#[derive(Debug)]
 pub struct DataObject {
   pub byte_ref: usize,
 }
 
 impl DataObject {
-  pub fn from_json(value:Value) -> DataObject {
-    let mut bytes: Vec<u8> = Vec::<u8>::new();
-    let mut ba = BytesRef::push(bytes);
-    let mut ba = ba.to_handle();
+  pub fn new() -> DataObject {
+    let bytes: Vec<u8> = Vec::<u8>::new();
+    let ba = BytesRef::push(bytes);
+    let ba = ba.to_handle();
     ba.incr();
-    let mut o = DataObject {
+    let o = DataObject {
       byte_ref: ba.byte_ref,
     };
+    o
+  }
+  
+  pub fn from_json(value:Value) -> DataObject {
+    let mut o = DataObject::new();
     
     for (key, val) in value.as_object().unwrap().iter() {
       if val.is_string(){ o.put_str(key, val.as_str().unwrap()); }
@@ -28,11 +32,26 @@ impl DataObject {
       else if val.is_f64() { o.put_float(key, val.as_f64().unwrap()); }
       else if val.is_object() { o.put_object(key, DataObject::from_json(val.to_owned())); }
       else if val.is_array() { o.put_list(key, DataArray::from_json(val.to_owned())); }      
+      else if val.is_null() { o.put_null(key); }
       else { println!("Unknown type {}", val) };
-      //println!("{} / {}", key, val);
     }
       
     o
+  }
+  
+  pub fn to_json(&self) -> Value {
+    let mut val = json!({});
+    for old in self {
+      let keystr = &self.lookup_prop_string(old.id);
+      if old.typ == TYPE_LONG { val[keystr] = json!(self.get_i64(keystr)); }
+      else if old.typ == TYPE_FLOAT { val[keystr] = json!(self.get_f64(keystr)); }
+      else if old.typ == TYPE_BOOLEAN { val[keystr] = json!(self.get_bool(keystr)); }
+      else if old.typ == TYPE_STRING { val[keystr] = json!(self.get_string(keystr)); }
+      else if old.typ == TYPE_OBJECT { val[keystr] = self.get_object(keystr).to_json(); }
+      else if old.typ == TYPE_LIST { val[keystr] = self.get_array(keystr).to_json(); }
+      else { val[keystr] = json!(null); }
+    }
+    val
   }
 
   pub fn lookup_prop(&self, name: &str) -> usize {
@@ -42,12 +61,23 @@ impl DataObject {
   pub fn lookup_prop_string(&self, i: usize) -> String {
     BytesRef::lookup_prop_string(i)
   }  
-
+  
+  pub fn has(&self, key:&str) -> bool {
+    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+    let bytes = handle.from_handle();
+    let props = bytes.as_propertymap();
+    let id = self.lookup_prop(key);
+    if let Some(_dp) = props.get(&id) {
+      return true;
+    }
+    false
+  }
+  
   pub fn get_property(&self, key:&str) -> DataProperty {
     let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let mut bytes = handle.from_handle();
-    let mut props = bytes.as_propertymap();
-    let id = BytesRef::lookup_prop(key);
+    let bytes = handle.from_handle();
+    let props = bytes.as_propertymap();
+    let id =self.lookup_prop(key);
     props.get(&id).unwrap().clone()
   }
   
@@ -75,6 +105,22 @@ impl DataObject {
     br.as_f64()
   }
   
+  pub fn get_object(&self, key:&str) -> DataObject {
+    let dp = self.get_property(key);
+    let mut br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
+    br.incr();
+    br.from_handle().incr();
+    DataObject { byte_ref: br.byte_ref, }
+  }
+  
+  pub fn get_array(&self, key:&str) -> DataArray {
+    let dp = self.get_property(key);
+    let mut br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
+    br.incr();
+    br.from_handle().incr();
+    DataArray { byte_ref: br.byte_ref, }
+  }
+  
   pub fn set_property(&mut self, key:&str, typ:u8, bytesref:BytesRef) {
     // FIXME - Not thread safe. Call should be synchronized
     bytesref.incr();
@@ -88,12 +134,12 @@ impl DataObject {
     let mut props = bytes.as_propertymap();
     if let Some(old) = props.insert(id, dp){
       if old.typ == TYPE_OBJECT {
-        let mut o = DataObject {
+        let _o = DataObject {
           byte_ref: old.byte_ref,
         };
       }
       else if old.typ == TYPE_LIST {
-        let mut o = DataArray {
+        let _o = DataArray {
           byte_ref: old.byte_ref,
         };
       }
@@ -138,37 +184,58 @@ impl DataObject {
     let mut handle = BytesRef::get(a.byte_ref, 0, 24);
     handle.from_handle().incr();
     self.set_property(key, TYPE_LIST, handle);
-//    let ba = BytesRef::from_bool(false);
-//    self.set_property(key, TYPE_BOOLEAN, ba);
   }
+  
+  pub fn put_null(&mut self, key:&str) {
+    let ba = BytesRef::push(Vec::<u8>::new());
+    self.set_property(key, TYPE_NULL, ba);
+  }
+  
+  // FIXME - add remove_...(key) function for all types
+}
+
+impl<'a> IntoIterator for &'a DataObject {
+    type Item = DataProperty;
+    type IntoIter = DataObjectIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        DataObjectIterator {
+            data_object: self,
+            index: 0,
+        }
+    }
+}
+
+pub struct DataObjectIterator<'a> {
+    data_object: &'a DataObject,
+    index: usize,
+}
+
+impl<'a> Iterator for DataObjectIterator<'a> {
+    type Item = DataProperty;
+    fn next(&mut self) -> Option<DataProperty> {
+        let mut handle = BytesRef::get(self.data_object.byte_ref, 0, 24);
+        let bytes = handle.from_handle();
+        let vec = bytes.as_propertyvec();
+        if self.index == vec.len() { return None; }
+        let val = vec[self.index];
+        self.index += 1;
+        Some(val)
+    }
 }
 
 impl Drop for DataObject {
   fn drop(&mut self) {
     let mut handle = BytesRef::get(self.byte_ref, 0, 24);
     let n = handle.count();
-    let mut bytes = handle.from_handle();
+    let bytes = handle.from_handle();
     let mut objects_to_kill = Vec::<DataObject>::new();
     let mut arrays_to_kill = Vec::<DataArray>::new();
     if n == 2 {
-      for (key, old) in bytes.as_propertymap().iter() {
-        let mut ba = BytesRef::get(old.byte_ref, old.off, old.len);
-        if old.typ == TYPE_OBJECT {
-          {
-            let mut o = DataObject {
-              byte_ref: ba.byte_ref,
-            };
-            objects_to_kill.push(o);
-          }
-        }
-        else if old.typ == TYPE_LIST {
-          {
-            let mut a = DataArray {
-              byte_ref: ba.byte_ref,
-            };
-            arrays_to_kill.push(a);
-          }
-        }
+      for (_key, old) in bytes.as_propertymap().iter() {
+        let ba = BytesRef::get(old.byte_ref, old.off, old.len);
+        if old.typ == TYPE_OBJECT { objects_to_kill.push(DataObject { byte_ref: ba.byte_ref, }); }
+        else if old.typ == TYPE_LIST { arrays_to_kill.push(DataArray { byte_ref: ba.byte_ref, }); }
         else { ba.decr(); }
       }
     }
@@ -176,3 +243,11 @@ impl Drop for DataObject {
     bytes.decr();
   }
 }
+
+impl fmt::Debug for DataObject {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let val = self.to_json();
+    write!(f, "{}", val)
+  }
+}
+

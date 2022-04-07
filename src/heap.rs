@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::fmt;
+
 use crate::bytesref::*;
 
-#[derive(Debug)]
 pub struct Heap {
   pub data: HashMap<usize, Vec<u8>>,
   count: HashMap<usize, usize>,
@@ -31,10 +32,8 @@ impl Heap {
   }
   
   pub fn child(&mut self, index: usize, off: usize, len: usize) -> BytesRef {
-    //println!("NEW CHILD {}", index);
     let c = self.count[&index] + 1;
     self.count.insert(index, c);
-    //println!("c New count for {}: {}", index, c);
     BytesRef::new(index, off, len)
   }
   
@@ -45,20 +44,16 @@ impl Heap {
   pub fn incr(&mut self, index:usize) {
     let c = self.count[&index];
     self.count.insert(index, c+1);
-    //println!("+ New count for {}: {}", index, c+1);
   }
   
   pub fn decr(&mut self, index: usize) {
-    //println!("Decreasing {}", index);
     let c = self.count[&index];
     if c == 1 {
       self.data.remove(&index);
       self.count.remove(&index);
-      //println!("Removing {}", index);
     }
     else {
       self.count.insert(index, c-1);
-      //println!("- New count for {}: {}", index, c-1);
     }
   }
   
@@ -80,6 +75,22 @@ impl Heap {
       self.prop_lookup.insert(name.to_string(), i);
       return i;
     }
+  }
+}
+
+impl fmt::Debug for Heap {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    writeln!(f, "").unwrap();
+    let mut i = 0;
+    while i<self.ref_index {
+      if let Some(c) = self.count.get(&i) {
+        let mut s = hex::encode(&self.data[&i]);
+        if s.len() > 66 { s = s[0..66].to_string()+"..."; }
+        writeln!(f, "{}: {} - {} - {}", i, c, self.data[&i].len(), s).unwrap();
+      }
+      i = i + 1;
+    }
+    Ok(())
   }
 }
 

@@ -42,7 +42,7 @@ impl BytesRef {
 
   pub fn to_handle(&self) -> BytesRef {
     self.incr();
-    let mut bytes = self.to_handle_bytes();
+    let bytes = self.to_handle_bytes();
     BytesRef::push(bytes)
   }
 
@@ -86,12 +86,12 @@ impl BytesRef {
   }
 
   pub fn from_i64(val:i64) -> BytesRef {
-    let mut bytes: Vec<u8> = i64_to_bytes(val);
+    let bytes: Vec<u8> = i64_to_bytes(val);
     HEAP.lock().unwrap().push(bytes)
   }
   
   pub fn from_f64(val:f64) -> BytesRef {
-    let mut bytes: Vec<u8> = f64_to_bytes(val);
+    let bytes: Vec<u8> = f64_to_bytes(val);
     HEAP.lock().unwrap().push(bytes)
   }
   
@@ -102,9 +102,7 @@ impl BytesRef {
   }
 
   pub fn as_bool(&self) -> bool {
-    let n = self.off + self.len;
-    let bytes = self.get_bytes()[self.off..n].to_vec();
-    if bytes[0] == 1 { return true; }
+    if self.get_bytes()[self.off] == 1 { return true; }
     false
   }
 
