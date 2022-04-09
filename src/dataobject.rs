@@ -121,6 +121,31 @@ impl DataObject {
     DataArray { byte_ref: br.byte_ref, }
   }
   
+  pub fn remove_property(&mut self, key:&str) {
+    // FIXME - Not thread safe. Call should be synchronized
+    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+    let mut bytes = handle.from_handle();
+    let mut props = bytes.as_propertymap();
+    
+    let dp = props.remove(&self.lookup_prop(key)).unwrap();
+    if dp.typ == TYPE_OBJECT {
+      let _o = DataObject {
+        byte_ref: dp.byte_ref,
+      };
+    }
+    else if dp.typ == TYPE_LIST {
+      let _o = DataArray {
+        byte_ref: dp.byte_ref,
+      };
+    }
+    
+    let nubytes = propertymap_to_bytes(props);
+    let n = nubytes.len();
+    bytes.len = n;
+    bytes.swap(nubytes);
+    handle.swap(bytes.to_handle_bytes());
+  }
+  
   pub fn set_property(&mut self, key:&str, typ:u8, bytesref:BytesRef) {
     // FIXME - Not thread safe. Call should be synchronized
     bytesref.incr();
@@ -190,8 +215,6 @@ impl DataObject {
     let ba = BytesRef::push(Vec::<u8>::new());
     self.set_property(key, TYPE_NULL, ba);
   }
-  
-  // FIXME - add remove_...(key) function for all types
 }
 
 impl<'a> IntoIterator for &'a DataObject {

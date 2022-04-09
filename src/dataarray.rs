@@ -153,9 +153,32 @@ impl DataArray {
     self.push_property(TYPE_LIST, handle);
   }
   
-  // FIXME - add set_...(index, value) function for all types
-  // FIXME - add remove_...(index) function for all types
-
+  // FIXME - add insert/set_...(index, value) function for all types
+  
+  pub fn remove_property(&mut self, id:usize) {
+    // FIXME - Not thread safe. Call should be synchronized
+    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+    let mut bytes = handle.from_handle();
+    let mut props = bytes.as_propertyvec();
+    
+    let dp = props.remove(id);
+    if dp.typ == TYPE_OBJECT {
+      let _o = DataObject {
+        byte_ref: dp.byte_ref,
+      };
+    }
+    else if dp.typ == TYPE_LIST {
+      let _o = DataArray {
+        byte_ref: dp.byte_ref,
+      };
+    }
+    
+    let nubytes = propertyvec_to_bytes(props);
+    let n = nubytes.len();
+    bytes.len = n;
+    bytes.swap(nubytes);
+    handle.swap(bytes.to_handle_bytes());
+  }
 }
 
 impl<'a> IntoIterator for &'a DataArray {

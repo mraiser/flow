@@ -33,16 +33,12 @@ impl DataProperty {
   }
   
   pub fn is_number(&self) -> bool {
-    self.is_f64() || self.is_i64() //|| self.is_i32()
+    self.is_f64() || self.is_i64()
   }
   
   pub fn is_i64(&self) -> bool {
     self.typ == TYPE_LONG
   }
-  
-//  pub fn is_i32(&self) -> bool {
-//    self.typ == TYPE_INT
-//  }
   
   pub fn is_f64(&self) -> bool {
     self.typ == TYPE_FLOAT
