@@ -3,26 +3,19 @@ use std::path::Path;
 use std::env;
 
 mod code;
-use code::Code as Code;
-
 mod datastore;
-use datastore::DataStore;
-
 mod primitives;
-
 mod bytesref;
-use bytesref::*;
-
 mod bytesutil;
-
 mod heap;
-
 mod dataproperty;
-
 mod dataobject;
-use dataobject::*;
-
 mod dataarray;
+
+use code::Code as Code;
+use datastore::DataStore;
+use bytesref::*;
+use dataobject::*;
 
 fn main() {
   env::set_var("RUST_BACKTRACE", "1");
