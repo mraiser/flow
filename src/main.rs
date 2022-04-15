@@ -22,7 +22,7 @@ fn main() {
   {
     let path = Path::new("data");
     let store = DataStore::new(path.to_path_buf());
-    let data = store.get_data("test", "qkjown179091cc94fz1a");
+    let data = store.get_data("testflow", "gukzkk1802d57d9f0w1d");
     let codeval = data.get_object("data").get_object("flow");
     let code = Code::new(codeval);
     
