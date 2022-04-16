@@ -17,20 +17,28 @@ impl DataStore {
     };
   }
   
+  pub fn clone(&self) -> DataStore {
+    return DataStore {
+      root: self.root.to_owned(),
+    };
+  }
+  
   pub fn get_data(&self, db: &str, id: &str) -> DataObject {
     let path = self.get_data_file(db, id);
     let s = self.read_file(path);
     let mut data: Value = serde_json::from_str(&s).unwrap();
     let attachments: Value = data["data"]["attachmentkeynames"].to_owned();
-    for a in attachments.as_array().unwrap().into_iter(){
-      let b = &a.as_str().unwrap();
-      let aid = id.to_string()+"."+b;
-      let apath = self.get_data_file(db, &aid);
-      let astr = self.read_file(apath);
-      if astr[0..1].to_string() == "{" { // FIXME - Legacy hack
-        data["data"][b] = serde_json::from_str(&astr).unwrap(); 
-      } else {
-        data["data"][b] = serde_json::Value::String(astr); 
+    if attachments.is_array() {
+      for a in attachments.as_array().unwrap().into_iter(){
+        let b = &a.as_str().unwrap();
+        let aid = id.to_string()+"."+b;
+        let apath = self.get_data_file(db, &aid);
+        let astr = self.read_file(apath);
+        if astr[0..1].to_string() == "{" { // FIXME - Legacy hack
+          data["data"][b] = serde_json::from_str(&astr).unwrap(); 
+        } else {
+          data["data"][b] = serde_json::Value::String(astr); 
+        }
       }
     }
     DataObject::from_json(data)

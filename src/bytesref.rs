@@ -48,6 +48,7 @@ impl BytesRef {
 
   pub fn from_handle(&mut self) -> BytesRef {
     let bytes = self.get_bytes();
+//    println!("from bytes: {:?}", self);
     let byte_ref: usize = bytes_to_i64(&bytes, 0) as usize;
     let off: usize = bytes_to_i64(&bytes, 8) as usize;
     let len: usize = bytes_to_i64(&bytes, 16) as usize;

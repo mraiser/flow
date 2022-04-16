@@ -53,6 +53,16 @@ impl DataObject {
     }
     val
   }
+  
+  pub fn duplicate(&self) -> DataObject {
+    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+    let bytes = handle.from_handle();
+    handle.incr();
+    bytes.incr();
+    DataObject {
+      byte_ref: self.byte_ref,
+    }
+  }
 
   pub fn lookup_prop(&self, name: &str) -> usize {
     BytesRef::lookup_prop(name)
@@ -71,6 +81,15 @@ impl DataObject {
       return true;
     }
     false
+  }
+  
+  pub fn keys(&self) -> Vec<String> {
+    let mut vec = Vec::<String>::new();
+    for dp in self {
+      let key = self.lookup_prop_string(dp.id);
+      vec.push(key)
+    }
+    vec
   }
   
   pub fn get_property(&self, key:&str) -> DataProperty {
