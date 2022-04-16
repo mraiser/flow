@@ -11,6 +11,16 @@ pub struct DataArray {
 }
 
 impl DataArray {
+  pub fn new() -> DataArray {
+    let bytes: Vec<u8> = Vec::<u8>::new();
+    let ba = BytesRef::push(bytes);
+    let ba = ba.to_handle();
+    ba.incr();
+    DataArray {
+      byte_ref: ba.byte_ref,
+    }
+  }
+  
   pub fn from_json(value:Value) -> DataArray {
     let bytes: Vec<u8> = Vec::<u8>::new();
     let ba = BytesRef::push(bytes);

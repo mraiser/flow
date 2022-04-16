@@ -16,10 +16,9 @@ impl DataObject {
     let ba = BytesRef::push(bytes);
     let ba = ba.to_handle();
     ba.incr();
-    let o = DataObject {
+    DataObject {
       byte_ref: ba.byte_ref,
-    };
-    o
+    }
   }
   
   pub fn from_json(value:Value) -> DataObject {
@@ -165,9 +164,12 @@ impl DataObject {
     handle.swap(bytes.to_handle_bytes());
   }
   
-  pub fn set_property(&mut self, key:&str, typ:u8, bytesref:BytesRef) {
+  pub fn set_property(&mut self, key:&str, typ:u8, mut bytesref:BytesRef) {
     // FIXME - Not thread safe. Call should be synchronized
     bytesref.incr();
+    if typ == TYPE_OBJECT || typ == TYPE_LIST {
+      bytesref.from_handle().incr();
+    }
 
     let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
     let mut bytes = handle.from_handle();
@@ -219,14 +221,12 @@ impl DataObject {
   }
 
   pub fn put_object(&mut self, key:&str, o:DataObject) {
-    let mut handle = BytesRef::get(o.byte_ref, 0, 24);
-    handle.from_handle().incr();
+    let handle = BytesRef::get(o.byte_ref, 0, 24);
     self.set_property(key, TYPE_OBJECT, handle);
   }
   
   pub fn put_list(&mut self, key:&str, a:DataArray) {
-    let mut handle = BytesRef::get(a.byte_ref, 0, 24);
-    handle.from_handle().incr();
+    let handle = BytesRef::get(a.byte_ref, 0, 24);
     self.set_property(key, TYPE_LIST, handle);
   }
   

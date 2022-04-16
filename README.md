@@ -14,3 +14,24 @@ interpreter from the original Java, Python and Javascript versions included with
 ### Introductory Video:
 [![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/zwC-_ZmbOfA)
 https://youtu.be/zwC-_ZmbOfA
+
+### Executing Flow Code
+This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 
+folder, and they will become executable as well. Libraries are created using the Newbound Metabot 
+(https://github.com/mraiser/newbound).
+
+Example:
+
+    let path = Path::new("data");
+    let store = DataStore::new(path.to_path_buf());
+
+    let args = DataObject::from_json(serde_json::from_str(r#"
+    {
+      "a": 299,
+      "b": 121
+    }
+    "#).unwrap());
+    let cmd = Command::new("testflow", "zkuwhn1802d57cb8ak1c", store.clone());
+    let res = cmd.execute(args);
+    println!("Hello, my dudes! {:?}", res);
+

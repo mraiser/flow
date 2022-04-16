@@ -1,3 +1,5 @@
+use std::cmp;
+
 use crate::primitives::Primitive;
 use crate::dataobject::*;
 use crate::dataarray::*;
@@ -33,112 +35,124 @@ impl Code {
     let mut done = false;
     let mut out = DataObject::new();
     
-    let current_case = self.data.duplicate();
+    let mut current_case = self.data.duplicate();
     
     while !done {
-      let cmds = current_case.get_array("cmds");
-      let n2 = cmds.len();
-      let cons = current_case.get_array("cons");
-      let n = cons.len();
-      
-      let mut i = 0;
-      while i<n2{
-        let mut cmd = cmds.get_object(i);
-        if !cmd.has("done") { cmd.put_bool("done", false); }
-        if !cmd.get_bool("done") {
-          let mut count = 0;
-          let mut b = true;
-          for dp in &cmd.get_object("in") {
-            let key = cmd.lookup_prop_string(dp.id);
-            count = count + 1;
-            if let Some(_con) = self.lookup_con(&cons, &key, "in"){
-              b = false;
-              break;
-            }
-            else {
-              //println!("No input found!");
-              cmd.get_object(&key).put_bool("done", true);
-            }
-          }
-          if count == 0 || b {
-            self.evaluate(cmd)?;
-          }
-        }
-        i = i + 1;
-      }
-      
-      while !done {
-        let mut c = true;
+      let evaluation: Result<(), CodeException> = (|| {
+        let cmds = current_case.get_array("cmds");
+        let n2 = cmds.len();
+        let cons = current_case.get_array("cons");
+        let n = cons.len();
+        
         let mut i = 0;
-        while i<n {
-          let mut con = cons.get_object(i);
-          if !con.has("done") { con.put_bool("done", false); }
-          if !con.get_bool("done") {
-            c = false;
-            let mut b = false;
-            let mut val = DataProperty::new(0, TYPE_NULL, BytesRef::push(Vec::<u8>::new()));
-            let ja = con.get_array("src");
-            let src = ja.get_i64(0);
-            let srcname = ja.get_string(1);
-            let ja = con.get_array("dest");
-            let dest = ja.get_i64(0);
-            let destname = ja.get_string(1);
-            if src == -1 {
-              if args.has(&srcname){
-                val = args.get_property(&srcname);
-              }
-              b = true;
-            }
-            else {
-              let cmd = cmds.get_object(src as usize);
-              if cmd.get_bool("done") {
-                val = cmd.get_object("out").get_object(&srcname).get_property("val");
-                b = true;
-              }
-            }
-            
-            if b {
-              let newbr = BytesRef::get(val.byte_ref, val.off, val.len);
-              con.put_bool("done", true);
-              if dest == -2 {
-                out.set_property(&destname, val.typ, newbr);
+        while i<n2{
+          let mut cmd = cmds.get_object(i);
+          if !cmd.has("done") { cmd.put_bool("done", false); }
+          if !cmd.get_bool("done") {
+            let mut count = 0;
+            let mut b = true;
+            for dp in &cmd.get_object("in") {
+              let key = cmd.lookup_prop_string(dp.id);
+              count = count + 1;
+              if let Some(_con) = self.lookup_con(&cons, &key, "in"){
+                b = false;
+                break;
               }
               else {
-                let mut cmd = cmds.get_object(dest as usize);
-                if cmd.get_string("type") == "undefined" {
-                  // FIXME - is this used?
-                  println!("Marking undefined command as done");
-                  cmd.put_bool("done", true);
-                }
-                else {
-                  let mut var = cmd.get_object("in").get_object(&destname);
-                  var.set_property("val", val.typ, newbr);
-                  var.put_bool("done", true);
-                  
-                  let input = cmd.get_object("in");
-                  for dp in &input {
-                    let key = cmd.lookup_prop_string(dp.id);
-                    let mut value = input.get_object(&key);
-                    if !value.has("done") { value.put_bool("done", false); }
-                    b = b && value.get_bool("done");
-                    if !b { break; }
-                  }
-                  if b { self.evaluate(cmd)?; }
-                }
+                //println!("No input found!");
+                cmd.get_object(&key).put_bool("done", true);
               }
+            }
+            if count == 0 || b {
+              self.evaluate(cmd)?;
             }
           }
           i = i + 1;
         }
-        if c {
-          done = true;
+        
+        while !done {
+          let mut c = true;
+          let mut i = 0;
+          while i<n {
+            let mut con = cons.get_object(i);
+            if !con.has("done") { con.put_bool("done", false); }
+            if !con.get_bool("done") {
+              c = false;
+              let mut b = false;
+              let mut val = DataProperty::new(0, TYPE_NULL, BytesRef::push(Vec::<u8>::new()));
+              let ja = con.get_array("src");
+              let src = ja.get_i64(0);
+              let srcname = ja.get_string(1);
+              let ja = con.get_array("dest");
+              let dest = ja.get_i64(0);
+              let destname = ja.get_string(1);
+              if src == -1 {
+                if args.has(&srcname){
+                  val = args.get_property(&srcname);
+                }
+                b = true;
+              }
+              else {
+                let cmd = cmds.get_object(src as usize);
+                if cmd.get_bool("done") {
+                  val = cmd.get_object("out").get_object(&srcname).get_property("val");
+                  b = true;
+                }
+              }
+              
+              if b {
+                let newbr = BytesRef::get(val.byte_ref, val.off, val.len);
+                con.put_bool("done", true);
+                if dest == -2 {
+                  out.set_property(&destname, val.typ, newbr);
+                }
+                else {
+                  let mut cmd = cmds.get_object(dest as usize);
+                  if cmd.get_string("type") == "undefined" {
+                    // FIXME - is this used?
+                    println!("Marking undefined command as done");
+                    cmd.put_bool("done", true);
+                  }
+                  else {
+                    let mut var = cmd.get_object("in").get_object(&destname);
+                    var.set_property("val", val.typ, newbr);
+                    var.put_bool("done", true);
+                    
+                    let input = cmd.get_object("in");
+                    for dp in &input {
+                      let key = cmd.lookup_prop_string(dp.id);
+                      let mut value = input.get_object(&key);
+                      if !value.has("done") { value.put_bool("done", false); }
+                      b = b && value.get_bool("done");
+                      if !b { break; }
+                    }
+                    if b { self.evaluate(cmd)?; }
+                  }
+                }
+              }
+            }
+            i = i + 1;
+          }
+          if c {
+            done = true;
+          }
+        }
+        Ok(())
+      })();
+      
+      if let Err(e) = evaluation {
+        if e == CodeException::NextCase {
+          current_case = current_case.get_object("nextcase");
+        }
+        else if e == CodeException::Terminate {
+          break;
+        }
+        else {
+          return Err(e);
         }
       }
+      
     }
-
-
-    // FIXME - Add NextCaseException and TerminateCaseException
-
     
     Ok(out)
   }
@@ -159,7 +173,7 @@ impl Code {
     None
   }
 
-  fn evaluate(&mut self, cmd: DataObject) -> Result<DataObject, CodeException> {
+  fn evaluate(&mut self, mut cmd: DataObject) -> Result<DataObject, CodeException> {
     let mut in1 = DataObject::new();
     let in2 = cmd.get_object("in");
     let mut list_in:Vec<String> = Vec::new();
@@ -189,16 +203,74 @@ impl Code {
     
     let n = list_in.len();
     if n == 0 && loop_out.len() == 0 {
-      self.evaluate_operation(cmd, in1)?;
+      return self.evaluate_operation(cmd, in1);
     }
     else {
+      let mut out3 = DataObject::new();
+      for key in &list_out { out3.put_list(&key, DataArray::new()); }
+      let mut count = 0;
+      if n>0 {
+        count = in1.get_array(&list_in[0]).len();
+        let mut i = 1;
+        while i<n {
+          count = cmp::min(count, in1.get_array(&list_in[i]).len());
+          i = i + 1;
+        }
+      }
       
+      let mut i = 0;
+      loop {
+        let mut in3 = DataObject::new();
+        let list = in1.keys();
+        for key in list {
+          if !list_in.contains(&key) { 
+            let dp = in1.get_property(&key);
+            let br = dp.to_bytes_ref();
+            in3.set_property(&key, dp.typ, br); 
+          }
+          else {
+            let ja = in1.get_array(&key);
+            let dp = ja.get_property(i);
+            let br = dp.to_bytes_ref();
+            in3.set_property(&key, dp.typ, br); 
+          }
+        }
+        
+        self.evaluate_operation(cmd.duplicate(), in1.duplicate())?;
+        
+        let out = cmd.get_object("out");
+        for dpx in &out2 {
+          let k = &out2.lookup_prop_string(dpx.id);
+          if out.has(k) {
+            let dp = out.get_property(k);
+            if list_out.contains(k) {
+              out3.get_array(k).push_property(dp.typ, dp.to_bytes_ref());
+            }
+            else {
+              out3.set_property(k, dp.typ, dp.to_bytes_ref());
+              if loop_out.contains(k) {
+                let newk = out2.get_object(k).get_string("loop");
+                in1.set_property(&newk, dp.typ, dp.to_bytes_ref());
+              }
+            }
+          }
+        }
+        
+        if cmd.has("FINISHED") && cmd.get_bool("FINISHED") {
+          break;
+        }
+        
+        if n>0 {
+          i = i + 1;
+          if i == count {
+            break;
+          }
+        }
+      }
       
-      // FIXME - implement lists & loops
-      
-      
+      cmd.put_object("out", out3.duplicate());
+      return Ok(out3);
     }
-    Ok(out2)
   }
 
   fn evaluate_operation(&mut self, mut cmd:DataObject, in1:DataObject) -> Result<DataObject, CodeException> {
@@ -243,7 +315,7 @@ impl Code {
         let mut params = DataObject::new();
         for dp in &in1 {
           let key = BytesRef::lookup_prop_string(dp.id);
-            params.set_property(&key, dp.typ, dp.to_bytes_ref());
+          params.set_property(&key, dp.typ, dp.to_bytes_ref());
         }
         
         // FIXME - add remote command support
@@ -303,7 +375,7 @@ impl Code {
           }
         }
         else {
-          // Objects & Arrays can't match a constant
+          // FIXME - Objects & Arrays can't match a constant?
           b = false;
         }
         
