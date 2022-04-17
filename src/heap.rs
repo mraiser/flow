@@ -80,7 +80,7 @@ impl Heap {
 
 impl fmt::Debug for Heap {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    writeln!(f, "").unwrap();
+    writeln!(f, "ref_index {} / prop.len {}", self.ref_index, self.props.len()).unwrap();
     let mut i = 0;
     while i<self.ref_index {
       if let Some(c) = self.count.get(&i) {
