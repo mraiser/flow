@@ -59,6 +59,42 @@ impl DataArray {
     json!(val)
   }
   
+  pub fn duplicate(&self) -> DataArray {
+    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
+    let bytes = handle.from_handle();
+    handle.incr();
+    bytes.incr();
+    DataArray {
+      byte_ref: self.byte_ref,
+    }
+  }
+  
+  pub fn shallow_copy(&self) -> DataArray {
+    let mut o = DataArray::new();
+    for dp in self {
+      o.push_property(dp.typ, dp.to_bytes_ref());
+    }
+    o
+  }
+
+  pub fn deep_copy(&self) -> DataArray {
+    let mut o = DataArray::new();
+    let mut id = 0;
+    for dp in self {
+      if dp.typ == TYPE_OBJECT {
+        o.push_object(self.get_object(id).deep_copy());
+      }
+      else if dp.typ == TYPE_LIST {
+        o.push_list(self.get_array(id).deep_copy());
+      }
+      else {
+        o.push_property(dp.typ, dp.to_bytes_ref());
+      }
+      id = id + 1;
+    }
+    o
+  }
+
   pub fn len(&self) -> usize {
     let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
     let bytes = handle.from_handle();
@@ -112,9 +148,12 @@ impl DataArray {
     DataObject { byte_ref: br.byte_ref, }
   }
 
-  pub fn push_property(&mut self, typ:u8, bytesref:BytesRef) {
+  pub fn push_property(&mut self, typ:u8, mut bytesref:BytesRef) {
     // FIXME - Not thread safe. Call should be synchronized
     bytesref.incr();
+    if typ == TYPE_OBJECT || typ == TYPE_LIST {
+      bytesref.from_handle().incr();
+    }
 
     let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
     let mut bytes = handle.from_handle();
@@ -152,14 +191,12 @@ impl DataArray {
   }
 
   pub fn push_object(&mut self, o:DataObject) {
-    let mut handle = BytesRef::get(o.byte_ref, 0, 24);
-    handle.from_handle().incr();
+    let handle = BytesRef::get(o.byte_ref, 0, 24);
     self.push_property(TYPE_OBJECT, handle);
   }
   
   pub fn push_list(&mut self, a:DataArray) {
-    let mut handle = BytesRef::get(a.byte_ref, 0, 24);
-    handle.from_handle().incr();
+    let handle = BytesRef::get(a.byte_ref, 0, 24);
     self.push_property(TYPE_LIST, handle);
   }
   

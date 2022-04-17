@@ -62,6 +62,31 @@ impl DataObject {
       byte_ref: self.byte_ref,
     }
   }
+  
+  pub fn shallow_copy(&self) -> DataObject {
+    let mut o = DataObject::new();
+    for dp in self {
+      o.set_property(&self.lookup_prop_string(dp.id), dp.typ, dp.to_bytes_ref());
+    }
+    o
+  }
+
+  pub fn deep_copy(&self) -> DataObject {
+    let mut o = DataObject::new();
+    for dp in self {
+      let key = &self.lookup_prop_string(dp.id);
+      if dp.typ == TYPE_OBJECT {
+        o.put_object(key, self.get_object(key).deep_copy());
+      }
+      else if dp.typ == TYPE_LIST {
+        o.put_list(key, self.get_array(key).deep_copy());
+      }
+      else {
+        o.set_property(key, dp.typ, dp.to_bytes_ref());
+      }
+    }
+    o
+  }
 
   pub fn lookup_prop(&self, name: &str) -> usize {
     BytesRef::lookup_prop(name)

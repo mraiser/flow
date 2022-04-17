@@ -19,7 +19,7 @@ pub enum CodeException {
 pub struct Code {
   pub data: DataObject,
   pub store: DataStore,
-  finishflag: bool,
+  pub finishflag: bool,
 }
 
 impl Code {
@@ -31,7 +31,7 @@ impl Code {
     }
   }
 
-  pub fn execute(mut self, args: DataObject) -> Result<DataObject, CodeException> {
+  pub fn execute(&mut self, args: DataObject) -> Result<DataObject, CodeException> {
     let mut done = false;
     let mut out = DataObject::new();
     
@@ -95,7 +95,7 @@ impl Code {
               else {
                 let cmd = cmds.get_object(src as usize);
                 if cmd.get_bool("done") {
-                  val = cmd.get_object("out").get_object(&srcname).get_property("val");
+                  val = cmd.get_object("out").get_property(&srcname);
                   b = true;
                 }
               }
@@ -235,8 +235,8 @@ impl Code {
             in3.set_property(&key, dp.typ, br); 
           }
         }
-        
-        self.evaluate_operation(cmd.duplicate(), in1.duplicate())?;
+
+        self.evaluate_operation(cmd.duplicate(), in3)?;
         
         let out = cmd.get_object("out");
         for dpx in &out2 {
@@ -279,7 +279,6 @@ impl Code {
     let mut b = true;
     let v = &cmd.get_string("name");
     
-    
     let evaluation: Result<(), CodeException> = (|| {
       if cmd_type == "primitive" { // FIXME - use match
         let p = Primitive::new(v);
@@ -287,8 +286,9 @@ impl Code {
       }
       else if cmd_type == "local" {
         let src = cmd.get_object("localdata");
-        let code = Code::new(src, self.store.clone());
+        let mut code = Code::new(src.deep_copy(), self.store.clone());
         out = code.execute(in1)?;
+        cmd.put_bool("FINISHED", code.finishflag);
       }
       else if cmd_type == "constant" {
         for dp in &cmd.get_object("out") {
@@ -341,7 +341,7 @@ impl Code {
         let key = &in1.keys()[0];
         let ctype = cmd.get_string("ctype");
         let dp1 = &in1.get_property(key);
-
+        
         // FIXME - Support match on null?
         if ctype == "int" {
           if dp1.typ != TYPE_LONG { b = false; }
@@ -399,16 +399,8 @@ impl Code {
       let condition = cmd.get_object("condition");
       self.evaluate_conditional(condition, b)?;
     }
-    
-    let cmd_out = cmd.get_object("out");
-    for dp in &cmd_out {
-      let key = &cmd.lookup_prop_string(dp.id);
-      let mut value = cmd_out.get_object(key);
-      let newdp = out.get_property(key);
-      let newbr = BytesRef::get(newdp.byte_ref, newdp.off, newdp.len);
-      value.set_property("val", newdp.typ, newbr);
-    }
-    
+
+    cmd.put_object("out", out.duplicate());
     cmd.put_bool("done", true);
     
     Ok(out)

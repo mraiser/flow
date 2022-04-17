@@ -31,7 +31,7 @@ impl Command {
   
   pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
 //    println!("executing: {:?}", self.src);
-    let code = Code::new(self.src.duplicate(), self.store.clone());
+    let mut code = Code::new(self.src.duplicate(), self.store.clone());
     code.execute(args)
   }
 }

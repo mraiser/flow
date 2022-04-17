@@ -31,7 +31,7 @@ fn main() {
     "#).unwrap());
     let cmd = Command::new("testflow", "zkuwhn1802d57cb8ak1c", store.clone());
     let res = cmd.execute(args);
-    println!("Hello, my dudes! {:?}", res);
+    println!("test_add: {:?}", res);
 
     let args = DataObject::from_json(serde_json::from_str(r#"
     {
@@ -40,7 +40,34 @@ fn main() {
     "#).unwrap());
     let cmd = Command::new("testflow", "vnpvxv1802d67b7d1j1f", store.clone());
     let res = cmd.execute(args);
-    println!("Hello, my dudes! {:?}", res);
+    println!("test_command: {:?}", res);
+    
+    let args = DataObject::from_json(serde_json::from_str(r#"
+    {
+      "a": true
+    }
+    "#).unwrap());
+    let cmd = Command::new("testflow", "ooizjt1803765b08ak212", store.clone());
+    let res = cmd.execute(args);
+    println!("test_conditionals: {:?}", res);
+    
+    let args = DataObject::from_json(serde_json::from_str(r#"
+    {
+      "a": [1,2,3]
+    }
+    "#).unwrap());
+    let cmd = Command::new("testflow", "izzpiy1803778a841p3a5", store.clone());
+    let res = cmd.execute(args);
+    println!("test_lists: {:?}", res);
+    
+    let args = DataObject::from_json(serde_json::from_str(r#"
+    {
+      "a": 0
+    }
+    "#).unwrap());
+    let cmd = Command::new("testflow", "izmuzm18037d796f1i467", store.clone());
+    let res = cmd.execute(args);
+    println!("test_loop: {:?}", res);
     
 //    BytesRef::print_heap();
   }
