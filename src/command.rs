@@ -30,10 +30,18 @@ impl Command {
   }
   
   pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
-//    println!("executing: {:?}", self.src);
     let mut code = Code::new(self.src.duplicate(), self.store.clone());
+    //println!("executing: {:?}", self.src);
     code.execute(args)
   }
 }
 
+#[test]
+fn verify_test() {
+  let path = Path::new("data");
+  let store = DataStore::new(path.to_path_buf());
+  let command = Command::new("testflow", "zkuwhn1802d57cb8ak1c", store);
+  let id = command.id;
+  assert_eq!("zkuwhn1802d57cb8ak1c", id);
+}
 

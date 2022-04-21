@@ -1,34 +1,44 @@
 use serde_json::*;
+use once_cell::sync::Lazy; // 1.3.1
+use std::sync::Mutex;
 use std::fmt;
 
-use crate::bytesref::*;
-use crate::bytesutil::*;
-use crate::dataproperty::*;
+use crate::heap::*;
+use crate::data::*;
 use crate::dataobject::*;
 
+static HEAP: Lazy<Mutex<Heap<Vec<Data>>>> = Lazy::new(|| Mutex::new(Heap::new()));
+
 pub struct DataArray {
-  pub byte_ref: usize,
+  pub data_ref: usize,
 }
 
 impl DataArray {
   pub fn new() -> DataArray {
-    let bytes: Vec<u8> = Vec::<u8>::new();
-    let ba = BytesRef::push(bytes);
-    let ba = ba.to_handle();
-    ba.incr();
-    DataArray {
-      byte_ref: ba.byte_ref,
-    }
+    let data_ref = HEAP.lock().unwrap().push(Vec::<Data>::new());
+    return DataArray {
+      data_ref: data_ref,
+    };
+  }
+  
+  pub fn get(data_ref: usize) -> DataArray {
+    let mut o = DataArray{
+      data_ref: data_ref,
+    };
+    o.incr();
+    o
+  }
+  
+  pub fn incr(&mut self) {
+    HEAP.lock().unwrap().incr(self.data_ref);
+  }
+  
+  pub fn decr(&mut self) {
+    HEAP.lock().unwrap().decr(self.data_ref);
   }
   
   pub fn from_json(value:Value) -> DataArray {
-    let bytes: Vec<u8> = Vec::<u8>::new();
-    let ba = BytesRef::push(bytes);
-    let ba = ba.to_handle();
-    ba.incr();
-    let mut o = DataArray {
-      byte_ref: ba.byte_ref,
-    };
+    let mut o = DataArray::new();
     
     for val in value.as_array().unwrap().iter() {
       if val.is_string(){ o.push_str(val.as_str().unwrap()); }
@@ -46,13 +56,13 @@ impl DataArray {
   pub fn to_json(&self) -> Value {
     let mut val = Vec::<Value>::new();
     let mut id = 0;
-    for old in self {
-      if old.typ == TYPE_LONG { val.push(json!(self.get_i64(id))); }
-      else if old.typ == TYPE_FLOAT { val.push(json!(self.get_f64(id))); }
-      else if old.typ == TYPE_BOOLEAN { val.push(json!(self.get_bool(id))); }
-      else if old.typ == TYPE_STRING { val.push(json!(self.get_string(id))); }
-      else if old.typ == TYPE_OBJECT { val.push(self.get_object(id).to_json()); }
-      else if old.typ == TYPE_LIST { val.push(self.get_array(id).to_json()); }
+    for old in self.duplicate() {
+      if old.is_int() { val.push(json!(self.get_i64(id))); }
+      else if old.is_float() { val.push(json!(self.get_f64(id))); }
+      else if old.is_boolean() { val.push(json!(self.get_bool(id))); }
+      else if old.is_string() { val.push(json!(self.get_string(id))); }
+      else if old.is_object() { val.push(self.get_object(id).to_json()); }
+      else if old.is_array() { val.push(self.get_array(id).to_json()); }
       else { val.push(json!(null)); }
       id = id + 1;
     }
@@ -60,19 +70,17 @@ impl DataArray {
   }
   
   pub fn duplicate(&self) -> DataArray {
-    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let bytes = handle.from_handle();
-    handle.incr();
-    bytes.incr();
-    DataArray {
-      byte_ref: self.byte_ref,
-    }
+    let mut o = DataArray{
+      data_ref: self.data_ref,
+    };
+    o.incr();
+    o
   }
   
-  pub fn shallow_copy(&self) -> DataArray {
+  pub fn shallow_copy(self) -> DataArray {
     let mut o = DataArray::new();
-    for dp in self {
-      o.push_property(dp.typ, dp.to_bytes_ref());
+    for v in self {
+      o.push_property(v.clone());
     }
     o
   }
@@ -80,15 +88,15 @@ impl DataArray {
   pub fn deep_copy(&self) -> DataArray {
     let mut o = DataArray::new();
     let mut id = 0;
-    for dp in self {
-      if dp.typ == TYPE_OBJECT {
+    for v in self.duplicate() {
+      if v.is_object() {
         o.push_object(self.get_object(id).deep_copy());
       }
-      else if dp.typ == TYPE_LIST {
+      else if v.is_array() {
         o.push_list(self.get_array(id).deep_copy());
       }
       else {
-        o.push_property(dp.typ, dp.to_bytes_ref());
+        o.push_property(v.clone());
       }
       id = id + 1;
     }
@@ -96,185 +104,155 @@ impl DataArray {
   }
 
   pub fn len(&self) -> usize {
-    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let bytes = handle.from_handle();
-    bytes.len / PROPERTY_SIZE as usize
+    let mut heap = HEAP.lock().unwrap();
+    let vec = heap.get(self.data_ref);
+    vec.len()
   }
 
-  pub fn get_property(&self, id:usize) -> DataProperty {
-    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let bytes = handle.from_handle();
-    let props = bytes.as_propertyvec();
-    props.get(id).unwrap().clone()
+  pub fn get_property(&self, id:usize) -> Data {
+    let mut heap = HEAP.lock().unwrap();
+    let vec = heap.get(self.data_ref);
+    let data = vec.get_mut(id).unwrap();
+    data.clone()
   }
   
   pub fn get_string(&self, id:usize) -> String {
-    let dp = self.get_property(id);
-    let br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
-    br.as_string()
+    self.get_property(id).string()
   }
   
   pub fn get_bool(&self, id:usize) -> bool {
-    let dp = self.get_property(id);
-    let br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
-    br.as_bool()
+    self.get_property(id).boolean()
   }
   
   pub fn get_i64(&self, id:usize) -> i64 {
-    let dp = self.get_property(id);
-    let br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
-    br.as_i64()
+    self.get_property(id).int()
   }
   
   pub fn get_f64(&self, id:usize) -> f64 {
-    let dp = self.get_property(id);
-    let br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
-    br.as_f64()
+    self.get_property(id).float()
   }
 
   pub fn get_array(&self, id:usize) -> DataArray {
-    let dp = self.get_property(id);
-    let mut br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
-    br.incr();
-    br.from_handle().incr();
-    DataArray { byte_ref: br.byte_ref, }
+    self.get_property(id).array()
   }
 
   pub fn get_object(&self, id:usize) -> DataObject {
-    let dp = self.get_property(id);
-    let mut br = BytesRef::get(dp.byte_ref, dp.off, dp.len);
-    br.incr();
-    br.from_handle().incr();
-    DataObject { byte_ref: br.byte_ref, }
+    self.get_property(id).object()
   }
 
-  pub fn push_property(&mut self, typ:u8, mut bytesref:BytesRef) {
-    // FIXME - Not thread safe. Call should be synchronized
-    bytesref.incr();
-    if typ == TYPE_OBJECT || typ == TYPE_LIST {
-      bytesref.from_handle().incr();
+  pub fn push_property(&mut self, data:Data) {
+    if data.is_object() {
+      data.object().incr(); 
     }
-
-    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let mut bytes = handle.from_handle();
-    let mut props = bytes.as_propertyvec();
-
-    let id = props.len();
-    let dp = DataProperty::new(id, typ, bytesref);
-    props.push(dp);
-    
-    let nubytes = propertyvec_to_bytes(props);
-    let n = nubytes.len();
-    bytes.len = n;
-    bytes.swap(nubytes);
-    handle.swap(bytes.to_handle_bytes());
+    else if data.is_array() {
+      data.array().incr(); 
+    }
+  
+    let mut heap = HEAP.lock().unwrap();
+    let vec = heap.get(self.data_ref);
+    vec.push(data);
   }
 
   pub fn push_str(&mut self, val:&str) {
-    let ba = BytesRef::from_str(val);
-    self.push_property(TYPE_STRING, ba);
+    self.push_property(Data::DString(val.to_string()));
   }
   
   pub fn push_bool(&mut self, val:bool) {
-    let ba = BytesRef::from_bool(val);
-    self.push_property(TYPE_BOOLEAN, ba);
+    self.push_property(Data::DBoolean(val));
   }
   
   pub fn push_i64(&mut self, val:i64) {
-    let ba = BytesRef::from_i64(val);
-    self.push_property(TYPE_LONG, ba);
+    self.push_property(Data::DInt(val));
   }
   
   pub fn push_float(&mut self, val:f64) {
-    let ba = BytesRef::from_f64(val);
-    self.push_property(TYPE_FLOAT, ba);
+    self.push_property(Data::DFloat(val));
   }
 
   pub fn push_object(&mut self, o:DataObject) {
-    let handle = BytesRef::get(o.byte_ref, 0, 24);
-    self.push_property(TYPE_OBJECT, handle);
+    self.push_property(Data::DObject(o.data_ref));
   }
   
   pub fn push_list(&mut self, a:DataArray) {
-    let handle = BytesRef::get(a.byte_ref, 0, 24);
-    self.push_property(TYPE_LIST, handle);
+    self.push_property(Data::DArray(a.data_ref));
   }
   
   // FIXME - add insert/set_...(index, value) function for all types
   
   pub fn remove_property(&mut self, id:usize) {
-    // FIXME - Not thread safe. Call should be synchronized
-    let mut handle:BytesRef = BytesRef::get(self.byte_ref, 0, 24);
-    let mut bytes = handle.from_handle();
-    let mut props = bytes.as_propertyvec();
+    let mut objects_to_kill = Vec::<DataObject>::new();
+    let mut arrays_to_kill = Vec::<DataArray>::new();
     
-    let dp = props.remove(id);
-    if dp.typ == TYPE_OBJECT {
-      let _o = DataObject {
-        byte_ref: dp.byte_ref,
-      };
+    let mut heap = HEAP.lock().unwrap();
+    let vec = heap.get(self.data_ref);
+    let old = vec.remove(id);
+    if let Data::DObject(i) = &old {
+      let x = DataObject { data_ref: *i, };
+      objects_to_kill.push(x);
     }
-    else if dp.typ == TYPE_LIST {
-      let _o = DataArray {
-        byte_ref: dp.byte_ref,
-      };
+    else if let Data::DArray(i) = &old {
+      let x = DataArray { data_ref: *i, };
+      arrays_to_kill.push(x);
     }
-    
-    let nubytes = propertyvec_to_bytes(props);
-    let n = nubytes.len();
-    bytes.len = n;
-    bytes.swap(nubytes);
-    handle.swap(bytes.to_handle_bytes());
+  }
+
+  pub fn print_heap() {
+    println!("{:?}", HEAP);
   }
 }
 
-impl<'a> IntoIterator for &'a DataArray {
-    type Item = DataProperty;
-    type IntoIter = DataArrayIterator<'a>;
+impl IntoIterator for DataArray {
+  type Item = Data;
+  type IntoIter = DataArrayIterator;
 
-    fn into_iter(self) -> Self::IntoIter {
-        DataArrayIterator {
-            data_array: self,
-            index: 0,
-        }
+  fn into_iter(self) -> Self::IntoIter {
+    let mut heap = HEAP.lock().unwrap();
+    let map = heap.get(self.data_ref);
+    let mut vec = Vec::<Data>::new();
+    for v in map {
+      vec.push(v.clone());
     }
+    DataArrayIterator {
+      list: vec,
+      index: 0,
+    }
+  }
 }
 
-pub struct DataArrayIterator<'a> {
-    data_array: &'a DataArray,
-    index: usize,
+pub struct DataArrayIterator {
+  list: Vec<Data>,
+  index: usize,
 }
 
-impl<'a> Iterator for DataArrayIterator<'a> {
-    type Item = DataProperty;
-    fn next(&mut self) -> Option<DataProperty> {
-        let mut handle = BytesRef::get(self.data_array.byte_ref, 0, 24);
-        let bytes = handle.from_handle();
-        let vec = bytes.as_propertyvec();
-        if self.index == vec.len() { return None; }
-        let val = vec[self.index];
-        self.index += 1;
-        Some(val)
-    }
+impl Iterator for DataArrayIterator {
+  type Item = Data;
+  fn next(&mut self) -> Option<Data> {
+    let v = self.list.get(self.index)?;
+    self.index += 1;
+    Some(v.clone())
+  }
 }
 
 impl Drop for DataArray {
   fn drop(&mut self) {
-    let mut handle = BytesRef::get(self.byte_ref, 0, 24);
-    let n = handle.count();
-    let bytes = handle.from_handle();
     let mut objects_to_kill = Vec::<DataObject>::new();
     let mut arrays_to_kill = Vec::<DataArray>::new();
-    if n == 2 {
-      for old in bytes.as_propertyvec().iter() {
-        let ba = BytesRef::get(old.byte_ref, old.off, old.len);
-        if old.typ == TYPE_OBJECT { objects_to_kill.push(DataObject { byte_ref: ba.byte_ref, }); }
-        else if old.typ == TYPE_LIST { arrays_to_kill.push(DataArray { byte_ref: ba.byte_ref, }); }
-        else { ba.decr(); }
+    
+    let n = HEAP.lock().unwrap().count(self.data_ref);
+    if n == 1 {
+      let dup = self.duplicate();
+      for v in dup {
+        if let Data::DObject(i) = v {
+          let x = DataObject { data_ref: i, };
+          objects_to_kill.push(x);
+        }
+        else if let Data::DArray(i) = v {
+          let x = DataArray { data_ref: i, };
+          arrays_to_kill.push(x);
+        }
       }
     }
-    handle.decr();
-    bytes.decr();
+    self.decr();
   }
 }
 

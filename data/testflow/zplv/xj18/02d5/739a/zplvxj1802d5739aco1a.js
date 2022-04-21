@@ -13,6 +13,9 @@ me.ready = function(){
           el.append("test_lists:"+JSON.stringify(result)+"<BR>");
           send_test_loop(0, function(result) {
             el.append("test_loop:"+JSON.stringify(result)+"<BR>");
+            send_test_speed(100000, function(result) {
+              el.append("test_speed:"+JSON.stringify(result)+"<BR>");
+            });
           });
         });
       });

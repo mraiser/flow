@@ -3,8 +3,7 @@ use std::cmp;
 use crate::primitives::Primitive;
 use crate::dataobject::*;
 use crate::dataarray::*;
-use crate::bytesref::*;
-use crate::dataproperty::*;
+use crate::data::*;
 use crate::datastore::DataStore;
 use crate::command::Command;
 
@@ -51,8 +50,7 @@ impl Code {
           if !cmd.get_bool("done") {
             let mut count = 0;
             let mut b = true;
-            for dp in &cmd.get_object("in") {
-              let key = cmd.lookup_prop_string(dp.id);
+            for (key,_value) in cmd.get_object("in") {
               count = count + 1;
               if let Some(_con) = self.lookup_con(&cons, &key, "in"){
                 b = false;
@@ -79,7 +77,7 @@ impl Code {
             if !con.get_bool("done") {
               c = false;
               let mut b = false;
-              let mut val = DataProperty::new(0, TYPE_NULL, BytesRef::push(Vec::<u8>::new()));
+              let mut val = Data::DNull;
               let ja = con.get_array("src");
               let src = ja.get_i64(0);
               let srcname = ja.get_string(1);
@@ -95,16 +93,16 @@ impl Code {
               else {
                 let cmd = cmds.get_object(src as usize);
                 if cmd.get_bool("done") {
+                  //println!("SRCNAME {}", &srcname);
                   val = cmd.get_object("out").get_property(&srcname);
                   b = true;
                 }
               }
               
               if b {
-                let newbr = BytesRef::get(val.byte_ref, val.off, val.len);
                 con.put_bool("done", true);
                 if dest == -2 {
-                  out.set_property(&destname, val.typ, newbr);
+                  out.set_property(&destname, val);
                 }
                 else {
                   let mut cmd = cmds.get_object(dest as usize);
@@ -115,13 +113,12 @@ impl Code {
                   }
                   else {
                     let mut var = cmd.get_object("in").get_object(&destname);
-                    var.set_property("val", val.typ, newbr);
+                    var.set_property("val", val);
                     var.put_bool("done", true);
                     
                     let input = cmd.get_object("in");
-                    for dp in &input {
-                      let key = cmd.lookup_prop_string(dp.id);
-                      let mut value = input.get_object(&key);
+                    for (_key,v) in input {
+                      let mut value = v.object();
                       if !value.has("done") { value.put_bool("done", false); }
                       b = b && value.get_bool("done");
                       if !b { break; }
@@ -177,13 +174,11 @@ impl Code {
     let mut in1 = DataObject::new();
     let in2 = cmd.get_object("in");
     let mut list_in:Vec<String> = Vec::new();
-    for dp in &in2 {
-      let name = cmd.lookup_prop_string(dp.id);
-      let in3 = in2.get_object(&name);
+    for (name,v) in in2 {
+      let in3 = v.object();
       
       let dp3 = in3.get_property("val");
-      let br3 = BytesRef::get(dp3.byte_ref, dp3.off, dp3.len);
-      in1.set_property(&name, dp3.typ, br3);
+      in1.set_property(&name, dp3);
       
       if in3.has("mode") && in3.get_string("mode") == "list" { list_in.push(name); }
     }
@@ -191,9 +186,8 @@ impl Code {
     let out2 = cmd.get_object("out");
     let mut list_out:Vec<String> = Vec::new();    
     let mut loop_out:Vec<String> = Vec::new();    
-    for dp in &out2 {
-      let name = cmd.lookup_prop_string(dp.id);
-      let out3 = out2.get_object(&name);
+    for (name,v) in out2.duplicate() {
+      let out3 = v.object();
       if out3.has("mode") {
         let mode = out3.get_string("mode");
         if mode == "list" { list_out.push(name); }
@@ -221,36 +215,33 @@ impl Code {
       let mut i = 0;
       loop {
         let mut in3 = DataObject::new();
-        let list = in1.keys();
+        let list = in1.duplicate().keys();
         for key in list {
           if !list_in.contains(&key) { 
             let dp = in1.get_property(&key);
-            let br = dp.to_bytes_ref();
-            in3.set_property(&key, dp.typ, br); 
+            in3.set_property(&key, dp); 
           }
           else {
             let ja = in1.get_array(&key);
             let dp = ja.get_property(i);
-            let br = dp.to_bytes_ref();
-            in3.set_property(&key, dp.typ, br); 
+            in3.set_property(&key, dp); 
           }
         }
 
         self.evaluate_operation(cmd.duplicate(), in3)?;
         
         let out = cmd.get_object("out");
-        for dpx in &out2 {
-          let k = &out2.lookup_prop_string(dpx.id);
-          if out.has(k) {
-            let dp = out.get_property(k);
-            if list_out.contains(k) {
-              out3.get_array(k).push_property(dp.typ, dp.to_bytes_ref());
+        for (k,_v) in out2.duplicate() {
+          if out.has(&k) {
+            let dp = out.get_property(&k);
+            if list_out.contains(&k) {
+              out3.get_array(&k).push_property(dp);
             }
             else {
-              out3.set_property(k, dp.typ, dp.to_bytes_ref());
-              if loop_out.contains(k) {
-                let newk = out2.get_object(k).get_string("loop");
-                in1.set_property(&newk, dp.typ, dp.to_bytes_ref());
+              out3.set_property(&k, dp.clone());
+              if loop_out.contains(&k) {
+                let newk = out2.get_object(&k).get_string("loop");
+                in1.set_property(&newk, dp.clone());
               }
             }
           }
@@ -291,18 +282,17 @@ impl Code {
         cmd.put_bool("FINISHED", code.finishflag);
       }
       else if cmd_type == "constant" {
-        for dp in &cmd.get_object("out") {
-          let key = &cmd.lookup_prop_string(dp.id);
+        for (key,_x) in cmd.get_object("out") {
           let ctype = cmd.get_string("ctype");
-          if ctype == "int" { out.put_i64(key, v.parse::<i64>().unwrap()); }
-          else if ctype == "decimal" { out.put_float(key, v.parse::<f64>().unwrap()); }
-          else if ctype == "boolean" { out.put_bool(key, v.parse::<bool>().unwrap()); }
-          else if ctype == "string" { out.put_str(key, v); }
+          if ctype == "int" { out.put_i64(&key, v.parse::<i64>().unwrap()); }
+          else if ctype == "decimal" { out.put_float(&key, v.parse::<f64>().unwrap()); }
+          else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap()); }
+          else if ctype == "string" { out.put_str(&key, v); }
           else if ctype == "object" { 
-            out.put_object(key, DataObject::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_object(&key, DataObject::from_json(serde_json::from_str(v).unwrap())); 
           }
           else if ctype == "array" { 
-            out.put_list(key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_list(&key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
           }
           else { out.put_null(v); }
         }
@@ -313,9 +303,8 @@ impl Code {
         let lib = sa[0];
         let cmdname = sa[2];
         let mut params = DataObject::new();
-        for dp in &in1 {
-          let key = BytesRef::lookup_prop_string(dp.id);
-          params.set_property(&key, dp.typ, dp.to_bytes_ref());
+        for (key,v) in in1.duplicate() {
+          params.set_property(&key, v);
         }
         
         // FIXME - add remote command support
@@ -329,48 +318,47 @@ impl Code {
         let mut i = 0;
         let cmdout = cmd.get_object("out");
         let keys = subcmd.src.get_object("output").keys();
-        for dp in &cmdout {
-          let key1 = cmdout.lookup_prop_string(dp.id);
+        for (key1, _v) in cmdout {
           let key2 = &keys[i];
           let dp = result.get_property(key2);
-          out.set_property(&key1, dp.typ, dp.to_bytes_ref());
+          out.set_property(&key1, dp);
           i = i + 1;
         }
       }
       else if cmd_type == "match" {
-        let key = &in1.keys()[0];
+        let key = &in1.duplicate().keys()[0];
         let ctype = cmd.get_string("ctype");
         let dp1 = &in1.get_property(key);
         
         // FIXME - Support match on null?
         if ctype == "int" {
-          if dp1.typ != TYPE_LONG { b = false; }
+          if !dp1.is_int() { b = false; }
           else {
-            let val1 = dp1.as_i64();
+            let val1 = dp1.int();
             let val2 = v.parse::<i64>().unwrap();
             b = val1 == val2;
           }
         }
         else if ctype == "decimal" {
-          if dp1.typ != TYPE_FLOAT { b = false; }
+          if !dp1.is_float() { b = false; }
           else {
-            let val1 = dp1.as_f64();
+            let val1 = dp1.float();
             let val2 = v.parse::<f64>().unwrap();
             b = val1 == val2;
           }
         }
         else if ctype == "boolean" {
-          if dp1.typ != TYPE_BOOLEAN { b = false; }
+          if !dp1.is_boolean() { b = false; }
           else {
-            let val1 = dp1.as_bool();
+            let val1 = dp1.boolean();
             let val2 = v.parse::<bool>().unwrap();
             b = val1 == val2;
           }
         }
         else if ctype == "string" {
-          if dp1.typ != TYPE_STRING { b = false; }
+          if !dp1.is_string() { b = false; }
           else {
-            let val1 = dp1.as_string();
+            let val1 = dp1.string();
             b = val1 == v.to_owned(); 
           }
         }

@@ -76,3 +76,12 @@ impl DataStore {
   }
 }
 
+#[test]
+fn verify_test() {
+  let path = Path::new("data");
+  let store = DataStore::new(path.to_path_buf());
+  let codeval = store.get_data("testflow", "zkuwhn1802d57cb8ak1c");
+  let id = &codeval["id"];
+  assert_eq!("zkuwhn1802d57cb8ak1c", id);
+}
+

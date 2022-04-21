@@ -5,17 +5,15 @@ mod code;
 mod command;
 mod datastore;
 mod primitives;
-mod bytesref;
-mod bytesutil;
+mod data;
 mod heap;
-mod dataproperty;
 mod dataobject;
 mod dataarray;
 
 use command::Command as Command;
 use datastore::DataStore;
-use bytesref::*;
 use dataobject::*;
+use dataarray::*;
 
 fn main() {
   env::set_var("RUST_BACKTRACE", "1");
@@ -69,8 +67,19 @@ fn main() {
     let res = cmd.execute(args);
     println!("test_loop: {:?}", res);
     
-//    BytesRef::print_heap();
+    let args = DataObject::from_json(serde_json::from_str(r#"
+    {
+      "a": 1000
+    }
+    "#).unwrap());
+    let cmd = Command::new("testflow", "jqlvrz18041a69d0bw311", store.clone());
+    let res = cmd.execute(args);
+    println!("test_speed: {:?}", res);
+
+//    DataObject::print_heap();
+//    DataArray::print_heap();
   }
   
-  BytesRef::print_heap();
+  DataObject::print_heap();
+  DataArray::print_heap();
 }
