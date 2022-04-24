@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug)]
-struct Blob<T> {
+struct Blob<T: std::fmt::Debug> {
   data: T,
   count: usize,
 }
 
-pub struct Heap<T> {
+pub struct Heap<T: std::fmt::Debug> {
   data: HashMap<usize, Blob<T>>,
   ref_index: usize,
 }
@@ -73,3 +73,15 @@ impl<T: std::fmt::Debug> fmt::Debug for Heap<T> {
     Ok(())
   }
 }
+
+impl<T: std::fmt::Debug> Drop for Blob<T>  {
+  fn drop(&mut self) {
+    println!("DROP {:?}", self);
+  }
+}
+
+#[test]
+fn verify_test() {
+  assert_eq!(true, true);
+}
+

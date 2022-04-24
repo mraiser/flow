@@ -72,11 +72,11 @@ impl Data {
     if let Data::DString(s) = self { s.to_owned() } else { panic!("Not a string"); }
   }
 
-  pub fn object(&self, env:&mut FlowEnv) -> DataObject {
+  pub fn object<'a>(&self, env:&'a FlowEnv) -> DataObject<'a> {
     if let Data::DObject(i) = self { DataObject::get(*i, env) } else { panic!("Not an object"); }
   }
 
-  pub fn array(&self, env:&mut FlowEnv) -> DataArray {
+  pub fn array<'a>(&self, env:&'a FlowEnv) -> DataArray<'a> {
     if let Data::DArray(i) = self { DataArray::get(*i, env) } else { panic!("Not an array"); }
   }
 }

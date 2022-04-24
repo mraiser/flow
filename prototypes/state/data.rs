@@ -1,6 +1,5 @@
 use crate::dataobject::*;
 use crate::dataarray::*;
-use crate::flowenv::*;
 
 #[derive(Debug)]
 pub enum Data {
@@ -72,12 +71,12 @@ impl Data {
     if let Data::DString(s) = self { s.to_owned() } else { panic!("Not a string"); }
   }
 
-  pub fn object(&self, env:&mut FlowEnv) -> DataObject {
-    if let Data::DObject(i) = self { DataObject::get(*i, env) } else { panic!("Not an object"); }
+  pub fn object(&self) -> DataObject {
+    if let Data::DObject(i) = self { DataObject::get(*i) } else { panic!("Not an object"); }
   }
 
-  pub fn array(&self, env:&mut FlowEnv) -> DataArray {
-    if let Data::DArray(i) = self { DataArray::get(*i, env) } else { panic!("Not an array"); }
+  pub fn array(&self) -> DataArray {
+    if let Data::DArray(i) = self { DataArray::get(*i) } else { panic!("Not an array"); }
   }
 }
 

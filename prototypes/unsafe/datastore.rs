@@ -4,7 +4,6 @@ use std::path::*;
 use std::io::Read;
 
 use crate::dataobject::*;
-use crate::flowenv::*;
 
 #[derive(Debug)]
 pub struct DataStore {
@@ -24,7 +23,7 @@ impl DataStore {
     };
   }
   
-  pub fn get_data(&self, db: &str, id: &str, env:&mut FlowEnv) -> DataObject {
+  pub fn get_data(&self, db: &str, id: &str) -> DataObject {
     let path = self.get_data_file(db, id);
     let s = self.read_file(path);
     let mut data: Value = serde_json::from_str(&s).unwrap();
@@ -42,7 +41,7 @@ impl DataStore {
         }
       }
     }
-    DataObject::from_json(data, env)
+    DataObject::from_json(data)
   }
   
   fn get_data_file(&self, db: &str, id: &str) -> PathBuf {
@@ -75,5 +74,14 @@ impl DataStore {
     f.read_to_string(&mut s).unwrap();
     s
   }
+}
+
+#[test]
+fn verify_test() {
+  let path = Path::new("data");
+  let store = DataStore::new(path.to_path_buf());
+  let codeval = store.get_data("testflow", "zkuwhn1802d57cb8ak1c");
+  let id = &codeval["id"];
+  assert_eq!("zkuwhn1802d57cb8ak1c", id);
 }
 

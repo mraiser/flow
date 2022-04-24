@@ -73,3 +73,9 @@ impl<T: std::fmt::Debug> fmt::Debug for Heap<T> {
     Ok(())
   }
 }
+
+#[test]
+fn verify_test() {
+  assert_eq!(true, true);
+}
+

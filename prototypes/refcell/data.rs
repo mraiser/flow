@@ -1,11 +1,12 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use crate::dataobject::*;
-use crate::dataarray::*;
-use crate::flowenv::*;
 
 #[derive(Debug)]
 pub enum Data {
-  DObject(usize),
-  DArray(usize),
+  DObject(RefCell<HashMap<String, Data>>),
+  DArray(RefCell<Vec<Data>>),
   DString(String),
   DBoolean(bool),
   DFloat(f64),
@@ -14,14 +15,24 @@ pub enum Data {
 }
 
 impl Data {
-  pub fn clone(&self) -> Data {
-    if let Data::DInt(d) = self { return Data::DInt(*d); } 
-    if let Data::DFloat(d) = self { return Data::DFloat(*d); } 
-    if let Data::DBoolean(d) = self { return Data::DBoolean(*d); } 
-    if let Data::DString(d) = self { return Data::DString(d.to_owned()); } 
-    if let Data::DObject(d) = self { return Data::DObject(*d); } 
-    if let Data::DArray(d) = self { return Data::DArray(*d); } 
+  pub fn clone(mut self) -> Data {
+//    if let Data::DInt(d) = self { return Data::DInt(*d); } 
+//    if let Data::DFloat(d) = self { return Data::DFloat(*d); } 
+//    if let Data::DBoolean(d) = self { return Data::DBoolean(*d); } 
+//    if let Data::DString(d) = self { return Data::DString(d.to_owned()); } 
+    if let Data::DObject(d) = self { 
+      return Data::DObject(d); 
+    } 
+//    if let Data::DArray(d) = self { return Data::DArray(*d); } 
     Data::DNull 
+  }
+  
+  pub fn new_object() -> Data {
+    Data::DObject(RefCell::new(HashMap::new()))
+  }
+  
+  pub fn new_array() -> Data {
+    Data::DArray(RefCell::new(Vec::new()))
   }
   
   pub fn is_number(&self) -> bool {
@@ -71,14 +82,24 @@ impl Data {
   pub fn string(&self) -> String {
     if let Data::DString(s) = self { s.to_owned() } else { panic!("Not a string"); }
   }
-
-  pub fn object(&self, env:&mut FlowEnv) -> DataObject {
-    if let Data::DObject(i) = self { DataObject::get(*i, env) } else { panic!("Not an object"); }
+  
+  pub fn map_get(self, key:&str) -> &Data {
+    if let Data::DObject(i) = self { 
+      let dref = i.borrow();
+      let d = dref.get(key).unwrap();
+      d.clone()
+    } 
+    else { panic!("Not an object"); }
+  }
+  
+/*
+  pub fn object(&self) -> DataObject {
+    if let Data::DObject(i) = self { DataObject{ data_ref: i.borrow() } } else { panic!("Not an object"); }
   }
 
-  pub fn array(&self, env:&mut FlowEnv) -> DataArray {
-    if let Data::DArray(i) = self { DataArray::get(*i, env) } else { panic!("Not an array"); }
+  pub fn array(&self) -> DataArray {
+    if let Data::DArray(i) = self { DataArray::get(*i) } else { panic!("Not an array"); }
   }
+*/
 }
-
 
