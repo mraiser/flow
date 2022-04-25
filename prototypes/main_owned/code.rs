@@ -274,7 +274,7 @@ impl Code {
     
     let evaluation: Result<(), CodeException> = (|| {
       if cmd_type == "primitive" { // FIXME - use match
-        let p = Primitive::new(v, env);
+        let p = Primitive::new(v);
         out = p.execute(in1, env);
       }
       else if cmd_type == "local" {

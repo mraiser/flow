@@ -5,24 +5,24 @@ use crate::flowenv::*;
 
 pub struct Primitive {
   pub name: String,
-  pub inputs: DataObject,
-  pub outputs: DataObject,
+//  pub inputs: DataObject,
+//  pub outputs: DataObject,
   pub func: fn(args:DataObject, env:&mut FlowEnv) -> DataObject,
 }
 
 impl Primitive {
-  pub fn new(name: &str, env:&mut FlowEnv) -> Primitive {
-    if name == "+" { return build_plus(env); }
-    if name == "-" { return build_minus(env); }
-    if name == "time" { return build_time(env); }
+  pub fn new(name: &str) -> Primitive {
+    if name == "+" { return build_plus(); }
+    if name == "-" { return build_minus(); }
+    if name == "time" { return build_time(); }
     
     // FIXME - Should fail on unknown prim
     println!("Unknown primitive: {}", name);
     
     return Primitive { 
       name: name.to_string(),
-      inputs: DataObject::new(env),
-      outputs: DataObject::new(env),
+//      inputs: DataObject::new(env),
+//      outputs: DataObject::new(env),
       func: noop,
     };
   }
@@ -42,14 +42,14 @@ fn time(_args:DataObject, env:&mut FlowEnv) -> DataObject {
   o
 }
 
-fn build_time(env:&mut FlowEnv) -> Primitive {
-  let ins = DataObject::new(env);
-  let mut outs = DataObject::new(env);
-  outs.put_object("a", DataObject::new(env), env);
+fn build_time() -> Primitive {
+//  let ins = DataObject::new(env);
+//  let mut outs = DataObject::new(env);
+//  outs.put_object("a", DataObject::new(env), env);
   Primitive {
     name: "time".to_string(),
-    inputs: ins,
-    outputs: outs,
+//    inputs: ins,
+//    outputs: outs,
     func: time,
   }
 }
@@ -74,18 +74,18 @@ fn plus(args:DataObject, env:&mut FlowEnv) -> DataObject{
   out
 }
 
-fn build_plus(env:&mut FlowEnv) -> Primitive {
-  let mut ins = DataObject::new(env);
-  ins.put_object("a", DataObject::new(env), env);
-  ins.put_object("b", DataObject::new(env), env);
+fn build_plus() -> Primitive {
+//  let mut ins = DataObject::new(env);
+//  ins.put_object("a", DataObject::new(env), env);
+//  ins.put_object("b", DataObject::new(env), env);
   
-  let mut outs = DataObject::new(env);
-  outs.put_object("c", DataObject::new(env), env);
+//  let mut outs = DataObject::new(env);
+//  outs.put_object("c", DataObject::new(env), env);
 
   Primitive {
     name: "+".to_string(),
-    inputs: ins,
-    outputs: outs,
+//    inputs: ins,
+//    outputs: outs,
     func: plus,
   }
 }
@@ -110,18 +110,18 @@ fn minus(args:DataObject, env:&mut FlowEnv) -> DataObject{
   out
 }
 
-fn build_minus(env:&mut FlowEnv) -> Primitive {
-  let mut ins = DataObject::new(env);
-  ins.put_object("a", DataObject::new(env), env);
-  ins.put_object("b", DataObject::new(env), env);
+fn build_minus() -> Primitive {
+//  let mut ins = DataObject::new(env);
+//  ins.put_object("a", DataObject::new(env), env);
+//  ins.put_object("b", DataObject::new(env), env);
   
-  let mut outs = DataObject::new(env);
-  outs.put_object("c", DataObject::new(env), env);
+//  let mut outs = DataObject::new(env);
+//  outs.put_object("c", DataObject::new(env), env);
 
   Primitive {
     name: "+".to_string(),
-    inputs: ins,
-    outputs: outs,
+//    inputs: ins,
+//    outputs: outs,
     func: minus,
   }
 }

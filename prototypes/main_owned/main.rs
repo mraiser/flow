@@ -86,7 +86,7 @@ fn main() {
     "#).unwrap(), env);
     let cmd = Command::new("testflow", "jqlvrz18041a69d0bw311", env);
     let res = cmd.execute(args, env);
-    println!("test_speed: {:?}", res);
+    println!("test_speed: {}", res.unwrap().get_i64("a", env));
 
 //    DataObject::print_heap(env);
 //    DataArray::print_heap(env);
