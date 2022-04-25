@@ -1,6 +1,7 @@
 use crate::dataobject::*;
 use crate::data::*;
 use std::time::UNIX_EPOCH;
+use std::time::SystemTime;
 use crate::flowenv::*;
 
 pub struct Primitive {
@@ -36,9 +37,13 @@ fn noop(_args:DataObject, env:&mut FlowEnv) -> DataObject{
   DataObject::new(env)
 }
 
+pub fn current_time_millis() -> i64 {
+  SystemTime::now().duration_since(UNIX_EPOCH).expect("error").as_millis().try_into().unwrap()
+}
+
 fn time(_args:DataObject, env:&mut FlowEnv) -> DataObject {
   let mut o = DataObject::new(env);
-  o.put_i64("a", std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("error").as_millis().try_into().unwrap(), env);
+  o.put_i64("a", current_time_millis(), env);
   o
 }
 

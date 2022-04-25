@@ -8,7 +8,6 @@ struct Blob<T> {
   count: usize,
 }
 
-#[derive(Debug)]
 pub struct Heap<T> {
   data: IndexMap<Blob<T>>,
 }
@@ -52,21 +51,17 @@ impl<T: std::fmt::Debug> Heap<T> {
     }
   }
 }
-/*
+
 impl<T: std::fmt::Debug> fmt::Debug for Heap<T> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     writeln!(f, "object count {}", self.data.len()).unwrap();
-    let mut i = 0;
-    while i<self.ref_index {
-      if let Some(blob) = self.data.get(&i) {
-        let c = blob.count;
-        let mut s = format!("{:?}", blob);
-        if s.len() > 66 { s = s[0..66].to_string()+"..."; }
-        writeln!(f, "{}: {} - {}", i, c, s).unwrap();
-      }
-      i = i + 1;
+    for (i,blob) in &self.data {
+      let c = blob.count;
+      let mut s = format!("{:?}", blob);
+      if s.len() > 66 { s = s[0..66].to_string()+"..."; }
+      writeln!(f, "{}: {} - {}", i, c, s).unwrap();
     }
     Ok(())
   }
 }
-*/
+

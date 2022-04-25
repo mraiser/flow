@@ -135,7 +135,8 @@ impl Code {
         Ok(())
       })();
       
-      env.gc();
+//      println!("execute");
+//      env.gc();
       
       if let Err(e) = evaluation {
         if e == CodeException::NextCase {
@@ -247,7 +248,8 @@ impl Code {
           }
         }
         
-        env.gc();
+//        println!("evaluate");
+//        env.gc();
         
         if cmd.has("FINISHED", env) && cmd.get_bool("FINISHED", env) {
           break;
@@ -376,6 +378,7 @@ impl Code {
       Ok(())
     })();
     
+//    println!("operation");
     env.gc();
     
     if let Err(e) = evaluation {
