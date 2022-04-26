@@ -256,7 +256,7 @@ impl Code {
         }
       }
       
-      println!("LIST/LOOP END {:?}", out3.to_json(env));
+//      println!("LIST/LOOP END {:?}", out3.to_json(env));
       cmd.result = Some(out3.duplicate(env));
       return Ok(out3);
     }
