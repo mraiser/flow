@@ -6,6 +6,7 @@ use crate::dataobject::*;
 use crate::dataarray::*;
 use crate::data::*;
 use crate::command::Command;
+use crate::case::*;
 
 #[derive(PartialEq, Debug)]
 pub enum CodeException {
@@ -16,12 +17,12 @@ pub enum CodeException {
 
 #[derive(Debug)]
 pub struct Code {
-  pub data: DataObject,
+  pub data: Case,
   pub finishflag: bool,
 }
 
 impl Code {
-  pub fn new(data: DataObject) -> Code {
+  pub fn new(data: Case) -> Code {
     Code {
       data: data,
       finishflag: false,
@@ -32,34 +33,35 @@ impl Code {
     let mut done = false;
     let mut out = DataObject::new(env);
     
-    let mut current_case = self.data.duplicate(env);
+    let mut current_case = self.data.duplicate();
     
     while !done {
       let evaluation: Result<(), CodeException> = (|| {
-        let cmds = current_case.get_array("cmds", env);
-        let n2 = cmds.len(env);
-        let cons = current_case.get_array("cons", env);
-        let n = cons.len(env);
+        let cmds = &mut current_case.cmds;
+        let n2 = cmds.len();
+        let cons = &mut current_case.cons;
+        let n = cons.len();
         
         let mut i = 0;
         while i<n2{
-          let mut cmd = cmds.get_object(i, env);
-          if !cmd.has("done", env) { cmd.put_bool("done", false, env); }
-          if !cmd.get_bool("done", env) {
+          let cmd = &mut cmds.get_mut(i).unwrap();
+          if !cmd.done {
             let mut count = 0;
             let mut b = true;
-            for (key,_value) in cmd.get_object("in", env).objects(env) {
+            let input = &mut cmd.input;
+            for (key,value) in input {
               count = count + 1;
-              if let Some(_con) = self.lookup_con(&cons, &key, "in", env){
+              if let Some(_con) = self.lookup_con(cons, &key, "in"){
                 b = false;
                 break;
               }
               else {
                 //println!("No input found!");
-                cmd.get_object(&key, env).put_bool("done", true, env);
+                value.done = true;
               }
             }
             if count == 0 || b {
+              //println!("NO INPUTS");
               self.evaluate(cmd, env)?;
             }
           }
@@ -70,18 +72,17 @@ impl Code {
           let mut c = true;
           let mut i = 0;
           while i<n {
-            let mut con = cons.get_object(i, env);
-            if !con.has("done", env) { con.put_bool("done", false, env); }
-            if !con.get_bool("done", env) {
+            let con = &mut cons[i];
+            if !con.done {
               c = false;
               let mut b = false;
               let mut val = Data::DNull;
-              let ja = con.get_array("src", env);
-              let src = ja.get_i64(0, env);
-              let srcname = ja.get_string(1, env);
-              let ja = con.get_array("dest", env);
-              let dest = ja.get_i64(0, env);
-              let destname = ja.get_string(1, env);
+              let ja = &mut con.src;
+              let src = ja.index;
+              let srcname = &ja.name;
+              let ja = &mut con.dest;
+              let dest = ja.index;
+              let destname = &ja.name;
               if src == -1 {
                 if args.has(&srcname, env){
                   val = args.get_property(&srcname, env);
@@ -89,39 +90,39 @@ impl Code {
                 b = true;
               }
               else {
-                let cmd = cmds.get_object(src as usize, env);
-                if cmd.get_bool("done", env) {
-                  //println!("SRCNAME {}", &srcname);
-                  val = cmd.get_object("out", env).get_property(&srcname, env);
+                let cmd = &mut cmds[src as usize];
+                if cmd.done {
+                  val = cmd.result.as_ref().unwrap().get_property(srcname, env).clone();
                   b = true;
                 }
               }
               
               if b {
-                con.put_bool("done", true, env);
+                con.done = true;
                 if dest == -2 {
                   out.set_property(&destname, val, env);
                 }
                 else {
-                  let mut cmd = cmds.get_object(dest as usize, env);
-                  if cmd.get_string("type", env) == "undefined" {
+                  let cmd = &mut cmds[dest as usize];
+                  if cmd.cmd_type == "undefined" {
                     // FIXME - is this used?
                     println!("Marking undefined command as done");
-                    cmd.put_bool("done", true, env);
+                    cmd.done = true;
                   }
                   else {
-                    let mut var = cmd.get_object("in", env).get_object(&destname, env);
-                    var.set_property("val", val, env);
-                    var.put_bool("done", true, env);
+                    let var = &mut cmd.input.get_mut(destname).unwrap();
+                    var.val = val;
+                    var.done = true;
                     
-                    let input = cmd.get_object("in", env);
-                    for (_key,v) in input.objects(env) {
-                      let mut value = v.object(env);
-                      if !value.has("done", env) { value.put_bool("done", false, env); }
-                      b = b && value.get_bool("done", env);
+                    let input = &mut cmd.input;
+                    for (_key,v) in input {
+                      b = b && v.done;
                       if !b { break; }
                     }
-                    if b { self.evaluate(cmd, env)?; }
+                    if b { 
+                      //println!("WITH INPUTS {:?}", cmd.input);
+                      self.evaluate(cmd, env)?; 
+                    }
                   }
                 }
               }
@@ -140,7 +141,7 @@ impl Code {
       
       if let Err(e) = evaluation {
         if e == CodeException::NextCase {
-          current_case = current_case.get_object("nextcase", env);
+          current_case = *current_case.nextcase.unwrap();
         }
         else if e == CodeException::Terminate {
           break;
@@ -155,15 +156,15 @@ impl Code {
     Ok(out)
   }
     
-  fn lookup_con<'m>(&self, cons: &DataArray, key: &str, which: &str, env:&mut FlowEnv) -> Option<DataObject> {
-    let n = cons.len(env);
+  fn lookup_con<'m>(&self, cons: &mut Vec<Connection>, key: &str, which: &str) -> Option<usize> {
+    let n = cons.len();
     let mut j = 0;
     while j<n{
-      let con = cons.get_object(j, env);
-      let mut bar = con.get_array("src", env);
-      if which == "in" { bar = con.get_array("dest", env) }
-      if bar.get_string(1, env) == key {
-        return Some(con);
+      let con = &mut cons.get(j).unwrap();
+      let mut bar = &con.src;
+      if which == "in" { bar = &con.dest }
+      if bar.name == key {
+        return Some(j);
       }
       j = j + 1;
     }
@@ -171,29 +172,24 @@ impl Code {
     None
   }
 
-  fn evaluate(&mut self, mut cmd: DataObject, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
+  fn evaluate(&mut self, cmd: &mut Operation, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
     let mut in1 = DataObject::new(env);
-    let in2 = cmd.get_object("in", env);
+    let in2 = &mut cmd.input;
+    //println!("cloning {:?}", in2);
     let mut list_in:Vec<String> = Vec::new();
-    for (name,v) in in2.objects(env) {
-      let in3 = v.object(env);
+    for (name,in3) in in2 {
+      let dp3 = &mut in3.val;
+      in1.set_property(&name, dp3.clone(), env);
       
-      let dp3 = in3.get_property("val", env);
-      in1.set_property(&name, dp3, env);
-      
-      if in3.has("mode", env) && in3.get_string("mode", env) == "list" { list_in.push(name); }
+      if in3.mode == "list" { list_in.push(name.to_string()); }
     }
     
-    let out2 = cmd.get_object("out", env);
+    //let out2 = &cmd.output;
     let mut list_out:Vec<String> = Vec::new();    
     let mut loop_out:Vec<String> = Vec::new();    
-    for (name,v) in out2.objects(env) {
-      let out3 = v.object(env);
-      if out3.has("mode", env) {
-        let mode = out3.get_string("mode", env);
-        if mode == "list" { list_out.push(name); }
-        else if mode == "loop" { loop_out.push(name); }    
-      }
+    for (name,out3) in &mut cmd.output {
+      if out3.mode == "list" { list_out.push(name.to_string()); }
+      else if out3.mode == "loop" { loop_out.push(name.to_string()); }    
     }
     
     let n = list_in.len();
@@ -229,21 +225,18 @@ impl Code {
           }
         }
 
-        self.evaluate_operation(cmd.duplicate(env), in3, env)?;
+        let res = self.evaluate_operation(cmd, in3, env)?;
         
-        let out = cmd.get_object("out", env);
-        for (k,_v) in out2.objects(env) {
-          if out.has(&k, env) {
-            let dp = out.get_property(&k, env);
-            if list_out.contains(&k) {
-              out3.get_array(&k, env).push_property(dp, env);
-            }
-            else {
-              out3.set_property(&k, dp.clone(), env);
-              if loop_out.contains(&k) {
-                let newk = out2.get_object(&k, env).get_string("loop", env);
-                in1.set_property(&newk, dp.clone(), env);
-              }
+        for (k,v) in &mut cmd.output {
+          let dp = res.get_property(k, env).clone();
+          if list_out.contains(&k) {
+            out3.get_array(&k, env).push_property(dp.clone(), env);
+          }
+          else {
+            out3.set_property(&k, dp.clone(), env);
+            if loop_out.contains(&k) {
+              let newk = &mut v.looop.as_ref().unwrap();
+              in1.set_property(&newk, dp.clone(), env);
             }
           }
         }
@@ -251,7 +244,7 @@ impl Code {
 //        println!("evaluate");
 //        env.gc();
         
-        if cmd.has("FINISHED", env) && cmd.get_bool("FINISHED", env) {
+        if cmd.FINISHED {
           break;
         }
         
@@ -263,16 +256,17 @@ impl Code {
         }
       }
       
-      cmd.put_object("out", out3.duplicate(env), env);
+      println!("LIST/LOOP END {:?}", out3.to_json(env));
+      cmd.result = Some(out3.duplicate(env));
       return Ok(out3);
     }
   }
 
-  fn evaluate_operation(&mut self, mut cmd:DataObject, in1:DataObject, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
+  fn evaluate_operation(&mut self, cmd:&mut Operation, in1:DataObject, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
     let mut out = DataObject::new(env); // FIXME - Don't instantiate here, leave unassigned
-    let cmd_type = cmd.get_string("type", env);
+    let cmd_type = &cmd.cmd_type;
     let mut b = true;
-    let v = &cmd.get_string("name", env);
+    let v = &cmd.name;
     
     let evaluation: Result<(), CodeException> = (|| {
       if cmd_type == "primitive" { // FIXME - use match
@@ -280,14 +274,15 @@ impl Code {
         out = p.execute(in1, env);
       }
       else if cmd_type == "local" {
-        let src = cmd.get_object("localdata", env);
-        let mut code = Code::new(src.deep_copy(env));
+//        println!("before local {:?}", in1.to_json(env));
+        let src = cmd.localdata.as_ref().unwrap();
+        let mut code = Code::new(src.duplicate());
         out = code.execute(in1, env)?;
-        cmd.put_bool("FINISHED", code.finishflag, env);
+        cmd.FINISHED = code.finishflag;
       }
       else if cmd_type == "constant" {
-        for (key,_x) in cmd.get_object("out", env).objects(env) {
-          let ctype = cmd.get_string("ctype", env);
+        for (key,_x) in &mut cmd.output {
+          let ctype = cmd.ctype.as_ref().unwrap();
           if ctype == "int" { out.put_i64(&key, v.parse::<i64>().unwrap(), env); }
           else if ctype == "decimal" { out.put_float(&key, v.parse::<f64>().unwrap(), env); }
           else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap(), env); }
@@ -302,7 +297,7 @@ impl Code {
         }
       }  
       else if cmd_type == "command" {
-        let cmdstr = cmd.get_string("cmd", env);
+        let cmdstr = cmd.cmd.as_ref().unwrap();
         let sa = cmdstr.split(":").collect::<Vec<&str>>();
         let lib = sa[0];
         let cmdname = sa[2];
@@ -320,10 +315,16 @@ impl Code {
         
         // FIXME - mapped by order, not by name
         let mut i = 0;
-        let cmdout = cmd.get_object("out", env);
-        let keys = subcmd.src.get_object("output", env).keys(env);
-        for (key1, _v) in cmdout.objects(env) {
-          let key2 = &keys[i];
+        let cmdout = &mut cmd.output;
+        
+        
+//        let keys = subcmd.src.output.keys().collect::<Vec<_>>().try_into().unwrap();
+        let mut keys = Vec::<&str>::new();
+        for k in subcmd.src.output.keys() { keys.push(k); }
+        
+        
+        for (key1, _v) in cmdout {
+          let key2:&str = &keys[i];
           let dp = result.get_property(key2, env);
           out.set_property(&key1, dp, env);
           i = i + 1;
@@ -331,7 +332,7 @@ impl Code {
       }
       else if cmd_type == "match" {
         let key = &in1.duplicate(env).keys(env)[0];
-        let ctype = cmd.get_string("ctype", env);
+        let ctype = cmd.ctype.as_ref().unwrap();
         let dp1 = &in1.get_property(key, env);
         
         // FIXME - Support match on null?
@@ -390,25 +391,24 @@ impl Code {
       }
     }
     
-    if cmd_type != "constant" && cmd.has("condition", env) {
-      let condition = cmd.get_object("condition", env);
-      self.evaluate_conditional(condition, b, env)?;
+    if cmd_type != "constant" && !cmd.condition.is_none() {
+      let condition = &mut cmd.condition.as_ref().unwrap();
+      self.evaluate_conditional(&condition.rule, condition.value, b)?;
     }
 
-    cmd.put_object("out", out.duplicate(env), env);
-    cmd.put_bool("done", true, env);
+    cmd.result = Some(out.duplicate(env));
+    cmd.done = true;
     
+    //println!("OP DONE {} {:?}", cmd_type, out.to_json(env));
     Ok(out)
   }
   
-  fn evaluate_conditional(&mut self, condition:DataObject, m:bool, env:&mut FlowEnv) -> Result<(), CodeException> {
-    let rule = condition.get_string("rule", env);
-    let b = condition.get_bool("value", env);
-    if b == m {
-      if rule == "next" { return Err(CodeException::NextCase); }
-      if rule == "terminate" { return Err(CodeException::Terminate); }
-      if rule == "fail" { return Err(CodeException::Fail); }
-      if rule == "finish" { self.finishflag = true; }
+  fn evaluate_conditional(&mut self, c_rule:&str, c_val:bool, m:bool) -> Result<(), CodeException> {
+    if c_val == m {
+      if c_rule == "next" { return Err(CodeException::NextCase); }
+      if c_rule == "terminate" { return Err(CodeException::Terminate); }
+      if c_rule == "fail" { return Err(CodeException::Fail); }
+      if c_rule == "finish" { self.finishflag = true; }
     }
     
     Ok(())
