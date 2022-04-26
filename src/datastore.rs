@@ -5,6 +5,7 @@ use std::io::Read;
 
 use crate::dataobject::*;
 use crate::flowenv::*;
+use crate::case::*;
 
 #[derive(Debug)]
 pub struct DataStore {
@@ -24,7 +25,13 @@ impl DataStore {
     };
   }
   
-  pub fn get_data(&self, db: &str, id: &str, env:&mut FlowEnv) -> DataObject {
+  pub fn get_code(&self, db: &str, id: &str) -> Case {
+    let path = self.get_data_file(db, &(id.to_owned()+".flow"));
+    let s = self.read_file(path);
+    Case::new(&s).unwrap()
+  }
+  
+  pub fn get_json(&self, db: &str, id: &str) -> Value {
     let path = self.get_data_file(db, id);
     let s = self.read_file(path);
     let mut data: Value = serde_json::from_str(&s).unwrap();
@@ -42,6 +49,11 @@ impl DataStore {
         }
       }
     }
+    data
+  }
+  
+  pub fn get_data(&self, db: &str, id: &str, env:&mut FlowEnv) -> DataObject {
+    let data = self.get_json(db, id);
     DataObject::from_json(data, env)
   }
   

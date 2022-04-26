@@ -1,3 +1,5 @@
+use serde::*;
+
 use crate::dataobject::*;
 use crate::dataarray::*;
 use crate::flowenv::*;
@@ -73,12 +75,36 @@ impl Data {
   }
 
   pub fn object(&self, env:&mut FlowEnv) -> DataObject {
-    if let Data::DObject(i) = self { DataObject::get(*i, env) } else { panic!("Not an object"); }
+    if let Data::DObject(i) = self { DataObject::get(*i, env) } else { panic!("Not an object {:?}", self); }
   }
 
   pub fn array(&self, env:&mut FlowEnv) -> DataArray {
-    if let Data::DArray(i) = self { DataArray::get(*i, env) } else { panic!("Not an array"); }
+    if let Data::DArray(i) = self { DataArray::get(*i, env) } else { panic!("Not an array {:?}", self); }
   }
 }
 
+impl Default for Data {
+  fn default() -> Data {
+    Data::DNull
+  }
+}
 
+// NOTE - Not used. Case requires it because runtime Data is stored in Options.
+impl<'de> Deserialize<'de> for Data {
+    fn deserialize<D>(_deserializer: D) -> Result<Data, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(Data::DNull)
+    }
+}
+
+// NOTE - Not used. Case requires it because runtime Data is stored in Options.
+impl Serialize for Data {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    serializer.serialize_none()
+  }
+}

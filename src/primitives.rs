@@ -60,7 +60,7 @@ fn build_time() -> Primitive {
 }
 
 fn plus(args:DataObject, env:&mut FlowEnv) -> DataObject{
-  //println!("PRIM PLUS IN {:?}", &args);
+  //println!("PRIM PLUS IN {:?}", &args.to_json(env));
   let a = args.get_property("a", env);
   let b = args.get_property("b", env);
   let mut out = DataObject::new(env);
