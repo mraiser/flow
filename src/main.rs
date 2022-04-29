@@ -11,13 +11,13 @@ mod heap;
 mod dataobject;
 mod dataarray;
 mod flowenv;
+mod usizemap;
 
 use command::Command as Command;
 use datastore::DataStore;
 use dataobject::*;
 use dataarray::*;
 use flowenv::*;
-use heap::*;
 
 fn main() {
   let path = Path::new("data");

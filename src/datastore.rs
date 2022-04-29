@@ -4,7 +4,6 @@ use std::path::*;
 use std::io::Read;
 
 use crate::dataobject::*;
-use crate::flowenv::*;
 use crate::case::*;
 
 #[derive(Debug)]

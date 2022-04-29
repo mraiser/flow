@@ -1,6 +1,5 @@
 use crate::dataobject::*;
 use crate::dataarray::*;
-use crate::flowenv::*;
 
 #[derive(Debug)]
 pub enum Data {

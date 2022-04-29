@@ -2,7 +2,6 @@ use crate::dataobject::*;
 use crate::data::*;
 use std::time::UNIX_EPOCH;
 use std::time::SystemTime;
-use crate::flowenv::*;
 
 pub struct Primitive {
   pub name: String,

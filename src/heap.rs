@@ -1,6 +1,4 @@
-use index_map::IndexMap;
-//use std::collections::HashMap;
-use std::fmt;
+use crate::usizemap::*;
 
 #[derive(Debug)]
 struct Blob<T> {
@@ -8,14 +6,15 @@ struct Blob<T> {
   count: usize,
 }
 
+#[derive(Debug)]
 pub struct Heap<T> {
-  data: IndexMap<Blob<T>>,
+  data: UsizeMap<Blob<T>>,
 }
 
 impl<T: std::fmt::Debug> Heap<T> {
   pub fn new() -> Heap<T> {
     Heap {
-      data: IndexMap::<Blob<T>>::new(),
+      data: UsizeMap::<Blob<T>>::new(),
     }
   }
 
@@ -52,16 +51,4 @@ impl<T: std::fmt::Debug> Heap<T> {
   }
 }
 
-impl<T: std::fmt::Debug> fmt::Debug for Heap<T> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    writeln!(f, "count {}", self.data.len()).unwrap();
-    for (i,blob) in &self.data {
-      let c = blob.count;
-      let mut s = format!("{:?}", blob);
-      if s.len() > 66 { s = s[0..66].to_string()+"..."; }
-      writeln!(f, "{}: {} - {}", i, c, s).unwrap();
-    }
-    Ok(())
-  }
-}
 
