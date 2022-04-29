@@ -29,9 +29,9 @@ impl Code {
     }
   }
 
-  pub fn execute(&mut self, args: DataObject) -> Result<DataObject, CodeException> {
+  pub fn execute(&mut self, args: DataObject, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
     let mut done = false;
-    let mut out = DataObject::new();
+    let mut out = DataObject::new(env);
     
     let mut current_case = self.data.duplicate();
     
@@ -62,7 +62,7 @@ impl Code {
             }
             if count == 0 || b {
               //println!("NO INPUTS");
-              self.evaluate(cmd)?;
+              self.evaluate(cmd, env)?;
             }
           }
           i = i + 1;
@@ -84,15 +84,15 @@ impl Code {
               let dest = ja.index;
               let destname = &ja.name;
               if src == -1 {
-                if args.has(&srcname){
-                  val = args.get_property(&srcname);
+                if args.has(&srcname, env){
+                  val = args.get_property(&srcname, env);
                 }
                 b = true;
               }
               else {
                 let cmd = &mut cmds[src as usize];
                 if cmd.done {
-                  val = cmd.result.as_ref().unwrap().get_property(srcname).clone();
+                  val = cmd.result.as_ref().unwrap().get_property(srcname, env).clone();
                   b = true;
                 }
               }
@@ -100,7 +100,7 @@ impl Code {
               if b {
                 con.done = true;
                 if dest == -2 {
-                  out.set_property(&destname, val);
+                  out.set_property(&destname, val, env);
                 }
                 else {
                   let cmd = &mut cmds[dest as usize];
@@ -121,7 +121,7 @@ impl Code {
                     }
                     if b { 
                       //println!("WITH INPUTS {:?}", cmd.input);
-                      self.evaluate(cmd)?; 
+                      self.evaluate(cmd, env)?; 
                     }
                   }
                 }
@@ -172,14 +172,14 @@ impl Code {
     None
   }
 
-  fn evaluate(&mut self, cmd: &mut Operation) -> Result<DataObject, CodeException> {
-    let mut in1 = DataObject::new();
+  fn evaluate(&mut self, cmd: &mut Operation, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
+    let mut in1 = DataObject::new(env);
     let in2 = &mut cmd.input;
     //println!("cloning {:?}", in2);
     let mut list_in:Vec<String> = Vec::new();
     for (name,in3) in in2 {
       let dp3 = &mut in3.val;
-      in1.set_property(&name, dp3.clone());
+      in1.set_property(&name, dp3.clone(), env);
       
       if in3.mode == "list" { list_in.push(name.to_string()); }
     }
@@ -194,49 +194,49 @@ impl Code {
     
     let n = list_in.len();
     if n == 0 && loop_out.len() == 0 {
-      return self.evaluate_operation(cmd, in1);
+      return self.evaluate_operation(cmd, in1, env);
     }
     else {
-      let mut out3 = DataObject::new();
-      for key in &list_out { out3.put_list(&key, DataArray::new()); }
+      let mut out3 = DataObject::new(env);
+      for key in &list_out { out3.put_list(&key, DataArray::new(env), env); }
       let mut count = 0;
       if n>0 {
-        count = in1.get_array(&list_in[0]).len();
+        count = in1.get_array(&list_in[0], env).len(env);
         let mut i = 1;
         while i<n {
-          count = cmp::min(count, in1.get_array(&list_in[i]).len());
+          count = cmp::min(count, in1.get_array(&list_in[i], env).len(env));
           i = i + 1;
         }
       }
       
       let mut i = 0;
       loop {
-        let mut in3 = DataObject::new();
-        let list = in1.duplicate().keys();
+        let mut in3 = DataObject::new(env);
+        let list = in1.duplicate(env).keys(env);
         for key in list {
           if !list_in.contains(&key) { 
-            let dp = in1.get_property(&key);
-            in3.set_property(&key, dp); 
+            let dp = in1.get_property(&key, env);
+            in3.set_property(&key, dp, env); 
           }
           else {
-            let ja = in1.get_array(&key);
-            let dp = ja.get_property(i);
-            in3.set_property(&key, dp); 
+            let ja = in1.get_array(&key, env);
+            let dp = ja.get_property(i, env);
+            in3.set_property(&key, dp, env); 
           }
         }
 
-        let res = self.evaluate_operation(cmd, in3)?;
+        let res = self.evaluate_operation(cmd, in3, env)?;
         
         for (k,v) in &mut cmd.output {
-          let dp = res.get_property(k).clone();
+          let dp = res.get_property(k, env).clone();
           if list_out.contains(&k) {
-            out3.get_array(&k).push_property(dp.clone());
+            out3.get_array(&k, env).push_property(dp.clone(), env);
           }
           else {
-            out3.set_property(&k, dp.clone());
+            out3.set_property(&k, dp.clone(), env);
             if loop_out.contains(&k) {
               let newk = &mut v.looop.as_ref().unwrap();
-              in1.set_property(&newk, dp.clone());
+              in1.set_property(&newk, dp.clone(), env);
             }
           }
         }
@@ -256,14 +256,14 @@ impl Code {
         }
       }
       
-//      println!("LIST/LOOP END {:?}", out3.to_json());
-      cmd.result = Some(out3.duplicate());
+//      println!("LIST/LOOP END {:?}", out3.to_json(env));
+      cmd.result = Some(out3.duplicate(env));
       return Ok(out3);
     }
   }
 
-  fn evaluate_operation(&mut self, cmd:&mut Operation, in1:DataObject) -> Result<DataObject, CodeException> {
-    let mut out = DataObject::new(); // FIXME - Don't instantiate here, leave unassigned
+  fn evaluate_operation(&mut self, cmd:&mut Operation, in1:DataObject, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
+    let mut out = DataObject::new(env); // FIXME - Don't instantiate here, leave unassigned
     let cmd_type = &cmd.cmd_type;
     let mut b = true;
     let v = &cmd.name;
@@ -271,29 +271,29 @@ impl Code {
     let evaluation: Result<(), CodeException> = (|| {
       if cmd_type == "primitive" { // FIXME - use match
         let p = Primitive::new(v);
-        out = p.execute(in1);
+        out = p.execute(in1, env);
       }
       else if cmd_type == "local" {
-//        println!("before local {:?}", in1.to_json());
+//        println!("before local {:?}", in1.to_json(env));
         let src = cmd.localdata.as_ref().unwrap();
         let mut code = Code::new(src.duplicate());
-        out = code.execute(in1)?;
+        out = code.execute(in1, env)?;
         cmd.FINISHED = code.finishflag;
       }
       else if cmd_type == "constant" {
         for (key,_x) in &mut cmd.output {
           let ctype = cmd.ctype.as_ref().unwrap();
-          if ctype == "int" { out.put_i64(&key, v.parse::<i64>().unwrap()); }
-          else if ctype == "decimal" { out.put_float(&key, v.parse::<f64>().unwrap()); }
-          else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap()); }
-          else if ctype == "string" { out.put_str(&key, v); }
+          if ctype == "int" { out.put_i64(&key, v.parse::<i64>().unwrap(), env); }
+          else if ctype == "decimal" { out.put_float(&key, v.parse::<f64>().unwrap(), env); }
+          else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap(), env); }
+          else if ctype == "string" { out.put_str(&key, v, env); }
           else if ctype == "object" { 
-            out.put_object(&key, DataObject::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_object(&key, DataObject::from_json(serde_json::from_str(v).unwrap(), env), env); 
           }
           else if ctype == "array" { 
-            out.put_list(&key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_list(&key, DataArray::from_json(serde_json::from_str(v).unwrap(), env), env); 
           }
-          else { out.put_null(v); }
+          else { out.put_null(v, env); }
         }
       }  
       else if cmd_type == "command" {
@@ -301,17 +301,17 @@ impl Code {
         let sa = cmdstr.split(":").collect::<Vec<&str>>();
         let lib = sa[0];
         let cmdname = sa[2];
-        let mut params = DataObject::new();
-        for (key,v) in in1.objects() {
-          params.set_property(&key, v);
+        let mut params = DataObject::new(env);
+        for (key,v) in in1.objects(env) {
+          params.set_property(&key, v, env);
         }
         
         // FIXME - add remote command support
         // if cmd.has("uuid") {}
         // else {
 
-        let subcmd = Command::new(lib, cmdname);
-        let result = subcmd.execute(params)?;
+        let subcmd = Command::new(lib, cmdname, env);
+        let result = subcmd.execute(params, env)?;
         
         // FIXME - mapped by order, not by name
         let mut i = 0;
@@ -325,15 +325,15 @@ impl Code {
         
         for (key1, _v) in cmdout {
           let key2:&str = &keys[i];
-          let dp = result.get_property(key2);
-          out.set_property(&key1, dp);
+          let dp = result.get_property(key2, env);
+          out.set_property(&key1, dp, env);
           i = i + 1;
         }
       }
       else if cmd_type == "match" {
-        let key = &in1.duplicate().keys()[0];
+        let key = &in1.duplicate(env).keys(env)[0];
         let ctype = cmd.ctype.as_ref().unwrap();
-        let dp1 = &in1.get_property(key);
+        let dp1 = &in1.get_property(key, env);
         
         // FIXME - Support match on null?
         if ctype == "int" {
@@ -378,12 +378,9 @@ impl Code {
       }
       Ok(())
     })();
-
-    {    
-//      println!("operation");
-      let env = &mut FLOWENV.get().write().unwrap();
-      env.gc();
-    }
+    
+//    println!("operation");
+    env.gc();
     
     if let Err(e) = evaluation {
       if e == CodeException::Fail {
@@ -399,10 +396,10 @@ impl Code {
       self.evaluate_conditional(&condition.rule, condition.value, b)?;
     }
 
-    cmd.result = Some(out.duplicate());
+    cmd.result = Some(out.duplicate(env));
     cmd.done = true;
     
-    //println!("OP DONE {} {:?}", cmd_type, out.to_json());
+    //println!("OP DONE {} {:?}", cmd_type, out.to_json(env));
     Ok(out)
   }
   

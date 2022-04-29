@@ -9,7 +9,6 @@ use crate::dataarray::*;
 use crate::datastore::*;
 //use crate::primitives::*;
 
-pub static FLOWENV:Storage<RwLock<FlowEnv>> = Storage::new();
 pub static ODROP:Storage<RwLock<Vec<usize>>> = Storage::new();
 pub static ADROP:Storage<RwLock<Vec<usize>>> = Storage::new();
 
@@ -21,13 +20,7 @@ pub struct FlowEnv {
 }
 
 impl FlowEnv {
-  pub fn init(store: DataStore) {
-    let env = FlowEnv{
-      objects: Heap::new(),
-      arrays: Heap::new(),
-      store: store,
-    };
-    FLOWENV.set(RwLock::new(env));
+  pub fn init() {
     ODROP.set(RwLock::new(Vec::new()));
     ADROP.set(RwLock::new(Vec::new()));
   }

@@ -11,12 +11,11 @@ pub struct Command {
 }
 
 impl Command {
-  pub fn new(lib:&str, id:&str) -> Command {
+  pub fn new(lib:&str, id:&str, env:&mut FlowEnv) -> Command {
 
 
     // FIXME - support other languages
 
-    let env = &mut FLOWENV.get().write().unwrap();
     let store = &mut env.store.clone();
     let src = store.get_json(lib, id);
     let data = &src["data"];
@@ -32,11 +31,10 @@ impl Command {
     };
   }
   
-  pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
+  pub fn execute(&self, args: DataObject, env:&mut FlowEnv) -> Result<DataObject, CodeException> {
     let mut code = Code::new(self.src.duplicate());
     //println!("executing: {:?}", self.src);
-    let o = code.execute(args);
-    let env = &mut FLOWENV.get().write().unwrap();
+    let o = code.execute(args, env);
     env.gc();
     o
   }

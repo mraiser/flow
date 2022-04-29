@@ -10,125 +10,131 @@ pub struct DataArray {
 }
 
 impl DataArray {
-  pub fn new(env:&mut FlowEnv) -> DataArray {
+  pub fn new() -> DataArray {
+    let env = &mut FLOWENV.get().write().unwrap();
     let data_ref = &mut env.arrays.push(Vec::<Data>::new());
     return DataArray {
       data_ref: *data_ref,
     };
   }
   
-  pub fn get(data_ref: usize, env:&mut FlowEnv) -> DataArray {
+  pub fn get(data_ref: usize) -> DataArray {
     let o = DataArray{
       data_ref: data_ref,
     };
+    let env = &mut FLOWENV.get().write().unwrap();
     let _x = &mut env.arrays.incr(data_ref);
     o
   }
   
-  pub fn from_json(value:Value, env:&mut FlowEnv) -> DataArray {
-    let mut o = DataArray::new(env);
+  pub fn from_json(value:Value) -> DataArray {
+    let mut o = DataArray::new();
     
     for val in value.as_array().unwrap().iter() {
-      if val.is_string(){ o.push_str(val.as_str().unwrap(), env); }
-      else if val.is_boolean() { o.push_bool(val.as_bool().unwrap(), env); }
-      else if val.is_i64() { o.push_i64(val.as_i64().unwrap(), env); }
-      else if val.is_f64() { o.push_float(val.as_f64().unwrap(), env); }
-      else if val.is_object() { o.push_object(DataObject::from_json(val.to_owned(), env), env); }
-      else if val.is_array() { o.push_list(DataArray::from_json(val.to_owned(), env), env); }      
+      if val.is_string(){ o.push_str(val.as_str().unwrap()); }
+      else if val.is_boolean() { o.push_bool(val.as_bool().unwrap()); }
+      else if val.is_i64() { o.push_i64(val.as_i64().unwrap()); }
+      else if val.is_f64() { o.push_float(val.as_f64().unwrap()); }
+      else if val.is_object() { o.push_object(DataObject::from_json(val.to_owned())); }
+      else if val.is_array() { o.push_list(DataArray::from_json(val.to_owned())); }      
       else { println!("Unknown type {}", val) };
     }
       
     o
   }
   
-  pub fn to_json(&self, env:&mut FlowEnv) -> Value {
+  pub fn to_json(&self) -> Value {
     let mut val = Vec::<Value>::new();
     let mut id = 0;
-    for old in self.objects(env) {
-      if old.is_int() { val.push(json!(self.get_i64(id, env))); }
-      else if old.is_float() { val.push(json!(self.get_f64(id, env))); }
-      else if old.is_boolean() { val.push(json!(self.get_bool(id, env))); }
-      else if old.is_string() { val.push(json!(self.get_string(id, env))); }
-      else if old.is_object() { val.push(self.get_object(id, env).to_json(env)); }
-      else if old.is_array() { val.push(self.get_array(id, env).to_json(env)); }
+    for old in self.objects() {
+      if old.is_int() { val.push(json!(self.get_i64(id))); }
+      else if old.is_float() { val.push(json!(self.get_f64(id))); }
+      else if old.is_boolean() { val.push(json!(self.get_bool(id))); }
+      else if old.is_string() { val.push(json!(self.get_string(id))); }
+      else if old.is_object() { val.push(self.get_object(id).to_json()); }
+      else if old.is_array() { val.push(self.get_array(id).to_json()); }
       else { val.push(json!(null)); }
       id = id + 1;
     }
     json!(val)
   }
   
-  pub fn duplicate(&self, env:&mut FlowEnv) -> DataArray {
+  pub fn duplicate(&self) -> DataArray {
     let o = DataArray{
       data_ref: self.data_ref,
     };
+    let env = &mut FLOWENV.get().write().unwrap();
     let _x = &mut env.arrays.incr(self.data_ref);
     o
   }
   
-  pub fn shallow_copy(self, env:&mut FlowEnv) -> DataArray {
-    let mut o = DataArray::new(env);
-    for v in self.objects(env) {
-      o.push_property(v.clone(), env);
+  pub fn shallow_copy(self) -> DataArray {
+    let mut o = DataArray::new();
+    for v in self.objects() {
+      o.push_property(v.clone());
     }
     o
   }
 
-  pub fn deep_copy(&self, env:&mut FlowEnv) -> DataArray {
-    let mut o = DataArray::new(env);
+  pub fn deep_copy(&self) -> DataArray {
+    let mut o = DataArray::new();
     let mut id = 0;
-    for v in self.objects(env) {
+    for v in self.objects() {
       if v.is_object() {
-        o.push_object(self.get_object(id, env).deep_copy(env), env);
+        o.push_object(self.get_object(id).deep_copy());
       }
       else if v.is_array() {
-        o.push_list(self.get_array(id, env).deep_copy(env), env);
+        o.push_list(self.get_array(id).deep_copy());
       }
       else {
-        o.push_property(v.clone(), env);
+        o.push_property(v.clone());
       }
       id = id + 1;
     }
     o
   }
 
-  pub fn len(&self, env:&mut FlowEnv) -> usize {
+  pub fn len(&self) -> usize {
+    let env = &mut FLOWENV.get().write().unwrap();
     let heap = &mut env.arrays;
     let vec = heap.get(self.data_ref);
     vec.len()
   }
 
-  pub fn get_property(&self, id:usize, env:&mut FlowEnv) -> Data {
+  pub fn get_property(&self, id:usize) -> Data {
+    let env = &mut FLOWENV.get().write().unwrap();
     let heap = &mut env.arrays;
     let vec = heap.get(self.data_ref);
     let data = vec.get_mut(id).unwrap();
     data.clone()
   }
   
-  pub fn get_string(&self, id:usize, env:&mut FlowEnv) -> String {
-    self.get_property(id, env).string()
+  pub fn get_string(&self, id:usize) -> String {
+    self.get_property(id).string()
   }
   
-  pub fn get_bool(&self, id:usize, env:&mut FlowEnv) -> bool {
-    self.get_property(id, env).boolean()
+  pub fn get_bool(&self, id:usize) -> bool {
+    self.get_property(id).boolean()
   }
   
-  pub fn get_i64(&self, id:usize, env:&mut FlowEnv) -> i64 {
-    self.get_property(id, env).int()
+  pub fn get_i64(&self, id:usize) -> i64 {
+    self.get_property(id).int()
   }
   
-  pub fn get_f64(&self, id:usize, env:&mut FlowEnv) -> f64 {
-    self.get_property(id, env).float()
+  pub fn get_f64(&self, id:usize) -> f64 {
+    self.get_property(id).float()
   }
 
-  pub fn get_array(&self, id:usize, env:&mut FlowEnv) -> DataArray {
-    self.get_property(id, env).array(env)
+  pub fn get_array(&self, id:usize) -> DataArray {
+    self.get_property(id).array()
   }
 
-  pub fn get_object(&self, id:usize, env:&mut FlowEnv) -> DataObject {
-    self.get_property(id, env).object(env)
+  pub fn get_object(&self, id:usize) -> DataObject {
+    self.get_property(id).object()
   }
 
-  pub fn push_property(&mut self, data:Data, env:&mut FlowEnv) {
+  pub fn push_property(&mut self, data:Data) {
+    let env = &mut FLOWENV.get().write().unwrap();
     if let Data::DObject(i) = &data {
       env.objects.incr(*i);
     }
@@ -140,33 +146,34 @@ impl DataArray {
     vec.push(data);
   }
 
-  pub fn push_str(&mut self, val:&str, env:&mut FlowEnv) {
-    self.push_property(Data::DString(val.to_string()), env);
+  pub fn push_str(&mut self, val:&str) {
+    self.push_property(Data::DString(val.to_string()));
   }
   
-  pub fn push_bool(&mut self, val:bool, env:&mut FlowEnv) {
-    self.push_property(Data::DBoolean(val), env);
+  pub fn push_bool(&mut self, val:bool) {
+    self.push_property(Data::DBoolean(val));
   }
   
-  pub fn push_i64(&mut self, val:i64, env:&mut FlowEnv) {
-    self.push_property(Data::DInt(val), env);
+  pub fn push_i64(&mut self, val:i64) {
+    self.push_property(Data::DInt(val));
   }
   
-  pub fn push_float(&mut self, val:f64, env:&mut FlowEnv) {
-    self.push_property(Data::DFloat(val), env);
+  pub fn push_float(&mut self, val:f64) {
+    self.push_property(Data::DFloat(val));
   }
 
-  pub fn push_object(&mut self, o:DataObject, env:&mut FlowEnv) {
-    self.push_property(Data::DObject(o.data_ref), env);
+  pub fn push_object(&mut self, o:DataObject) {
+    self.push_property(Data::DObject(o.data_ref));
   }
   
-  pub fn push_list(&mut self, a:DataArray, env:&mut FlowEnv) {
-    self.push_property(Data::DArray(a.data_ref), env);
+  pub fn push_list(&mut self, a:DataArray) {
+    self.push_property(Data::DArray(a.data_ref));
   }
   
   // FIXME - add insert/set_...(index, value) function for all types
   
-  pub fn remove_property(&mut self, id:usize, env:&mut FlowEnv) {
+  pub fn remove_property(&mut self, id:usize) {
+    let env = &mut FLOWENV.get().write().unwrap();
     let heap = &mut env.arrays;
     let vec = heap.get(self.data_ref);
     let old = vec.remove(id);
@@ -206,7 +213,8 @@ impl DataArray {
     }
   }
   
-  pub fn objects(&self, env:&mut FlowEnv) -> Vec<Data> {
+  pub fn objects(&self) -> Vec<Data> {
+    let env = &mut FLOWENV.get().write().unwrap();
     let heap = &mut env.arrays;
     let map = heap.get(self.data_ref);
     let mut vec = Vec::<Data>::new();
@@ -216,8 +224,9 @@ impl DataArray {
     vec
   }
 
-  pub fn print_heap(env:&mut FlowEnv) {
-    println!("{:?}", &env.arrays);
+  pub fn print_heap() {
+    let env = &mut FLOWENV.get().write().unwrap();
+    println!("array {:?}", &env.arrays);
   }
 }
 
@@ -230,7 +239,7 @@ impl Drop for DataArray {
 impl fmt::Debug for DataArray {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let env = &mut FLOWENV.get().write().unwrap();
-    let val = self.to_json(env);
+    let val = self.to_json();
     write!(f, "{}", val)
   }
 }

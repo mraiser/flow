@@ -52,9 +52,9 @@ impl DataStore {
     data
   }
   
-  pub fn get_data(&self, db: &str, id: &str) -> DataObject {
+  pub fn get_data(&self, db: &str, id: &str, env:&mut FlowEnv) -> DataObject {
     let data = self.get_json(db, id);
-    DataObject::from_json(data)
+    DataObject::from_json(data, env)
   }
   
   fn get_data_file(&self, db: &str, id: &str) -> PathBuf {
