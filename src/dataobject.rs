@@ -1,4 +1,3 @@
-use serde::*;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::HashMap;
@@ -254,31 +253,6 @@ impl DataObject {
 impl Drop for DataObject {
   fn drop(&mut self) {
     ODROP.get().write().unwrap().push(self.data_ref);
-  }
-}
-
-
-// NOTE - Not used. Case requires it because runtime DataObject is stored in Options.
-// WARNING - Will panic is called. Do not call.
-impl<'de> Deserialize<'de> for DataObject {
-    fn deserialize<D>(_deserializer: D) -> Result<DataObject, D::Error>
-    where
-      D: Deserializer<'de>,
-    {
-      let o = DataObject {
-        data_ref: 0,
-      };
-      Ok(o)
-    }
-}
-
-// NOTE - Not used. Case requires it because runtime DataObject is stored in Options.
-impl Serialize for DataObject {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: Serializer,
-  {
-    serializer.serialize_none()
   }
 }
 

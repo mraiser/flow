@@ -1,5 +1,3 @@
-use serde::*;
-
 use crate::dataobject::*;
 use crate::dataarray::*;
 use crate::flowenv::*;
@@ -89,22 +87,3 @@ impl Default for Data {
   }
 }
 
-// NOTE - Not used. Case requires it because runtime Data is stored in Options.
-impl<'de> Deserialize<'de> for Data {
-    fn deserialize<D>(_deserializer: D) -> Result<Data, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Data::DNull)
-    }
-}
-
-// NOTE - Not used. Case requires it because runtime Data is stored in Options.
-impl Serialize for Data {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: Serializer,
-  {
-    serializer.serialize_none()
-  }
-}

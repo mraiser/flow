@@ -23,7 +23,7 @@ pub struct Node {
   pub cmd_type: String,
   #[serde(default)]
   pub x:f32,
-  #[serde(default)]
+  #[serde(skip)]
   pub val:Data,
   #[serde(default)]
   pub done: bool,
@@ -46,6 +46,7 @@ pub struct Operation {
   pub ctype: Option<String>,
   pub cmd: Option<String>,
   pub localdata: Option<Box<Case>>,
+  #[serde(skip)]
   pub result: Option<DataObject>,
   pub condition: Option<Condition>,
   #[serde(default)]
@@ -224,25 +225,6 @@ impl Case {
     if !self.nextcase.is_none() {
       nextcase = Some(Box::new(self.nextcase.as_ref().unwrap().duplicate()));
     }
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
     
     Case {
       input: input,
