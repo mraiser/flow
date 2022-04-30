@@ -29,6 +29,8 @@ folder, and they will become executable as well. Libraries are created using the
 #### From Rust code:
     let path = Path::new("data");
     let store = DataStore::new(path.to_path_buf());
+  
+    FlowEnv::init(store);
 
     let args = DataObject::from_json(serde_json::from_str(r#"
     {
@@ -36,7 +38,7 @@ folder, and they will become executable as well. Libraries are created using the
       "b": 121
     }
     "#).unwrap());
-    let cmd = Command::new("testflow", "zkuwhn1802d57cb8ak1c", store.clone());
-    let res = cmd.execute(args);
-    println!("Hello, my dudes! {:?}", res);
+    let cmd = Command::new("testflow", "zkuwhn1802d57cb8ak1c");
+    let res = cmd.execute(args).unwrap();
+    println!("Hello, my dudes! {}", res.to_json());
 
