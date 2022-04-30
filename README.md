@@ -15,13 +15,18 @@ interpreter from the original Java, Python and Javascript versions included with
 [![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/zwC-_ZmbOfA)
 https://youtu.be/zwC-_ZmbOfA
 
+### Compile flow as binary
+    cargo build --release
+
 ### Executing Flow Code
 This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 
 folder, and they will become executable as well. Libraries are created using the Newbound Metabot 
 (https://github.com/mraiser/newbound).
 
-Example:
+#### From the command line:
+    target/release/flow testflow vnpvxv1802d67b7d1j1f <<< "{\"a\": 210}"
 
+#### From Rust code:
     let path = Path::new("data");
     let store = DataStore::new(path.to_path_buf());
 

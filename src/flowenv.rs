@@ -7,7 +7,6 @@ use crate::data::*;
 use crate::dataobject::*;
 use crate::dataarray::*;
 use crate::datastore::*;
-//use crate::primitives::*;
 
 pub static FLOWENV:Storage<RwLock<FlowEnv>> = Storage::new();
 pub static ODROP:Storage<RwLock<Vec<usize>>> = Storage::new();
@@ -33,12 +32,9 @@ impl FlowEnv {
   }
   
   pub fn gc(&mut self) {
-//    let start = current_time_millis();
-//    let mut n = 0;
     {
       let odrop = &mut ODROP.get().write().unwrap();
       let mut i = odrop.len();
-//      n += i;
       while i>0 {
         i = i - 1;
         let x = odrop.remove(0);
@@ -47,14 +43,11 @@ impl FlowEnv {
     }
     let adrop = &mut ADROP.get().write().unwrap();
     let mut i = adrop.len();
-//    n += i;
     while i>0 {
       i = i - 1;
       let x = adrop.remove(0);
       DataArray::delete(self, x);
     }
-//    let done = current_time_millis();
-//    println!("GC {} millis {}", n, done - start);
   }
 }
 
