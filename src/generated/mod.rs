@@ -1,4 +1,3 @@
-pub mod testflow;
 use crate::rustcmd::*;
 pub struct Generated {}
 impl Generated {
