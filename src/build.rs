@@ -30,7 +30,7 @@ fn main() {
 }
 
 pub fn build(lib:&str, ctl:&str, cmd:&str) {
-  let store = &mut STORE.get().write().unwrap();
+  let store = DataStore::new();
   let id = &store.lookup_cmd_id(lib, ctl, cmd);
 
   let meta = store.get_json(lib, id);
