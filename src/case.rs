@@ -2,8 +2,8 @@ use serde::*;
 use serde_json::*;
 use std::collections::HashMap;
 
-use crate::data::*;
-use crate::dataobject::*;
+use ndata::data::*;
+use ndata::dataobject::*;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Case {

@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::env;
 use std::io;
 use std::io::BufRead;
@@ -8,29 +7,23 @@ mod case;
 mod command;
 mod datastore;
 mod primitives;
-mod data;
-mod heap;
-mod dataobject;
-mod dataarray;
-mod flowenv;
-mod usizemap;
+mod rustcmd;
+mod generated;
 
 use command::Command as Command;
 use datastore::DataStore;
-use dataobject::*;
-use flowenv::*;
+use ndata::dataobject::*;
+//use dataarray::*;
 
 fn main() {
-  let path = Path::new("data");
-  let store = DataStore::new(path.to_path_buf());
-  
-  FlowEnv::init(store);
+  DataStore::init("data");
   
   env::set_var("RUST_BACKTRACE", "1");
   {
     let params: Vec<String> = env::args().collect();
     let lib = &params[1];
-    let id = &params[2];
+    let ctl = &params[2];
+    let cmd = &params[3];
 
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
@@ -40,9 +33,11 @@ fn main() {
     }
     
     let args = DataObject::from_json(serde_json::from_str(&s).unwrap());
-    let cmd = Command::new(lib, id);
+    let cmd = Command::lookup(lib, ctl, cmd);
     let res = cmd.execute(args).unwrap();
-    
     println!("{}", res.to_json());
+    
+//    DataObject::print_heap();
+//    DataArray::print_heap();
   }
 }

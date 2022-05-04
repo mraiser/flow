@@ -1,13 +1,22 @@
 use crate::code::*;
-use crate::dataobject::*;
-use crate::flowenv::*;
+use ndata::dataobject::*;
+use ndata::dataarray::*;
+use crate::datastore::*;
 use crate::case::*;
+use crate::rustcmd::*;
+use crate::generated::*;
+
+#[derive(Debug)]
+pub enum Source {
+  Flow(Case),
+  Rust(RustCmd),
+}
 
 #[derive(Debug)]
 pub struct Command {
   pub lib: String,
   pub id: String,
-  pub src: Case,
+  pub src: Source,
 }
 
 impl Command {
@@ -16,29 +25,58 @@ impl Command {
 
     // FIXME - support other languages
 
-    let env = &mut FLOWENV.get().write().unwrap();
-    let store = &mut env.store.clone();
+    let store = DataStore::new();
     let src = store.get_json(lib, id);
     let data = &src["data"];
-    let codename:&str = data["flow"].as_str().unwrap();
+    let typ = &data["type"];
     
-    let code = store.get_code(lib, codename);
+    let code;
+    if typ == "flow" {
+      let codename:&str = data["flow"].as_str().unwrap();
+      let path = store.get_data_file(lib, &(codename.to_owned()+".flow"));
+      let s = store.read_file(path);
+      let case = Case::new(&s).unwrap();
+      code = Source::Flow(case);
+    }
+    else if typ == "rust" {
+      let codename:&str = data["rust"].as_str().unwrap();
+      code = Source::Rust(RustCmd::new(Generated::get(codename)));
+    }
+    else { panic!("Unknown command type {}", typ); }
     
-//    let codeval = store.get_data(lib, codename, env).get_object("data", env).get_object("flow", env);
     return Command {
       lib: lib.to_string(),
       id: id.to_string(),
-      src: code, //codeval,
+      src: code, 
     };
   }
   
+  pub fn lookup(lib:&str, ctl:&str, cmd:&str) -> Command {
+    let id;
+    {
+      let store = DataStore::new();
+      id = store.lookup_cmd_id(lib, ctl, cmd);
+    }
+    Command::new(lib, &id)
+  }
+  
   pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
-    let mut code = Code::new(self.src.duplicate());
-    //println!("executing: {:?}", self.src);
-    let o = code.execute(args);
-    let env = &mut FLOWENV.get().write().unwrap();
-    env.gc();
-    o
+    if let Source::Flow(f) = &self.src { 
+      let mut code = Code::new(f.duplicate());
+      //println!("executing: {:?}", self.src);
+      let o = code.execute(args);
+      DataObject::gc();
+      DataArray::gc();
+      return o;
+    }
+    else if let Source::Rust(r) = &self.src { 
+      return r.execute(args);
+    }
+    else { panic!("Not flow code"); }
+  }
+  
+  pub fn src(&self) -> Case {
+    if let Source::Flow(f) = &self.src { f.duplicate() } else { panic!("Not flow code"); }
   }
 }
 
@@ -53,10 +91,7 @@ mod tests {
 
   pub fn initialize() {
     INIT.call_once(|| {
-      let path = Path::new("data");
-      let store = DataStore::new(path.to_path_buf());
-      
-      FlowEnv::init(store);
+      DataStore::init("data");
     });
   }
 

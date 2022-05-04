@@ -3,8 +3,10 @@ use std::fs::File;
 use std::path::*;
 use std::io::Read;
 
-use crate::dataobject::*;
-use crate::case::*;
+use ndata::dataobject::*;
+use ndata::dataarray::*;
+
+pub static mut STORE_PATH:Option<PathBuf> = None;
 
 #[derive(Debug)]
 pub struct DataStore {
@@ -12,9 +14,20 @@ pub struct DataStore {
 }
 
 impl DataStore {
-  pub fn new(root: PathBuf) -> DataStore {
+  pub fn init(dir:&str) {
+    let d = Path::new(dir);
+    unsafe { STORE_PATH = Some(d.to_path_buf()); }
+    DataObject::init();
+    DataArray::init();
+  }
+  
+  pub fn new() -> DataStore {
+    let mut path;
+    unsafe {
+      path = STORE_PATH.as_ref().unwrap();
+    }
     return DataStore {
-      root: root,
+      root: path.to_path_buf(),
     };
   }
   
@@ -23,13 +36,28 @@ impl DataStore {
       root: self.root.to_owned(),
     };
   }
-  
-  pub fn get_code(&self, db: &str, id: &str) -> Case {
-    let path = self.get_data_file(db, &(id.to_owned()+".flow"));
-    let s = self.read_file(path);
-    Case::new(&s).unwrap()
+
+  pub fn lookup_cmd_id(&self, lib:&str, ctl:&str, cmd:&str) -> String {
+    let data = self.get_json(lib, "controls");
+    let data = &data["data"]["list"];
+    for c in data.as_array().unwrap() {
+      let n = c["name"].as_str().unwrap();
+      if n == ctl {
+        let ctlid = c["id"].as_str().unwrap();
+        let ctldata = self.get_json(lib, ctlid);
+        let ctldata = &ctldata["data"];
+        for cmddata in ctldata["cmd"].as_array().unwrap() {
+          let n2 = cmddata["name"].as_str().unwrap();
+          if n2 == cmd {
+            let id = cmddata["id"].as_str().unwrap();
+            return id.to_string();
+          }
+        }
+      }
+    }
+    panic!("No such command {}:{}:{}", lib, ctl, cmd);
   }
-  
+    
   pub fn get_json(&self, db: &str, id: &str) -> Value {
     let path = self.get_data_file(db, id);
     let s = self.read_file(path);
@@ -41,7 +69,7 @@ impl DataStore {
         let aid = id.to_string()+"."+b;
         let apath = self.get_data_file(db, &aid);
         let astr = self.read_file(apath);
-        if astr[0..1].to_string() == "{" { // FIXME - Legacy hack
+        if astr.len() > 0 && astr[0..1].to_string() == "{" { // FIXME - Legacy hack
           data["data"][b] = serde_json::from_str(&astr).unwrap(); 
         } else {
           data["data"][b] = serde_json::Value::String(astr); 
@@ -56,7 +84,7 @@ impl DataStore {
     DataObject::from_json(data)
   }
   
-  fn get_data_file(&self, db: &str, id: &str) -> PathBuf {
+  pub fn get_data_file(&self, db: &str, id: &str) -> PathBuf {
     let mut path = self.root.join(db);
     path = self.get_sub_dir(path, id, 4, 4);
     path.push(id);
@@ -74,13 +102,13 @@ impl DataStore {
       let n:usize = i * chars;
       let m:usize = n + chars;
       i = i + 1;
-      let sub = &id[n..m];
+      let sub = &s[n..m];
       path.push(sub);
     }
     path
   }
   
-  fn read_file(&self, path: PathBuf) -> String {
+  pub fn read_file(&self, path: PathBuf) -> String {
     let mut f = File::open(path).unwrap();
     let mut s = String::new();
     f.read_to_string(&mut s).unwrap();

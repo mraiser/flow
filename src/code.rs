@@ -1,10 +1,9 @@
 use std::cmp;
 
-use crate::flowenv::*;
 use crate::primitives::Primitive;
-use crate::dataobject::*;
-use crate::dataarray::*;
-use crate::data::*;
+use ndata::dataobject::*;
+use ndata::dataarray::*;
+use ndata::data::*;
 use crate::command::Command;
 use crate::case::*;
 
@@ -56,12 +55,10 @@ impl Code {
                 break;
               }
               else {
-                //println!("No input found!");
                 value.done = true;
               }
             }
             if count == 0 || b {
-              //println!("NO INPUTS");
               self.evaluate(cmd)?;
             }
           }
@@ -120,7 +117,6 @@ impl Code {
                       if !b { break; }
                     }
                     if b { 
-                      //println!("WITH INPUTS {:?}", cmd.input);
                       self.evaluate(cmd)?; 
                     }
                   }
@@ -135,9 +131,6 @@ impl Code {
         }
         Ok(())
       })();
-      
-//      println!("execute");
-//      env.gc();
       
       if let Err(e) = evaluation {
         if e == CodeException::NextCase {
@@ -175,7 +168,6 @@ impl Code {
   fn evaluate(&mut self, cmd: &mut Operation) -> Result<DataObject, CodeException> {
     let mut in1 = DataObject::new();
     let in2 = &mut cmd.input;
-    //println!("cloning {:?}", in2);
     let mut list_in:Vec<String> = Vec::new();
     for (name,in3) in in2 {
       let dp3 = &mut in3.val;
@@ -184,7 +176,6 @@ impl Code {
       if in3.mode == "list" { list_in.push(name.to_string()); }
     }
     
-    //let out2 = &cmd.output;
     let mut list_out:Vec<String> = Vec::new();    
     let mut loop_out:Vec<String> = Vec::new();    
     for (name,out3) in &mut cmd.output {
@@ -241,9 +232,6 @@ impl Code {
           }
         }
         
-//        println!("evaluate");
-//        env.gc();
-        
         if cmd.FINISHED {
           break;
         }
@@ -256,7 +244,6 @@ impl Code {
         }
       }
       
-//      println!("LIST/LOOP END {:?}", out3.to_json());
       cmd.result = Some(out3.duplicate());
       return Ok(out3);
     }
@@ -269,12 +256,11 @@ impl Code {
     let v = &cmd.name;
     
     let evaluation: Result<(), CodeException> = (|| {
-      if cmd_type == "primitive" { // FIXME - use match
+      if cmd_type == "primitive" {
         let p = Primitive::new(v);
         out = p.execute(in1);
       }
       else if cmd_type == "local" {
-//        println!("before local {:?}", in1.to_json());
         let src = cmd.localdata.as_ref().unwrap();
         let mut code = Code::new(src.duplicate());
         out = code.execute(in1)?;
@@ -317,10 +303,9 @@ impl Code {
         let mut i = 0;
         let cmdout = &mut cmd.output;
         
-        
-//        let keys = subcmd.src.output.keys().collect::<Vec<_>>().try_into().unwrap();
         let mut keys = Vec::<&str>::new();
-        for k in subcmd.src.output.keys() { keys.push(k); }
+        let src = subcmd.src();
+        for k in src.output.keys() { keys.push(k); }
         
         
         for (key1, _v) in cmdout {
@@ -379,11 +364,8 @@ impl Code {
       Ok(())
     })();
 
-    {    
-//      println!("operation");
-      let env = &mut FLOWENV.get().write().unwrap();
-      env.gc();
-    }
+    DataObject::gc();
+    DataArray::gc();
     
     if let Err(e) = evaluation {
       if e == CodeException::Fail {
