@@ -4,3 +4,4 @@ Cargo.lock
 /src/hold
 /src/alt
 /generated/
+/src/generated/
