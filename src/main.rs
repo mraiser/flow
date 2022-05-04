@@ -13,7 +13,7 @@ mod generated;
 use command::Command as Command;
 use datastore::DataStore;
 use ndata::dataobject::*;
-//use dataarray::*;
+//use ndata::dataarray::*;
 
 fn main() {
   DataStore::init("data");
