@@ -1,0 +1,1 @@
+{"data":{"import":"use ndata::dataarray::*;\n","lib":"flowlang","returntype":"JSONObject","ctl":"http","cmd":"parse_request","type":"rust","params":[{"name":"path","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"yoviup180d2b3567es6f","time":1652976236111,"addr":"/0:0:0:0:0:0:0:1:38364","username":"admin"}

@@ -9,6 +9,7 @@ mod datastore;
 mod primitives;
 mod rustcmd;
 mod generated;
+mod rand;
 
 use command::Command as Command;
 use datastore::DataStore;
@@ -40,4 +41,8 @@ fn main() {
 //    DataObject::print_heap();
 //    DataArray::print_heap();
   }
+//  DataObject::gc();
+//  DataArray::gc();
+//  DataObject::print_heap();
+//  DataArray::print_heap();
 }

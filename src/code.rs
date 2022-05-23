@@ -1,10 +1,11 @@
 use std::cmp;
+use std::panic;
 
 use crate::primitives::Primitive;
 use ndata::dataobject::*;
 use ndata::dataarray::*;
 use ndata::data::*;
-use crate::command::Command;
+use crate::command::*;
 use crate::case::*;
 
 #[derive(PartialEq, Debug)]
@@ -303,13 +304,18 @@ impl Code {
         let mut i = 0;
         let cmdout = &mut cmd.output;
         
-        let mut keys = Vec::<&str>::new();
-        let src = subcmd.src();
-        for k in src.output.keys() { keys.push(k); }
-        
-        
+        let mut keys = DataArray::new();
+        if let Source::Flow(src) = subcmd.src { 
+          for k in src.output.keys() { keys.push_str(k); }
+        }
+        else {
+          keys.push_str("a");
+        }
+//          let src = subcmd.src();
+//          for k in src.output.keys() { keys.push(k); }
+
         for (key1, _v) in cmdout {
-          let key2:&str = &keys[i];
+          let key2:&str = &keys.get_string(i);
           let dp = result.get_property(key2);
           out.set_property(&key1, dp);
           i = i + 1;

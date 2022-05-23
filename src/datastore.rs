@@ -2,11 +2,15 @@ use serde_json::*;
 use std::fs::File;
 use std::path::*;
 use std::io::Read;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ndata::dataobject::*;
 use ndata::dataarray::*;
 
-pub static mut STORE_PATH:Option<PathBuf> = None;
+use crate::rand::*;
+
+static mut STORE_PATH:Option<PathBuf> = None;
+static mut RANDOM:(u32, u32, u32, u32) = (0,0,0,0);
 
 #[derive(Debug)]
 pub struct DataStore {
@@ -16,13 +20,26 @@ pub struct DataStore {
 impl DataStore {
   pub fn init(dir:&str) {
     let d = Path::new(dir);
-    unsafe { STORE_PATH = Some(d.to_path_buf()); }
+
+    let nanos = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap()
+      .subsec_nanos();
+    let rand = Rand::new(nanos);
+
+    unsafe { 
+      STORE_PATH = Some(d.to_path_buf()); 
+      RANDOM = rand.get();
+    }
+
     DataObject::init();
     DataArray::init();
+    let o = DataObject::new();
+    let _x = &mut OHEAP.get().write().unwrap().incr(o.data_ref);
   }
   
   pub fn new() -> DataStore {
-    let mut path;
+    let path;
     unsafe {
       path = STORE_PATH.as_ref().unwrap();
     }
@@ -31,10 +48,44 @@ impl DataStore {
     };
   }
   
-  pub fn clone(&self) -> DataStore {
-    return DataStore {
-      root: self.root.to_owned(),
-    };
+  pub fn globals() -> DataObject {
+    DataObject::get(0)
+  }
+  
+  pub fn rand() -> u32 {
+    unsafe {
+      let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+      let x = rand.rand();
+      RANDOM = rand.get();
+      return x;
+    }
+  }
+  
+  pub fn shuffle<T>(a: &mut [T]) {
+    unsafe {
+      let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+      let o = rand.shuffle(a);
+      RANDOM = rand.get();
+      return o;
+    }
+  }
+
+  pub fn rand_range(a: i32, b: i32) -> i32 {
+    unsafe {
+      let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+      let o = rand.rand_range(a, b);
+      RANDOM = rand.get();
+      return o;
+    }
+  }
+
+  pub fn rand_float() -> f64 {
+    unsafe {
+      let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+      let o = rand.rand_float();
+      RANDOM = rand.get();
+      return o;
+    }
   }
 
   pub fn lookup_cmd_id(&self, lib:&str, ctl:&str, cmd:&str) -> String {

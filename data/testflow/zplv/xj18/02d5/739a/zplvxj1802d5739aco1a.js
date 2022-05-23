@@ -15,6 +15,9 @@ me.ready = function(){
             el.append("test_loop:"+JSON.stringify(result)+"<BR>");
             send_test_speed(100000, function(result) {
               el.append("test_speed:"+JSON.stringify(result)+"<BR>");
+              send_test_rust([400],[20], function(result) {
+                el.append("test_rust: "+JSON.stringify(result)+"<BR>");
+              });
             });
           });
         });

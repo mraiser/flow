@@ -1,0 +1,1 @@
+{"data":{"import":"use ndata::dataarray::*;\n","lib":"flowlang","returntype":"JSONArray","ctl":"string","cmd":"split","type":"rust","params":[{"name":"a","type":"String"},{"name":"b","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"lyqkxo180e17082e0h8c","time":1653249679712,"addr":"/0:0:0:0:0:0:0:1:43388","username":"admin"}
