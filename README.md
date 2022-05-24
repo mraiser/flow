@@ -7,22 +7,22 @@ The Flow language is a 3D visual dataflow language, which is based loosely on th
 [![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/zwC-_ZmbOfA)
 https://youtu.be/zwC-_ZmbOfA
 
-### Compile Flow As Binary
-    cargo build --release
-
-### Install Binaries
-    sudo cp target/release/flow /usr/bin/flow
-    sudo cp target/release/flowb /usr/bin/flowb
-
-### Build Primitives
+### Installation
 The Flow language includes a set of "primitives", which are low-level functions written in the Flow 
 interpreter's native language. In this implementation, they have been written as Newbound Rust Commands
 in the data/flowlang directory. 
 Newbound uses this repo to compile and execute Rust commands. In order to use the Flow language primitives,
 you must build them first:
 
-    flowb all
+    cargo build --release --bin flowb
+    target/release/flowb all
     cargo build --release
+    sudo cp target/release/flow /usr/bin/flow
+    sudo cp target/release/flowb /usr/bin/flowb
+
+NOTE: Note if you add custom Rust to your Flow code, you will need to rebuild the flow binary. If you create symbolic 
+links to the binaries in target/release/ instead of copying them, you won't have to copy
+them again after rebuilding.
 
 ### Executing Flow Code
 This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 

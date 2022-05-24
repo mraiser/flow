@@ -212,13 +212,14 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
   build_mod(path2, &m);  
   
   let m = "      \"".to_string()+id+"\" => "+lib+"::"+ctl+"::"+cmd+"::execute,";
-  let mm = "pub mod ".to_string()+lib+";\n";
+  let mm = "pub mod ".to_string()+lib+";";
   let path2 = &path2.parent().unwrap().parent().unwrap().join("mod.rs");
   if path2.exists() {
     let file = File::open(&path2).unwrap();
     let lines = io::BufReader::new(file).lines();
     let mut part1 = Vec::<String>::new();
     let mut part2 = Vec::<String>::new();
+    let mut a = true;
     let mut b = true;
     let mut c = true;
     let begin = "    match name {";
@@ -227,6 +228,10 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
         if ip == m {
           b = false;
           break;
+        }
+        
+        if ip == mm {
+          a = false;
         }
         
         if c {
@@ -243,7 +248,10 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
     }
     if b {
       let mut file = File::create(&path2).unwrap();
-      let _x = file.write_all(mm.as_bytes());
+      if a {
+        let _x = file.write_all(mm.as_bytes());
+        let _x = file.write_all(b"\n");
+      }
       for line in part1 {
         let _x = file.write_all(line.as_bytes());
         let _x = file.write_all(b"\n");
@@ -261,6 +269,7 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
   else {
       let mut file = File::create(&path2).unwrap();
       let _x = file.write_all(mm.as_bytes());
+      let _x = file.write_all(b"\n");
       let _x = file.write_all(b"use crate::rustcmd::*;\n");
       let _x = file.write_all(b"pub struct Generated {}\n");
       let _x = file.write_all(b"impl Generated {\n");
