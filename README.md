@@ -54,9 +54,10 @@ http://127.0.0.1:7878/testflow/testflow/test_speed?a=100000
 
 ### Background:
 Flow was originally written in Java as part of Newbound, an integrated
-development and runtime environment for peer-to-peer HTML5 web apps. Newbound supports Java, Python and Flow for
+development and runtime environment for peer-to-peer HTML5 web apps. Newbound supports Java, Python, Rust, and Flow for
 server-side commands, and Javascript and Flow on the front-end. This repository contains a port of the Flow language
-interpreter from the original Java, Python and Javascript versions included with Newbound.
+interpreter from the original Java, Python and Javascript versions included with Newbound. Newbound uses this repo to
+compile and execute Rust code.
 
 - Java: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/Code.java
 - Python: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/newbound/code/code.py
