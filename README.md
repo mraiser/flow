@@ -30,7 +30,7 @@ folder, and they will become executable as well. Libraries are created using the
 (https://github.com/mraiser/newbound).
 
 #### From the command line:
-    cargo run --bin flow testflow testflow test_add <<< "{\"a\": 300,\"b\":120}"
+    flow testflow testflow test_add <<< "{\"a\": 300,\"b\":120}"
 
 #### From Rust code:
     DataStore::init("data");
