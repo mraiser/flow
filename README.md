@@ -20,7 +20,7 @@ you must build them first:
     sudo cp target/release/flow /usr/bin/flow
     sudo cp target/release/flowb /usr/bin/flowb
 
-NOTE: Note if you add custom Rust to your Flow code, you will need to rebuild the flow binary. If you create symbolic 
+NOTE: If you add custom Rust to your Flow code, you will need to rebuild the flow binary. If you create symbolic 
 links to the binaries in target/release/ instead of copying them, you won't have to copy
 them again after rebuilding.
 
