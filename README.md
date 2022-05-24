@@ -1,21 +1,27 @@
 # Flow
-*This repo is still very much a work in progress.*
 
 The Flow language is a 3D visual dataflow language, which is based loosely on the Prograph programming language 
-(https://en.wikipedia.org/wiki/Prograph). Flow was originally written in Java as part of Newbound, an integrated 
-development and runtime environment for peer-to-peer HTML5 web apps. Newbound supports Java, Python and Flow for 
-server-side commands, and Javascript and Flow on the front-end. This repository contains a port of the Flow language 
-interpreter from the original Java, Python and Javascript versions included with Newbound.
-
-- Java: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/Code.java
-- Python: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/newbound/code/code.py
-- Javascript: https://github.com/mraiser/newbound/blob/master/data/flow/nzsk/xq17/a964/97b3/nzskxq17a96497b37x14.js
-
+(https://en.wikipedia.org/wiki/Prograph). The official IDE for the Flow language is Newbound 
+(https://github.com/mraiser/newbound). 
 ### Introductory Video:
 [![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/zwC-_ZmbOfA)
 https://youtu.be/zwC-_ZmbOfA
 
-### Compile flow as binary
+### Compile Flow As Binary
+    cargo build --release
+
+### Install Binaries
+    sudo cp target/release/flow /usr/bin/flow
+    sudo cp target/release/flowb /usr/bin/flowb
+
+### Build Primitives
+The Flow language includes a set of "primitives", which are low-level functions written in the Flow 
+interpreter's native language. In this implementation, they have been written as Newbound Rust Commands
+in the data/flowlang directory. 
+Newbound uses this repo to compile and execute Rust commands. In order to use the Flow language primitives,
+you must build them first:
+
+    flowb all
     cargo build --release
 
 ### Executing Flow Code
@@ -45,3 +51,13 @@ folder, and they will become executable as well. Libraries are created using the
 Test your HTTP service in a web browser:
     
 http://127.0.0.1:7878/testflow/testflow/test_speed?a=100000
+
+### Background:
+Flow was originally written in Java as part of Newbound, an integrated
+development and runtime environment for peer-to-peer HTML5 web apps. Newbound supports Java, Python and Flow for
+server-side commands, and Javascript and Flow on the front-end. This repository contains a port of the Flow language
+interpreter from the original Java, Python and Javascript versions included with Newbound.
+
+- Java: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/Code.java
+- Python: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/newbound/code/code.py
+- Javascript: https://github.com/mraiser/newbound/blob/master/data/flow/nzsk/xq17/a964/97b3/nzskxq17a96497b37x14.js

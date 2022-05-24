@@ -1,7 +1,7 @@
 use std::env;
 use std::io;
 use std::io::BufRead;
-
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::*;
@@ -22,10 +22,34 @@ fn main() {
   {
     let params: Vec<String> = env::args().collect();
     let lib = &params[1];
-    let ctl = &params[2];
-    let cmd = &params[3];
-    
-    build(lib, ctl, cmd);
+    if lib == "all" {
+      let libs = fs::read_dir("data").unwrap();
+      let store = DataStore::new();
+      for db in libs {
+        let lib = db.unwrap().file_name().into_string().unwrap();
+        let controls = store.get_json(&lib, "controls");
+        let list = controls["data"]["list"].as_array().unwrap();
+        for control in list {
+          let ctl = (&control["name"]).as_str().unwrap();
+          let id = (&control["id"]).as_str().unwrap();
+          let ctldata = store.get_json(&lib, &id);
+          let cmdlist = &ctldata["data"]["cmd"];
+          if !cmdlist.is_null() {
+            let cmdlist = ctldata["data"]["cmd"].as_array().unwrap();
+            for command in cmdlist {
+              let cmd = (&command["name"]).as_str().unwrap();
+              println!("Building: {}:{}:{}", lib, ctl, cmd);
+              build(&lib, &ctl, &cmd);
+            }
+          }
+        }
+      }    
+    }
+    else {
+      let ctl = &params[2];
+      let cmd = &params[3];
+      build(lib, ctl, cmd);
+    }
   }
 }
 

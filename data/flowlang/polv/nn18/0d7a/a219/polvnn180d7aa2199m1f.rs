@@ -1,3 +1,3 @@
 let nonhexchars = "ghijklmnopqrstuvwxyz";
-let x = DataStore::rand_range(0,20) as usize;
+let x = rand_range(0,20) as usize;
 nonhexchars[x..x+1].to_string()

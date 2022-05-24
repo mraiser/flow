@@ -1,13 +1,29 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 const KX: u32 = 123456789;
 const KY: u32 = 362436069;
 const KZ: u32 = 521288629;
 const KW: u32 = 88675123;
+
+static mut RANDOM:(u32, u32, u32, u32) = (0,0,0,0);
 
 pub struct Rand {
     x: u32, y: u32, z: u32, w: u32
 }
 
 impl Rand{
+    pub fn init() {
+        let nanos = SystemTime::now()
+          .duration_since(UNIX_EPOCH)
+          .unwrap()
+          .subsec_nanos();
+        let rand = Rand::new(nanos);
+        
+        unsafe { 
+          RANDOM = rand.get();
+        }
+    }
+    
     pub fn new(seed: u32) -> Rand {
         Rand{
             x: KX^seed, y: KY^seed,
@@ -65,6 +81,42 @@ fn main() {
     let mut v: Vec<u32> = (1..101).collect();
     rng.shuffle(&mut v);
     println!("{:?}",v);
+}
+
+pub fn rand() -> u32 {
+  unsafe {
+    let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+    let x = rand.rand();
+    RANDOM = rand.get();
+    return x;
+  }
+}
+
+pub fn shuffle<T>(a: &mut [T]) {
+  unsafe {
+    let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+    let o = rand.shuffle(a);
+    RANDOM = rand.get();
+    return o;
+  }
+}
+
+pub fn rand_range(a: i32, b: i32) -> i32 {
+  unsafe {
+    let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+    let o = rand.rand_range(a, b);
+    RANDOM = rand.get();
+    return o;
+  }
+}
+
+pub fn rand_float() -> f64 {
+  unsafe {
+    let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
+    let o = rand.rand_float();
+    RANDOM = rand.get();
+    return o;
+  }
 }
 
 
