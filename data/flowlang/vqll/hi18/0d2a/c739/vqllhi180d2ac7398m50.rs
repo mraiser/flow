@@ -17,7 +17,7 @@ for stream in listener.incoming() {
     
     let mut headers = DataObject::new();
     let mut last = "".to_string();
-    while true {
+    loop {
       let mut line = String::new();
       count = reader.read_line(&mut line).unwrap();
       if count == 2 {
@@ -110,7 +110,7 @@ for stream in listener.incoming() {
       }
     }
     
-    let mut cmd:String;
+    let cmd:String;
     if path.contains("?"){
       let i = path.find("?").unwrap();
       cmd = path[0..i].to_string();
@@ -240,16 +240,18 @@ for stream in listener.incoming() {
     }
     
     if headers.has("SEC-WEBSOCKET-KEY") {
-      let key = headers.get_string("SEC-WEBSOCKET-KEY");
+      //let key = headers.get_string("SEC-WEBSOCKET-KEY");
       
       // FIXME - Implement
       
       panic!("WEBSOCKET NOT IMPLEMENTED");
     }
     else {
+      // FIXME - Implement keep-alive
       let mut ka = "close".to_string();
       if headers.has("CONNECTION") { ka = headers.get_string("CONNECTION"); }
 
+      // FIXME - origin is never used
       let mut origin = "null".to_string();
       if headers.has("ORIGIN") { origin = headers.get_string("ORIGIN"); }
       
@@ -278,11 +280,11 @@ for stream in listener.incoming() {
       
       let response = response.get_object("a").duplicate();
       
-      let mut body:String;
-      let mut mimetype:String;
-      let mut len:i64;
-      let mut code:u16;
-      let mut msg:String;
+      let body:String;
+      let mimetype:String;
+      let len:i64;
+      let code:u16;
+      let msg:String;
       let mut headers:DataObject;
       
       if response.has("body") { body = response.get_string("body"); }
@@ -293,10 +295,10 @@ for stream in listener.incoming() {
       
       if response.has("msg") { msg = response.get_string("msg"); }
       else { 
-        if (code < 200) { msg = "INFO".to_string(); }
-        else if (code < 300) { msg = "OK".to_string(); }
-        else if (code < 400) { msg = "REDIRECT".to_string(); }
-        else if (code < 500) { msg = "CLIENT ERROR".to_string(); }
+        if code < 200 { msg = "INFO".to_string(); }
+        else if code < 300 { msg = "OK".to_string(); }
+        else if code < 400 { msg = "REDIRECT".to_string(); }
+        else if code < 500 { msg = "CLIENT ERROR".to_string(); }
         else { msg = "SERVER ERROR".to_string(); }
       }
       

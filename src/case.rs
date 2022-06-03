@@ -52,7 +52,7 @@ pub struct Operation {
   #[serde(default)]
   pub done: bool,
   #[serde(default)]
-  pub FINISHED: bool,
+  pub finish: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -130,7 +130,7 @@ impl Operation {
     let result = None;
     let mut condition: Option<Condition> = None;
     let done = false;
-    let FINISHED = false;
+    let finish = false;
     
     for (k, node) in &self.input {
       input.insert(k.to_string(), node.duplicate());
@@ -158,7 +158,7 @@ impl Operation {
       result: result,
       condition: condition,
       done: done,
-      FINISHED: FINISHED,
+      finish: finish,
     }  
   }
 }

@@ -1,5 +1,4 @@
 use std::cmp;
-use std::panic;
 
 use crate::primitives::Primitive;
 use ndata::dataobject::*;
@@ -233,7 +232,7 @@ impl Code {
           }
         }
         
-        if cmd.FINISHED {
+        if cmd.finish {
           break;
         }
         
@@ -265,7 +264,7 @@ impl Code {
         let src = cmd.localdata.as_ref().unwrap();
         let mut code = Code::new(src.duplicate());
         out = code.execute(in1)?;
-        cmd.FINISHED = code.finishflag;
+        cmd.finish = code.finishflag;
       }
       else if cmd_type == "constant" {
         for (key,_x) in &mut cmd.output {

@@ -74,7 +74,6 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
     meta["cmd"] = json!(cmd);
     
     // FIXME - Don't rebuild if current
-    // FIXME - Extra pub mod statement if library already exists and adding new command
     
     build_rust(path, meta, &src);
   }
@@ -175,7 +174,7 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
     let _x = file.write_all(b"o.set_property(\"a\", ax);\n");
   }
   else {
-    file.write_all(b"o.put_");
+    let _x = file.write_all(b"o.put_");
     if returntype == "String" {
       let _x = file.write_all(b"str");
       let _x = file.write_all(b"(\"a\", &ax);\n");

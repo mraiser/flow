@@ -1,7 +1,6 @@
 let mut old = input;
 let mut out = "".to_string();
-let mut hex:i64;
-let mut i = 0;
+let mut i;
 
 while old.contains("%") {
   i = old.find("%").unwrap();
@@ -10,7 +9,6 @@ while old.contains("%") {
   if old.len() < 3 {
     break;
   }
-  hex = -1;
   
   let s = old[1..3].to_string();
   let res:Result<Vec<u8>, ParseIntError> = (0..s.len())
