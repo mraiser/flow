@@ -15,6 +15,7 @@ use command::Command as Command;
 use datastore::DataStore;
 use ndata::dataobject::*;
 //use ndata::dataarray::*;
+//use ndata::databytes::*;
 
 fn main() {
   DataStore::init("data");
@@ -40,9 +41,12 @@ fn main() {
     
 //    DataObject::print_heap();
 //    DataArray::print_heap();
+//    DataBytes::print_heap();
   }
 //  DataObject::gc();
 //  DataArray::gc();
+//  DataBytes::gc();
 //  DataObject::print_heap();
 //  DataArray::print_heap();
+//  DataBytes::print_heap();
 }

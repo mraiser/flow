@@ -5,6 +5,7 @@ use std::io::Read;
 
 use ndata::dataobject::*;
 use ndata::dataarray::*;
+use ndata::databytes::*;
 
 use crate::rand::*;
 
@@ -26,6 +27,7 @@ impl DataStore {
     Rand::init();
     DataObject::init();
     DataArray::init();
+    DataBytes::init();
     let o = DataObject::new();
     let _x = &mut OHEAP.get().write().unwrap().incr(o.data_ref);
   }
