@@ -4,8 +4,8 @@ The Flow language is a 3D visual dataflow language, which is based loosely on th
 (https://en.wikipedia.org/wiki/Prograph). The official IDE for the Flow language is Newbound 
 (https://github.com/mraiser/newbound). 
 ### Introductory Video:
-[![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/zwC-_ZmbOfA)
-https://youtu.be/zwC-_ZmbOfA
+[![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/5vZKR4FGJyU)
+https://youtu.be/5vZKR4FGJyU
 
 ### Installation
 The Flow language includes a set of "primitives", which are low-level functions written in the Flow 
