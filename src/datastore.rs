@@ -46,6 +46,12 @@ impl DataStore {
     DataObject::get(0)
   }
   
+  pub fn gc() {
+    DataObject::gc();
+    DataArray::gc();
+    DataBytes::gc();
+  }
+  
   pub fn lookup_cmd_id(&self, lib:&str, ctl:&str, cmd:&str) -> String {
     let data = self.get_json(lib, "controls");
     let data = &data["data"]["list"];

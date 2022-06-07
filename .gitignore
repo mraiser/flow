@@ -5,3 +5,4 @@ Cargo.lock
 /src/alt
 /generated/
 /src/generated/
+/data/test

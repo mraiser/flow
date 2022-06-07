@@ -34,23 +34,25 @@ folder, and they will become executable as well. Libraries are created using the
 
 #### From Rust code:
     DataStore::init("data");
-
-    let args = DataObject::from_json(serde_json::from_str(r#"
     {
-      "a": 299,
-      "b": 121
+        let args = DataObject::from_json(serde_json::from_str(r#"
+        {
+          "a": 299,
+          "b": 121
+        }
+        "#).unwrap());
+        let cmd = Command::lookup("testflow", "testflow", "test_add);
+        let res = cmd.execute(args).unwrap();
+        println!("Hello, my dudes! {}", res.to_json());
     }
-    "#).unwrap());
-    let cmd = Command::lookup("testflow", "testflow", "test_add);
-    let res = cmd.execute(args).unwrap();
-    println!("Hello, my dudes! {}", res.to_json());
+    DataStore::gc();
 
 #### From a web browser:
     # Start the HTTP service
     flow flowlang http listen <<< "{\"socket_address\": \"127.0.0.1:7878\", \"library\":\"flowlang\", \"control\":\"http\", \"command\":\"parse_request\"}"
 Test your HTTP service in a web browser:
-    
-http://127.0.0.1:7878/testflow/testflow/test_speed?a=100000
+
+http://127.0.0.1:7878/testflow/testflow/test_add?a=42&b=378
 
 ### Background:
 Flow was originally written in Java as part of Newbound, an integrated

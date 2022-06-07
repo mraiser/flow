@@ -3,6 +3,7 @@ use std::cmp;
 use crate::primitives::Primitive;
 use ndata::dataobject::*;
 use ndata::dataarray::*;
+use ndata::databytes::*;
 use ndata::data::*;
 use crate::command::*;
 use crate::case::*;
@@ -371,6 +372,7 @@ impl Code {
 
     DataObject::gc();
     DataArray::gc();
+    DataBytes::gc();
     
     if let Err(e) = evaluation {
       if e == CodeException::Fail {

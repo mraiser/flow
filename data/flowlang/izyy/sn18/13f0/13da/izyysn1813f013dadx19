@@ -1,0 +1,1 @@
+{"data":{"import":"import org.json.*;\nimport com.newbound.robot.*;\n","lib":"flowlang","returntype":"Any","ctl":"math","cmd":"multiply","type":"java","params":[{"name":"a","type":"Any"},{"name":"b","type":"Any"}],"attachmentkeynames":["java"],"desc":""},"id":"izyysn1813f013dadx19","time":1654619517093,"addr":"/0:0:0:0:0:0:0:1:54218","username":"admin"}
