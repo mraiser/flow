@@ -7,6 +7,7 @@ use ndata::databytes::*;
 use ndata::data::*;
 use crate::command::*;
 use crate::case::*;
+use crate::datastore::*;
 
 #[derive(PartialEq, Debug)]
 pub enum CodeException {
@@ -280,7 +281,7 @@ impl Code {
           else if ctype == "array" { 
             out.put_list(&key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
           }
-          else { out.put_null(v); }
+          else { out.put_null(&key); }
         }
       }  
       else if cmd_type == "command" {
@@ -321,12 +322,31 @@ impl Code {
           i = i + 1;
         }
       }
+      else if cmd_type == "persistent" {
+        let mut g = DataStore::globals();
+        let keys = &in1.duplicate().keys();
+        if keys.len() > 0 {
+          let key = &keys[0];
+          let dp1 = &in1.get_property(key);
+          g.set_property(v, dp1.clone());
+        }
+        let cmdout = &mut cmd.output;
+        let value: Data;
+        if g.has(v) {
+          value = g.get_property(v);
+        }
+        else {
+          value = Data::DNull;
+        }
+        for (key,_x) in &mut cmd.output {
+          out.set_property(&key, value.clone());
+        }
+      }
       else if cmd_type == "match" {
         let key = &in1.duplicate().keys()[0];
         let ctype = cmd.ctype.as_ref().unwrap();
         let dp1 = &in1.get_property(key);
         
-        // FIXME - Support match on null?
         if ctype == "int" {
           if !dp1.is_int() { b = false; }
           else {
@@ -357,6 +377,9 @@ impl Code {
             let val1 = dp1.string();
             b = val1 == v.to_owned(); 
           }
+        }
+        else if ctype == "null" {
+          b = dp1.clone().is_null();
         }
         else {
           // FIXME - Objects & Arrays can't match a constant?
