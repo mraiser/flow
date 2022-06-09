@@ -1,0 +1,1 @@
+{"data":{"import":"use std::path::Path;","lib":"flowlang","returntype":"Boolean","ctl":"file","cmd":"exists","type":"rust","params":[{"name":"path","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"uoyxgz18148b63ccdy21","time":1654782449698,"addr":"/0:0:0:0:0:0:0:1:44560","username":"admin"}

@@ -31,9 +31,9 @@ impl Code {
   }
 
   pub fn execute(&mut self, args: DataObject) -> Result<DataObject, CodeException> {
-    let mut done = false;
     let mut out = DataObject::new();
     
+    let mut done = false;
     let mut current_case = self.data.duplicate();
     
     while !done {
@@ -263,6 +263,47 @@ impl Code {
         out = p.execute(in1);
       }
       else if cmd_type == "local" {
+/*
+        let src = cmd.localdata.as_ref().unwrap();
+        let mut holder = DataObject::new();
+        let panic_result = panic::catch_unwind(|| {
+          let mut holder = DataObject::get(holder.data_ref);
+          let mut code = Code::new(src.duplicate());
+          let local_res = code.execute(in1);
+          if let Err(e) = local_res {
+            if e == CodeException::NextCase { holder.put_str("error", "next"); }
+            else if e == CodeException::Terminate { holder.put_str("error", "terminate"); }
+            else { holder.put_str("error", "fail"); }
+          }
+          else {
+            let x = local_res.unwrap();
+            holder.put_object("result", x);
+          }
+          holder.put_bool("finish", code.finishflag);
+        });
+        
+        match panic_result {
+          Ok(_x) => (),
+          Err(e) => {
+//            let s = match e.downcast::<String>() {
+//              Ok(panic_msg) => format!("{}", panic_msg),
+//              Err(_) => "unknown error".to_string()
+//            };   
+            return Err(CodeException::Fail);
+          }
+        }
+        
+        if holder.has("error") {
+          let x = holder.get_string("error");
+          if x == "next" { return Err(CodeException::NextCase); }
+          else if x == "terminate" { return Err(CodeException::Terminate); }
+          return Err(CodeException::Fail);
+        }
+        
+        let x = holder.get_object("result");
+        for (k,v) in x.objects() { out.set_property(&k, v); }
+        if holder.has("finish") { cmd.finish = holder.get_bool("finish"); }
+*/
         let src = cmd.localdata.as_ref().unwrap();
         let mut code = Code::new(src.duplicate());
         out = code.execute(in1)?;
@@ -402,6 +443,7 @@ impl Code {
         b = false;
       }
       else {
+        println!("UNEXPECTED ERROR {:?}", e);
         return Err(e);
       }
     }

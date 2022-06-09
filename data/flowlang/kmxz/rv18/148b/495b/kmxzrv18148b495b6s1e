@@ -1,0 +1,1 @@
+{"data":{"import":"use std::fs;\n","lib":"flowlang","returntype":"String","ctl":"file","cmd":"read_all_string","type":"rust","params":[{"name":"path","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"kmxzrv18148b495b6s1e","time":1654782478758,"addr":"/0:0:0:0:0:0:0:1:44560","username":"admin"}

@@ -31,12 +31,18 @@ impl Primitive {
       map.insert("sleep".to_string(), (flowlang::system::sleep::execute, "{ in: { millis: {} }, out: {} }".to_string()));
       map.insert("split".to_string(), (flowlang::string::split::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("get".to_string(), (flowlang::object::get::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("set".to_string(), (flowlang::object::set::execute, "{ in: { object: {}, key: {}, value: {} }, out: { a: {} } }".to_string()));
       map.insert("length".to_string(), (flowlang::string::length::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("execute_command".to_string(), (flowlang::system::execute_command::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {}}, out: { a: {} } }".to_string()));
       map.insert("to_json".to_string(), (flowlang::object::to_json::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
+      map.insert("object_from_json".to_string(), (flowlang::object::object_from_json::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
+      map.insert("array_from_json".to_string(), (flowlang::object::array_from_json::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("has".to_string(), (flowlang::object::has::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("tcp_listen".to_string(), (flowlang::tcp::listen::execute, "{ in: { address: {}, port: {} }, out: { a: {} } }".to_string()));
       map.insert("tcp_accept".to_string(), (flowlang::tcp::accept::execute, "{ in: { listener: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_read_all_string".to_string(), (flowlang::file::read_all_string::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_read_properties".to_string(), (flowlang::file::read_properties::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_exists".to_string(), (flowlang::file::exists::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       PRIMITIVES.set(RwLock::new(map));
     });
   }

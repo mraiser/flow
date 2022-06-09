@@ -162,7 +162,7 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
       invoke2 = invoke2 + ", ";
     }
     invoke1 = invoke1 + "a" + &index.to_string();
-    invoke2 = invoke2 + name + ":" + typ;
+    invoke2 = invoke2 + "mut " + name + ":" + typ;
     index += 1;
   }
   invoke1 = invoke1 + ");\n";
