@@ -27,19 +27,28 @@ fn main() {
       let store = DataStore::new();
       for db in libs {
         let lib = db.unwrap().file_name().into_string().unwrap();
-        let controls = store.get_json(&lib, "controls");
-        let list = controls["data"]["list"].as_array().unwrap();
-        for control in list {
-          let ctl = (&control["name"]).as_str().unwrap();
-          let id = (&control["id"]).as_str().unwrap();
-          let ctldata = store.get_json(&lib, &id);
-          let cmdlist = &ctldata["data"]["cmd"];
-          if !cmdlist.is_null() {
-            let cmdlist = ctldata["data"]["cmd"].as_array().unwrap();
-            for command in cmdlist {
-              let cmd = (&command["name"]).as_str().unwrap();
-              println!("Building: {}:{}:{}", lib, ctl, cmd);
-              build(&lib, &ctl, &cmd);
+        if !store.exists(&lib, "controls") {
+          println!("No controls in library {}", &lib);
+        }
+        else {
+          let controls = store.get_json(&lib, "controls");
+          let list = controls["data"]["list"].as_array().unwrap();
+          for control in list {
+            let ctl = (&control["name"]).as_str().unwrap();
+            let id = (&control["id"]).as_str().unwrap();
+            if !store.exists(&lib, &id) {
+              println!("No control file for {}:{}", &lib, &id);
+            }
+            else {
+              let ctldata = store.get_json(&lib, &id);
+              let cmdlist = &ctldata["data"]["cmd"];
+              if !cmdlist.is_null() {
+                let cmdlist = ctldata["data"]["cmd"].as_array().unwrap();
+                for command in cmdlist {
+                  let cmd = (&command["name"]).as_str().unwrap();
+                  build(&lib, &ctl, &cmd);
+                }
+              }
             }
           }
         }
@@ -56,26 +65,29 @@ fn main() {
 pub fn build(lib:&str, ctl:&str, cmd:&str) {
   let store = DataStore::new();
   let id = &store.lookup_cmd_id(lib, ctl, cmd);
-
-  let meta = store.get_json(lib, id);
-  let data = &meta["data"];
-  let typ = &data["type"];
   
-  if typ == "rust" {
-    let id = data["rust"].as_str().unwrap();
-    let mut meta = store.get_json(lib, id);
+  if store.exists(lib, id) {
+    let meta = store.get_json(lib, id);
+    let data = &meta["data"];
+    let typ = &data["type"];
     
-    let path = store.get_data_file(lib, &(id.to_owned()+".rs"));
-    let src = store.read_file(path);
-    let path = store.root.parent().unwrap().join("src").join("generated").join(lib).join(ctl);
-    
-    meta["lib"] = json!(lib);
-    meta["ctl"] = json!(ctl);
-    meta["cmd"] = json!(cmd);
-    
-    // FIXME - Don't rebuild if current
-    
-    build_rust(path, meta, &src);
+    if typ == "rust" {
+      let id = data["rust"].as_str().unwrap();
+      let mut meta = store.get_json(lib, id);
+      
+      let path = store.get_data_file(lib, &(id.to_owned()+".rs"));
+      let src = store.read_file(path);
+      let path = store.root.parent().unwrap().join("src").join("generated").join(lib).join(ctl);
+      
+      meta["lib"] = json!(lib);
+      meta["ctl"] = json!(ctl);
+      meta["cmd"] = json!(cmd);
+      
+      // FIXME - Don't rebuild if current
+      
+      println!("Building Rust: {}:{}:{}", lib, ctl, cmd);
+      build_rust(path, meta, &src);
+    }
   }
 }
 

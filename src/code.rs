@@ -186,7 +186,8 @@ impl Code {
     }
     
     let n = list_in.len();
-    if n == 0 && loop_out.len() == 0 {
+    let loopn = loop_out.len();
+    if n == 0 && loopn == 0 {
       return self.evaluate_operation(cmd, in1);
     }
     else {
@@ -203,7 +204,14 @@ impl Code {
       }
       
       let mut i = 0;
-      loop {
+      if loopn == 0 && count == 0 {
+        //cmd.result = Some(out3.duplicate());
+        for (k,v) in &mut cmd.output {
+          if !out3.has(&k) { out3.put_null(&k); }
+        }
+        cmd.done = true;
+      }
+      else { loop {
         let mut in3 = DataObject::new();
         let list = in1.duplicate().keys();
         for key in list {
@@ -244,7 +252,7 @@ impl Code {
             break;
           }
         }
-      }
+      }}
       
       cmd.result = Some(out3.duplicate());
       return Ok(out3);
@@ -304,10 +312,17 @@ impl Code {
         for (k,v) in x.objects() { out.set_property(&k, v); }
         if holder.has("finish") { cmd.finish = holder.get_bool("finish"); }
 */
-        let src = cmd.localdata.as_ref().unwrap();
-        let mut code = Code::new(src.duplicate());
-        out = code.execute(in1)?;
-        cmd.finish = code.finishflag;
+        if cmd.localdata.is_none() {
+          for (key,_x) in &mut cmd.output {
+            out.put_null(&key);
+          }
+        }
+        else {
+          let src = cmd.localdata.as_ref().unwrap();
+          let mut code = Code::new(src.duplicate());
+          out = code.execute(in1)?;
+          cmd.finish = code.finishflag;
+        }
       }
       else if cmd_type == "constant" {
         for (key,_x) in &mut cmd.output {

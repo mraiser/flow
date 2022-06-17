@@ -2,20 +2,20 @@ use std::env;
 use std::io;
 use std::io::BufRead;
 
-mod code;
-mod case;
-mod command;
-mod datastore;
-mod primitives;
-mod rustcmd;
-mod generated;
-mod rand;
+pub mod code;
+pub mod case;
+pub mod command;
+pub mod datastore;
+pub mod primitives;
+pub mod rustcmd;
+pub mod generated;
+pub mod rand;
 
 use command::Command as Command;
 use datastore::DataStore;
 use ndata::dataobject::*;
 
-fn main() {
+pub fn main() {
   DataStore::init("data");
   
   env::set_var("RUST_BACKTRACE", "1");

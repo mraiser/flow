@@ -1,0 +1,1 @@
+{"data":{"import":"use crate::datastore::*;\n","lib":"flowlang","returntype":"JSONObject","ctl":"data","cmd":"get","type":"rust","params":[{"name":"lib","type":"String"},{"name":"id","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"wogtyz1815869f054q19","time":1655045848875,"addr":"/0:0:0:0:0:0:0:1:52658","username":"admin"}

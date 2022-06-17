@@ -1,20 +1,19 @@
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
 use jni::sys::jstring;
-use serde_json::*;
 use std::sync::Once;
 use std::env;
 use ndata::dataobject::*;
 use std::panic;
 
-mod code;
-mod case;
-mod command;
-mod datastore;
-mod primitives;
-mod rustcmd;
-mod generated;
-mod rand;
+pub mod code;
+pub mod case;
+pub mod command;
+pub mod datastore;
+pub mod primitives;
+pub mod rustcmd;
+pub mod generated;
+pub mod rand;
 
 use crate::primitives::*;
 use crate::datastore::*;

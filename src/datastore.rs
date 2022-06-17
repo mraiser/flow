@@ -2,6 +2,7 @@ use serde_json::*;
 use std::fs::File;
 use std::path::*;
 use std::io::Read;
+use std::fs;
 
 use ndata::dataobject::*;
 use ndata::dataarray::*;
@@ -29,7 +30,7 @@ impl DataStore {
     DataArray::init();
     DataBytes::init();
     let o = DataObject::new();
-    let _x = &mut OHEAP.get().write().unwrap().incr(o.data_ref);
+    let _x = &mut OHEAP.get().lock().unwrap().incr(o.data_ref);
   }
   
   pub fn new() -> DataStore {
@@ -72,6 +73,14 @@ impl DataStore {
     }
     panic!("No such command {}:{}:{}", lib, ctl, cmd);
   }
+  
+  pub fn set_data(&self, db: &str, id: &str, data:DataObject) {
+    let s = data.to_json().to_string();
+    let f = self.get_data_file(db, id);
+    fs::create_dir_all(f.parent().unwrap());
+    fs::write(f, s).expect("Unable to write file");
+
+  }
     
   pub fn get_json(&self, db: &str, id: &str) -> Value {
     let path = self.get_data_file(db, id);
@@ -99,6 +108,10 @@ impl DataStore {
     DataObject::from_json(data)
   }
   
+  pub fn exists(&self, db: &str, id: &str) -> bool {
+    self.get_data_file(db, id).exists()
+  }
+  
   pub fn get_data_file(&self, db: &str, id: &str) -> PathBuf {
     let mut path = self.root.join(db);
     path = self.get_sub_dir(path, id, 4, 4);
@@ -124,6 +137,7 @@ impl DataStore {
   }
   
   pub fn read_file(&self, path: PathBuf) -> String {
+    if !path.exists() { println!("Missing file {:?}", path); }
     let mut f = File::open(path).unwrap();
     let mut s = String::new();
     f.read_to_string(&mut s).unwrap();

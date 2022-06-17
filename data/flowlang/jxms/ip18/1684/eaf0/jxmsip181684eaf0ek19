@@ -1,0 +1,1 @@
+{"data":{"import":"use crate::datastore::*;\nuse std::path::Path;\n","lib":"flowlang","returntype":"Boolean","ctl":"data","cmd":"library_exists","type":"rust","params":[{"name":"lib","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"jxmsip181684eaf0ek19","time":1655312643953,"addr":"/0:0:0:0:0:0:0:1:53606","username":"admin"}
