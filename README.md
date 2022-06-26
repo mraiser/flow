@@ -8,7 +8,7 @@ The Flow language is a 3D visual dataflow language, which is based loosely on th
 https://youtu.be/5vZKR4FGJyU
 
 ### Installation
-This repo can be used as a binary or a library. To compile and use ase a binary (on Linux):
+This repo can be used as a binary or a library. To compile and use as a binary (on Linux):
 
     cargo build --release
     sudo cp target/release/flow /usr/bin/flow
