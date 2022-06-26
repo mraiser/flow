@@ -40,7 +40,7 @@ impl Command {
     }
     else if typ == "rust" {
       let codename:&str = data["rust"].as_str().unwrap();
-      code = Source::Rust(RustCmd::new(Generated::get(codename)));
+      code = Source::Rust(RustCmd::new(codename));
     }
     else { panic!("Unknown command type {}", typ); }
     

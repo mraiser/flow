@@ -1,0 +1,1 @@
+a.ends_with(&b)

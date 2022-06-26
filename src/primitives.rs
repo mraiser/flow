@@ -35,6 +35,7 @@ impl Primitive {
       map.insert("stdout".to_string(), (flowlang::system::stdout::execute, "{ in: { a: {} }, out: {} }".to_string()));
       map.insert("split".to_string(), (flowlang::string::split::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("trim".to_string(), (flowlang::string::trim::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
+      map.insert("ends_with".to_string(), (flowlang::string::ends_with::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("get".to_string(), (flowlang::object::get::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("set".to_string(), (flowlang::object::set::execute, "{ in: { object: {}, key: {}, value: {} }, out: { a: {} } }".to_string()));
       map.insert("remove".to_string(), (flowlang::object::remove::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
@@ -56,6 +57,7 @@ impl Primitive {
       map.insert("file_read_all_string".to_string(), (flowlang::file::read_all_string::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("file_read_properties".to_string(), (flowlang::file::read_properties::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("file_exists".to_string(), (flowlang::file::exists::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_visit".to_string(), (flowlang::file::visit::execute, "{ in: { path: {}, recursive: {}, lib: {}, ctl: {}, cmd: {} }, out: { a: {} } }".to_string()));
       map.insert("data_read".to_string(), (flowlang::data::read::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));
       map.insert("data_write".to_string(), (flowlang::data::write::execute, "{ in: { lib: {}, id: {}, data: {}, readers: {}, writers: {} }, out: {} }".to_string()));
       map.insert("data_exists".to_string(), (flowlang::data::exists::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));

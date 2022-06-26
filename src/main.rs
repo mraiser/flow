@@ -13,10 +13,12 @@ pub mod rand;
 
 use command::Command as Command;
 use datastore::DataStore;
+use generated::Generated;
 use ndata::dataobject::*;
 
 pub fn main() {
   DataStore::init("data");
+  Generated::init();
   
   env::set_var("RUST_BACKTRACE", "1");
   {
