@@ -2,6 +2,12 @@
 name = "flow"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+readme = "README.md"
+description = "A 3D dataflow oriented programming language."
+homepage = "https://github.com/mraiser/flow"
+documentation = "https://docs.rs/ndata/latest/flow/"
+repository = "https://github.com/mraiser/flow"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -23,7 +29,6 @@ name = "flowb"
 path = "src/build.rs"
 
 [lib]
-#crate_type = ["cdylib"]
 crate_type = ["lib","cdylib"]
 path = "src/lib.rs"
 
