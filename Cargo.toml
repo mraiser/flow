@@ -1,12 +1,12 @@
 [package]
-name = "flow"
+name = "flowlang"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
 description = "A 3D dataflow oriented programming language."
 homepage = "https://github.com/mraiser/flow"
-documentation = "https://docs.rs/ndata/latest/flow/"
+documentation = "https://docs.rs/flowlang/latest/flowlang/"
 repository = "https://github.com/mraiser/flow"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
