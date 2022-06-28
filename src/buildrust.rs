@@ -264,7 +264,7 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
       let mut file = File::create(&path2).unwrap();
       let _x = file.write_all(mm.as_bytes());
       let _x = file.write_all(b"\n");
-      let _x = file.write_all(b"use flow::rustcmd::*;\n");
+      let _x = file.write_all(b"use flowlang::rustcmd::*;\n");
       let _x = file.write_all(b"pub struct Generated {}\n");
       let _x = file.write_all(b"impl Generated {\n");
       let _x = file.write_all(b"  pub fn init() {\n");
