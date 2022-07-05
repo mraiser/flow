@@ -11,7 +11,7 @@ o
 
 pub fn random_non_hex_char() -> String {
 let nonhexchars = "ghijklmnopqrstuvwxyz";
-let x = rand_range(0,20) as usize;
+let x = rand_range(0,19) as usize;
 nonhexchars[x..x+1].to_string()
 }
 
