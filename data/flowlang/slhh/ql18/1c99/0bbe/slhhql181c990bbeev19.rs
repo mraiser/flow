@@ -1,0 +1,1 @@
+a.starts_with(&b)

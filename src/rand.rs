@@ -70,19 +70,6 @@ impl Rand{
     }
 }
 
-fn main() {
-    let mut rng = Rand::new(0);
-    
-    // Throw a dice 100 times
-    let v: Vec<i32> = (0..100).map(|_| rng.rand_range(1,6)).collect();
-    println!("{:?}",v);
-
-    // Shuffle an array
-    let mut v: Vec<u32> = (1..101).collect();
-    rng.shuffle(&mut v);
-    println!("{:?}",v);
-}
-
 pub fn rand() -> u32 {
   unsafe {
     let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);

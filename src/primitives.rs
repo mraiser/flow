@@ -36,6 +36,10 @@ impl Primitive {
       map.insert("split".to_string(), (flowlang::string::split::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("trim".to_string(), (flowlang::string::trim::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("ends_with".to_string(), (flowlang::string::ends_with::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("starts_with".to_string(), (flowlang::string::starts_with::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("string_left".to_string(), (flowlang::string::left::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("string_right".to_string(), (flowlang::string::right::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("substring".to_string(), (flowlang::string::substring::execute, "{ in: { a: {}, b: {}, c: {} }, out: { a: {} } }".to_string()));
       map.insert("get".to_string(), (flowlang::object::get::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("set".to_string(), (flowlang::object::set::execute, "{ in: { object: {}, key: {}, value: {} }, out: { a: {} } }".to_string()));
       map.insert("remove".to_string(), (flowlang::object::remove::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
