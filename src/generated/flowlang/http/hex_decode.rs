@@ -17,7 +17,7 @@ let mut i;
 
 while old.contains("%") {
   i = old.find("%").unwrap();
-  out = out + &old[0..1];
+  out = out + &old[0..i];
   old = old[i..].to_string();
   if old.len() < 3 {
     break;

@@ -174,7 +174,7 @@ for stream in listener.incoming() {
       let loc = remote_addr.to_string();
   //    ses.put_str("userlocation", &loc);
       headers.put_str("nn-userlocation", &loc);
-      params.put_str("userlocation", &loc);
+  //    params.put_str("userlocation", &loc);
 
       // FIXME
   //		o = new JSONObject(headers);
@@ -307,14 +307,17 @@ for stream in listener.incoming() {
         let code:u16;
         let msg:String;
         let mut headers:DataObject;
-
-        if response.has("body") { body = response.get_string("body"); }
+        
+        let isfile = response.has("file") && response.get_property("file").is_string();
+        
+        if isfile { body = response.get_string("file"); }
+        else if response.has("body") && response.get_property("body").is_string() { body = response.get_string("body"); }
         else { body = "".to_owned(); }
 
-        if response.has("code") { code = response.get_i64("code") as u16; }
+        if response.has("code") && response.get_property("code").is_int() { code = response.get_i64("code") as u16; }
         else { code = 200; }
 
-        if response.has("msg") { msg = response.get_string("msg"); }
+        if response.has("msg") && response.get_property("msg").is_string() { msg = response.get_string("msg"); }
         else { 
           if code < 200 { msg = "INFO".to_string(); }
           else if code < 300 { msg = "OK".to_string(); }
@@ -323,15 +326,17 @@ for stream in listener.incoming() {
           else { msg = "SERVER ERROR".to_string(); }
         }
 
-        if response.has("headers") { headers = response.get_object("headers"); }
+        if response.has("headers") && response.get_property("headers").is_object() { headers = response.get_object("headers"); }
         else { headers = DataObject::new(); }
 
-        if response.has("mimetype") { mimetype = response.get_string("mimetype"); }
+        if response.has("mimetype") && response.get_property("mimetype").is_string() { mimetype = response.get_string("mimetype"); }
         else if headers.has("Content-Type") { mimetype = headers.get_string("Content-Type"); }
+        else if isfile { mimetype = mime_type(cmd); }
         else { mimetype = "text/plain".to_string(); }
 
-        if response.has("len") { len = response.get_i64("len"); }
+        if response.has("len") && response.get_property("len").is_int() { len = response.get_i64("len"); }
         else if headers.has("Content-Length") { len = headers.get_i64("Content-Length"); }
+        else if isfile { len = fs::metadata(&body).unwrap().len() as i64; }
         else { len = body.len() as i64; }
 
         //FIXME
@@ -370,9 +375,24 @@ for stream in listener.incoming() {
           reshead = reshead +&k + ": "+&Data::as_string(v)+"\r\n";
         }
         reshead = reshead + "\r\n";
-        let response = reshead + &body;
-        //println!("{}\r\n", &response);
-        stream.write(response.as_bytes()).unwrap();
+        
+        if isfile {
+          stream.write(reshead.as_bytes()).unwrap();
+          let mut file = fs::File::open(&body).unwrap();
+          let chunk_size = 0x4000;
+          loop {
+            let mut chunk = Vec::with_capacity(chunk_size);
+            let n = std::io::Read::by_ref(&mut file).take(chunk_size as u64).read_to_end(&mut chunk).unwrap();
+            if n == 0 { break; }
+            stream.write(&chunk).unwrap();
+            if n < chunk_size { break; }
+          }
+        }
+        else {
+          let response = reshead + &body;
+          //println!("{}\r\n", &response);
+          stream.write(response.as_bytes()).unwrap();
+        }
         stream.flush().unwrap();
 
         // FIXME

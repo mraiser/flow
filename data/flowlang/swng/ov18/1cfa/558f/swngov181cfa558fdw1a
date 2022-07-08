@@ -1,0 +1,1 @@
+{"data":{"import":"use std::fs::metadata;\n","lib":"flowlang","returntype":"Boolean","ctl":"file","cmd":"is_dir","type":"rust","params":[{"name":"path","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"swngov181cfa558fdw1a","time":1657046242496,"addr":"/0:0:0:0:0:0:0:1:37450","username":"admin"}

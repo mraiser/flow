@@ -9,3 +9,5 @@ pub mod index_of;
 pub mod push;
 pub mod push_all;
 pub mod remove;
+pub mod equals;
+pub mod get_or_null;

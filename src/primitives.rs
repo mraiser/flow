@@ -41,8 +41,10 @@ impl Primitive {
       map.insert("string_right".to_string(), (flowlang::string::right::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("substring".to_string(), (flowlang::string::substring::execute, "{ in: { a: {}, b: {}, c: {} }, out: { a: {} } }".to_string()));
       map.insert("get".to_string(), (flowlang::object::get::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("get_or_null".to_string(), (flowlang::object::get_or_null::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("set".to_string(), (flowlang::object::set::execute, "{ in: { object: {}, key: {}, value: {} }, out: { a: {} } }".to_string()));
       map.insert("remove".to_string(), (flowlang::object::remove::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
+      map.insert("equals".to_string(), (flowlang::object::equals::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("length".to_string(), (flowlang::string::length::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("execute_command".to_string(), (flowlang::system::execute_command::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {}}, out: { a: {} } }".to_string()));
       map.insert("thread".to_string(), (flowlang::system::thread::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {}}, out: {} }".to_string()));
@@ -62,6 +64,8 @@ impl Primitive {
       map.insert("file_read_properties".to_string(), (flowlang::file::read_properties::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("file_exists".to_string(), (flowlang::file::exists::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("file_visit".to_string(), (flowlang::file::visit::execute, "{ in: { path: {}, recursive: {}, lib: {}, ctl: {}, cmd: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_is_dir".to_string(), (flowlang::file::is_dir::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
+      map.insert("mime_type".to_string(), (flowlang::file::mime_type::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("data_read".to_string(), (flowlang::data::read::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));
       map.insert("data_write".to_string(), (flowlang::data::write::execute, "{ in: { lib: {}, id: {}, data: {}, readers: {}, writers: {} }, out: {} }".to_string()));
       map.insert("data_exists".to_string(), (flowlang::data::exists::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));
@@ -69,7 +73,7 @@ impl Primitive {
       map.insert("library_new".to_string(), (flowlang::data::library_new::execute, "{ in: { lib: {}, readers: {}, writers: {} }, out: { a: {} } }".to_string()));
       map.insert("http_listen".to_string(), (flowlang::http::listen::execute, "{ in: { socket_address: {}, library: {}, control: {}, command: {} }, out: { a: {} } }".to_string()));
       map.insert("cast_params".to_string(), (flowlang::http::cast_params::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {} }, out: { a: {} } }".to_string()));
-//      map.insert("http_hex_decode".to_string(), (flowlang::http::hex_decode::execute, "{ in: { input: {} }, out: { a: {} } }".to_string()));
+      map.insert("http_hex_decode".to_string(), (flowlang::http::hex_decode::execute, "{ in: { input: {} }, out: { a: {} } }".to_string()));
       PRIMITIVES.set(RwLock::new(map));
     });
   }
