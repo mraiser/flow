@@ -47,7 +47,7 @@ Execute the following from the directory that contains the "data" directory cont
           "b": 121
         }
         "#).unwrap());
-        let cmd = Command::lookup("testflow", "testflow", "test_add);
+        let cmd = Command::lookup("testflow", "testflow", "test_add");
         let res = cmd.execute(args).unwrap();
         println!("Hello, my dudes! {}", res.to_json());
     }
