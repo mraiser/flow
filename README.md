@@ -81,13 +81,17 @@ and then compile them.
     flow testflow testflow test_rust <<< "{\"a\":1, \"b\":2}"
 
 #### Enabling Java commands
-In order to run Libraries that contain commands written in Java, you will need the data, runtime, and src folders 
-from Newbound (https://github.com/mraiser/newbound).
+In order to run Libraries that contain commands written in Java, you will need to add data/botmanager, 
+runtime/botmanager, runtime/peerbot, src/Startup.java, src/com, and src/org from Newbound 
+(https://github.com/mraiser/newbound) to your Flow project.
 
     mkdir bin
     cd src
     javac -d ../bin Startup.java
     cd ../
+    # Make sure LD_LIBRARY_PATH contains path to libjvm.so 
+    # Something along the lines of:
+    export LD_LIBRARY_PATH=/usr/lib/jvm/java-11-openjdk-amd64/lib/server/
     # Example from testflow library:
     flow testflow testflow test_java <<< "{\"abc\":\"xxx\"}"
 
