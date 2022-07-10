@@ -8,7 +8,9 @@ The Flow language is a 3D visual dataflow language, which is based loosely on th
 https://youtu.be/5vZKR4FGJyU
 
 ### Installation
-This repo can be used as a binary or a library. To compile and use as a binary (on Linux):
+This repo can be used as a binary or a library. I assume if you are using this to develop something and want debug 
+information, you already know how to convert the below instructions from "release" to "debug". To compile and use 
+as a binary (on Linux):
 
     cargo build --release
     sudo cp target/release/flow /usr/bin/flow
@@ -17,14 +19,14 @@ This repo can be used as a binary or a library. To compile and use as a binary (
 To use as a Rust library, add the following to your Cargo.toml file:
 
     [dependencies]
-    flow = { path = "../../rust/flow" }
-    # NOTE: Change path to the relative path of where you installed Flow
+    flowlang = "0.1.5"
+    # NOTE: Change version to latest version: https://crates.io/crates/flowlang
 
-To use as a native library in Java (on Linux), add libflow.so to your Java library path. Then add a native class in 
+To use as a **native library in Java** (on Linux), add libflowlang.so to your Java library path. Then add a native class in 
 Java, like this one: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/LibFlow.java
 
     cargo build --release
-    sudo cp target/release/libflow.so /usr/lib/jni/libflow.so
+    sudo cp target/release/libflowlang.so /usr/lib/jni/libflowlang.so
 
 ### Executing Flow Code
 This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 
@@ -40,6 +42,7 @@ Execute the following from the directory that contains the "data" directory cont
 #### From Rust code:
     DataStore::init("data");
     Generated::init(); // Load any flow commands written in rust
+    env::set_var("RUST_BACKTRACE", "1");
     {
         let args = DataObject::from_json(serde_json::from_str(r#"
         {
@@ -60,15 +63,33 @@ Test your HTTP service in a web browser:
 
 http://127.0.0.1:7878/testflow/testflow/test_add?a=42&b=378
 
-### Support for other languages
-Flow commands can be written in Java, Python, Rust, Javascript, or Flow. However *Java, Python, and Javascript are not 
-currently supported* in this implementation of the Flow language interpreter. 
+### Support for commands in multiple languages
+Flow commands can be written in Java, Python, Rust, Javascript, or Flow. However *Python and Javascript are not 
+currently supported* in this implementation of the Flow language interpreter. When developing Flow code using Newbound,
+the IDE automatically builds, compiles, and runs any files needed. Newbound has its own instructions for enabling 
+support for multiple languages (https://github.com/mraiser/newbound). The following only applies to running Flow code
+*outside* of the Newbound IDE.
 
-Compiling Rust commands:
+#### Enabling Rust commands:
+In order to run Libraries that contain commands written in Rust, you will need to copy them into your data folder 
+and then compile them.
 
     # From the directory containing the "data" directory with your flow code that has rust commands
     flowb all
     cargo build --release
+    # Example from testflow library:
+    flow testflow testflow test_rust <<< "{\"a\":1, \"b\":2}"
+
+#### Enabling Java commands
+In order to run Libraries that contain commands written in Java, you will need the data, runtime, and src folders 
+from Newbound (https://github.com/mraiser/newbound).
+
+    mkdir bin
+    cd src
+    javac -d ../bin Startup.java
+    cd ../
+    # Example from testflow library:
+    flow testflow testflow test_java <<< "{\"abc\":\"xxx\"}"
 
 ### Background:
 Flow was originally written in Java as part of Newbound, an integrated

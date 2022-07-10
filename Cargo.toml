@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -18,7 +18,7 @@ chrono="0.4.19"
 ndata="0.1.4"
 #ndata={path="../ndata"}
 state="0.5.3"
-jni = "0.19.0"
+jni = { version = "0.19.0", features = ["invocation"] }
 
 [[bin]]
 name = "flow"

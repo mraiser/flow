@@ -1,15 +1,18 @@
-use crate::code::*;
 use ndata::dataobject::*;
 use ndata::dataarray::*;
+
+use crate::code::*;
 use crate::datastore::*;
 use crate::case::*;
 use crate::rustcmd::*;
+use crate::javacmd::*;
 use crate::generated::*;
 
 #[derive(Debug)]
 pub enum Source {
   Flow(Case),
   Rust(RustCmd),
+  Java(JavaCmd),
 }
 
 #[derive(Debug)]
@@ -42,6 +45,10 @@ impl Command {
       let codename:&str = data["rust"].as_str().unwrap();
       code = Source::Rust(RustCmd::new(codename));
     }
+    else if typ == "java" {
+//      let codename:&str = data["java"].as_str().unwrap();
+      code = Source::Java(JavaCmd::new(lib, id));
+    }
     else { panic!("Unknown command type {}", typ); }
     
     return Command {
@@ -70,6 +77,9 @@ impl Command {
       return o;
     }
     else if let Source::Rust(r) = &self.src { 
+      return r.execute(args);
+    }
+    else if let Source::Java(r) = &self.src { 
       return r.execute(args);
     }
     else { panic!("Not flow code"); }
