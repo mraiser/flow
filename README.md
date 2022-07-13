@@ -22,11 +22,13 @@ To use as a Rust library, add the following to your Cargo.toml file:
     flowlang = "0.1.5"
     # NOTE: Change version to latest version: https://crates.io/crates/flowlang
 
-To use as a **native library in Java** (on Linux), add libflowlang.so to your Java library path. Then add a native class in 
-Java, like this one: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/LibFlow.java
+To use as a **native library in Java** (on Linux), build and add libflowlang.so to your Java library path. Then add 
+a native class in Java, like this one: 
+https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/LibFlow.java
 
+    cd libflowlang
     cargo build --release
-    sudo cp target/release/libflowlang.so /usr/lib/jni/libflowlang.so
+    ln -s target/release/libflowlang.so /usr/lib/jni/libflowlang.so
 
 ### Executing Flow Code
 This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 
@@ -64,11 +66,14 @@ Test your HTTP service in a web browser:
 http://127.0.0.1:7878/testflow/testflow/test_add?a=42&b=378
 
 ### Support for commands in multiple languages
-Flow commands can be written in Java, Python, Rust, Javascript, or Flow. However *Python and Javascript are not 
+Flow commands can be written in Java, Python, Rust, Javascript, or Flow. However *Python is not 
 currently supported* in this implementation of the Flow language interpreter. When developing Flow code using Newbound,
 the IDE automatically builds, compiles, and runs any files needed. Newbound has its own instructions for enabling 
 support for multiple languages (https://github.com/mraiser/newbound). The following only applies to running Flow code
 *outside* of the Newbound IDE.
+
+#### Enabling JavaScript commands:
+JavaScript support is enabled by default and requires no additional configuration.
 
 #### Enabling Rust commands:
 In order to run Libraries that contain commands written in Rust, you will need to copy them into your data folder 
@@ -83,7 +88,9 @@ and then compile them.
 #### Enabling Java commands
 In order to run Libraries that contain commands written in Java, you will need to add data/botmanager, 
 runtime/botmanager, runtime/peerbot, src/Startup.java, src/com, and src/org from Newbound 
-(https://github.com/mraiser/newbound) to your Flow project.
+(https://github.com/mraiser/newbound) to your Flow project. Since Java support is a feature that is disabled by 
+default, you will have to compile flow with the `--features=java_runtime` flag. You will also need to make sure 
+the JDK's libjvm library is in your `LD_LIBRARY_PATH`.
 
     mkdir bin
     cd src
@@ -93,7 +100,7 @@ runtime/botmanager, runtime/peerbot, src/Startup.java, src/com, and src/org from
     # Something along the lines of:
     export LD_LIBRARY_PATH=/usr/lib/jvm/java-11-openjdk-amd64/lib/server/
     # Example from testflow library:
-    flow testflow testflow test_java <<< "{\"abc\":\"xxx\"}"
+    cargo run --bin flow --features=java_runtime testflow testflow test_java <<< "{\"abc\":\"xxx\"}"
 
 ### Background:
 Flow was originally written in Java as part of Newbound, an integrated

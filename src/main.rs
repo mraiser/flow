@@ -10,6 +10,7 @@ pub mod primitives;
 pub mod rustcmd;
 pub mod generated;
 pub mod rand;
+#[cfg(feature="java_runtime")]
 pub mod javacmd;
 pub mod jscmd;
 

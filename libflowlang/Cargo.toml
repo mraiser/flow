@@ -1,0 +1,18 @@
+[package]
+name = "flow"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+flowlang = { path = "../" }
+ndata = "0.1.5"
+jni = { version = "0.19.0" }
+serde = { version = "1.0.136", features = ["derive"] }
+serde_json = "1.0.79"
+
+[lib]
+crate_type = ["lib","cdylib"]
+name = "flowlang"
+

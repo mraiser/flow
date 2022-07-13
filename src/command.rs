@@ -5,6 +5,7 @@ use crate::code::*;
 use crate::datastore::*;
 use crate::case::*;
 use crate::rustcmd::*;
+#[cfg(feature="java_runtime")]
 use crate::javacmd::*;
 use crate::jscmd::*;
 use crate::generated::*;
@@ -13,6 +14,7 @@ use crate::generated::*;
 pub enum Source {
   Flow(Case),
   Rust(RustCmd),
+  #[cfg(feature="java_runtime")]
   Java(JavaCmd),
   JavaScript(JSCmd),
 }
@@ -34,26 +36,29 @@ impl Command {
     let src = store.get_json(lib, id);
     let data = &src["data"];
     let typ = &data["type"];
+    let typ = typ.as_str().unwrap();
     
-    let code;
-    if typ == "flow" {
-      let codename:&str = data["flow"].as_str().unwrap();
-      let path = store.get_data_file(lib, &(codename.to_owned()+".flow"));
-      let s = store.read_file(path);
-      let case = Case::new(&s).unwrap();
-      code = Source::Flow(case);
-    }
-    else if typ == "rust" {
-      let codename:&str = data["rust"].as_str().unwrap();
-      code = Source::Rust(RustCmd::new(codename));
-    }
-    else if typ == "java" {
-      code = Source::Java(JavaCmd::new(lib, id));
-    }
-    else if typ == "js" {
-      code = Source::JavaScript(JSCmd::new(lib, id));
-    }
-    else { panic!("Unknown command type {}", typ); }
+    let mut code = match typ.as_ref() {
+      "flow" => {
+        let codename:&str = data["flow"].as_str().unwrap();
+        let path = store.get_data_file(lib, &(codename.to_owned()+".flow"));
+        let s = store.read_file(path);
+        let case = Case::new(&s).unwrap();
+        Source::Flow(case)
+      },
+      "rust" => {
+        let codename:&str = data["rust"].as_str().unwrap();
+        Source::Rust(RustCmd::new(codename))
+      },
+      #[cfg(feature="java_runtime")]
+      "java" => {
+        Source::Java(JavaCmd::new(lib, id))
+      },
+      "js" => {
+        Source::JavaScript(JSCmd::new(lib, id))
+      },
+      _ => panic!("Unknown command type {}", typ),
+    };
     
     return Command {
       lib: lib.to_string(),
@@ -80,16 +85,19 @@ impl Command {
       DataArray::gc();
       return o;
     }
-    else if let Source::Rust(r) = &self.src { 
+    if let Source::Rust(r) = &self.src {
       return r.execute(args);
     }
-    else if let Source::Java(r) = &self.src { 
+    #[cfg(feature="java_runtime")]
+    {
+      if let Source::Java(r) = &self.src {
+        return r.execute(args);
+      }
+    }
+    if let Source::JavaScript(r) = &self.src {
       return r.execute(args);
     }
-    else if let Source::JavaScript(r) = &self.src { 
-      return r.execute(args);
-    }
-    else { panic!("Not flow code"); }
+    panic!("Language not supported: {:?}", &self.src);
   }
   
   pub fn src(&self) -> Case {
