@@ -13,8 +13,7 @@ use crate::code::*;
 use crate::datastore::*;
 
 static START: Once = Once::new();
-pub static EXECUTOR:Storage<RwLock<Executor>> = Storage::new();
-
+static EXECUTOR:Storage<RwLock<Executor>> = Storage::new();
 
 #[derive(Debug)]
 pub struct JavaCmd {

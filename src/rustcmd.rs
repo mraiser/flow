@@ -10,8 +10,7 @@ use crate::code::*;
 pub type Transform = fn(DataObject) -> DataObject;
 
 static START: Once = Once::new();
-pub static COMMANDS:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
-
+static COMMANDS:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
 
 #[derive(Debug)]
 pub struct RustCmd {

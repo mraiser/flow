@@ -13,6 +13,7 @@ pub mod datastore;
 pub mod primitives;
 pub mod rustcmd;
 pub mod javacmd;
+pub mod jscmd;
 pub mod generated;
 pub mod rand;
 pub mod buildrust;

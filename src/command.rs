@@ -6,6 +6,7 @@ use crate::datastore::*;
 use crate::case::*;
 use crate::rustcmd::*;
 use crate::javacmd::*;
+use crate::jscmd::*;
 use crate::generated::*;
 
 #[derive(Debug)]
@@ -13,6 +14,7 @@ pub enum Source {
   Flow(Case),
   Rust(RustCmd),
   Java(JavaCmd),
+  JavaScript(JSCmd),
 }
 
 #[derive(Debug)]
@@ -46,8 +48,10 @@ impl Command {
       code = Source::Rust(RustCmd::new(codename));
     }
     else if typ == "java" {
-//      let codename:&str = data["java"].as_str().unwrap();
       code = Source::Java(JavaCmd::new(lib, id));
+    }
+    else if typ == "js" {
+      code = Source::JavaScript(JSCmd::new(lib, id));
     }
     else { panic!("Unknown command type {}", typ); }
     
@@ -80,6 +84,9 @@ impl Command {
       return r.execute(args);
     }
     else if let Source::Java(r) = &self.src { 
+      return r.execute(args);
+    }
+    else if let Source::JavaScript(r) = &self.src { 
       return r.execute(args);
     }
     else { panic!("Not flow code"); }

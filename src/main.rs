@@ -11,6 +11,7 @@ pub mod rustcmd;
 pub mod generated;
 pub mod rand;
 pub mod javacmd;
+pub mod jscmd;
 
 use command::Command as Command;
 use datastore::DataStore;
