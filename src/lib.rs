@@ -7,6 +7,7 @@ pub mod rustcmd;
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
 pub mod jscmd;
+pub mod pycmd;
 pub mod generated;
 pub mod rand;
 pub mod buildrust;

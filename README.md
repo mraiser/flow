@@ -12,6 +12,8 @@ This repo can be used as a binary or a library. I assume if you are using this t
 information, you already know how to convert the below instructions from "release" to "debug". To compile and use 
 as a binary (on Linux):
 
+    git clone https://github.com/mraiser/flow.git flow
+    cd flow
     cargo build --release
     sudo cp target/release/flow /usr/bin/flow
     sudo cp target/release/flowb /usr/bin/flowb
@@ -66,14 +68,16 @@ Test your HTTP service in a web browser:
 http://127.0.0.1:7878/testflow/testflow/test_add?a=42&b=378
 
 ### Support for commands in multiple languages
-Flow commands can be written in Java, Python, Rust, Javascript, or Flow. However *Python is not 
-currently supported* in this implementation of the Flow language interpreter. When developing Flow code using Newbound,
-the IDE automatically builds, compiles, and runs any files needed. Newbound has its own instructions for enabling 
-support for multiple languages (https://github.com/mraiser/newbound). The following only applies to running Flow code
-*outside* of the Newbound IDE.
+Flow commands can be written in Java, Python, Rust, Javascript, or Flow. All languages except Python maintain state 
+between calls. When developing Flow code using Newbound, the IDE automatically builds, compiles, and runs any files 
+needed. Newbound has its own instructions for enabling support for multiple languages 
+(https://github.com/mraiser/newbound). The following only applies to running Flow code *outside* of the Newbound IDE.
 
 #### Enabling JavaScript commands:
 JavaScript support is enabled by default and requires no additional configuration.
+
+#### Enabling Python commands:
+Python support is enabled by default. You must install Python3 in the local environment first.
 
 #### Enabling Rust commands:
 In order to run Libraries that contain commands written in Rust, you will need to copy them into your data folder 
@@ -93,6 +97,14 @@ default, you will have to compile flow with the `--features=java_runtime` flag. 
 the JDK's libjvm library is in your `LD_LIBRARY_PATH`.
 
     mkdir bin
+    mkdir runtime
+    git clone https://github.com/mraiser/newbound.git newbound
+    cp -R newbound/data/botmanager data/botmanager
+    cp -R newbound/runtime/botmanager runtime/botmanager
+    cp -R newbound/runtime/peerbot runtime/peerbot
+    cp newbound/src/Startup.java src/Startup.java
+    cp -R newbound/src/com src/com
+    cp -R newbound/src/org src/org
     cd src
     javac -d ../bin Startup.java
     cd ../

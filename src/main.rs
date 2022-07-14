@@ -13,6 +13,7 @@ pub mod rand;
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
 pub mod jscmd;
+pub mod pycmd;
 
 use command::Command as Command;
 use datastore::DataStore;

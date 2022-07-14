@@ -8,6 +8,7 @@ use crate::rustcmd::*;
 #[cfg(feature="java_runtime")]
 use crate::javacmd::*;
 use crate::jscmd::*;
+use crate::pycmd::*;
 use crate::generated::*;
 
 #[derive(Debug)]
@@ -17,6 +18,7 @@ pub enum Source {
   #[cfg(feature="java_runtime")]
   Java(JavaCmd),
   JavaScript(JSCmd),
+  Python(PyCmd),
 }
 
 #[derive(Debug)]
@@ -57,6 +59,9 @@ impl Command {
       "js" => {
         Source::JavaScript(JSCmd::new(lib, id))
       },
+      "python" => {
+        Source::Python(PyCmd::new(lib, id))
+      },
       _ => panic!("Unknown command type {}", typ),
     };
     
@@ -95,6 +100,9 @@ impl Command {
       }
     }
     if let Source::JavaScript(r) = &self.src {
+      return r.execute(args);
+    }
+    if let Source::Python(r) = &self.src {
       return r.execute(args);
     }
     panic!("Language not supported: {:?}", &self.src);
