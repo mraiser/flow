@@ -31,7 +31,7 @@ https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbo
 
     cd libflowlang
     cargo build --release
-    ln -s target/release/libflowlang.so /usr/lib/jni/libflowlang.so
+    sudo cp target/release/libflowlang.so /usr/lib/jni/libflowlang.so
 
 ### Executing Flow Code
 This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 
@@ -115,11 +115,8 @@ the JDK's libjvm library is in your `LD_LIBRARY_PATH`.
     cargo run --bin flow --features=java_runtime testflow testflow test_java <<< "{\"abc\":\"xxx\"}"
 
 ### Background:
-Flow was originally written in Java as part of Newbound, an integrated
-development and runtime environment for peer-to-peer HTML5 web apps. Newbound supports Java, Python, Rust, and Flow for
-server-side commands, and Javascript and Flow on the front-end. This repository contains a port of the Flow language
-interpreter from Newbound's Java implementation. Newbound also uses this repo to compile and execute Rust code.
-
-- Java: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/Code.java
-- Python: https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/newbound/code/code.py
-- Javascript: https://github.com/mraiser/newbound/blob/master/data/flow/nzsk/xq17/a964/97b3/nzskxq17a96497b37x14.js
+Flow was originally written in Java as part of Newbound, an integrated development environment for peer-to-peer HTML5 
+web apps. Newbound supports Java, JavaScript, Python, Rust, and Flow for server-side commands, and Javascript and Flow 
+on the front-end. This repository contains a port of the Flow language interpreter from Newbound's Java implementation
+(https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/Code.java). Newbound also 
+uses this crate to compile and execute Rust code.
