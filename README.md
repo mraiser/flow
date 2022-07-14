@@ -1,8 +1,9 @@
 # Flow
-
 The Flow language is a 3D visual dataflow language, which is based loosely on the Prograph programming language 
-(https://en.wikipedia.org/wiki/Prograph). The official IDE for the Flow language is Newbound 
+(https://en.wikipedia.org/wiki/Prograph). Flow allows you to construct a diagram of how data flows through your 
+application, and then execute it. The official IDE for the Flow language is Newbound 
 (https://github.com/mraiser/newbound). 
+
 ### Introductory Video:
 [![Watch the video](https://img.youtube.com/vi/j7S5__ObWis/maxresdefault.jpg)](https://youtu.be/5vZKR4FGJyU)
 https://youtu.be/5vZKR4FGJyU
@@ -21,7 +22,7 @@ as a binary (on Linux):
 To use as a Rust library, add the following to your Cargo.toml file:
 
     [dependencies]
-    flowlang = "0.1.5"
+    flowlang = "0.1.7"
     # NOTE: Change version to latest version: https://crates.io/crates/flowlang
 
 To use as a **native library in Java** (on Linux), build and add libflowlang.so to your Java library path. Then add 
@@ -38,7 +39,6 @@ folder, and they will become executable as well. Libraries are created using the
 (https://github.com/mraiser/newbound).
 
 #### From the command line:
-
 Execute the following from the directory that contains the "data" directory containing your Flow code.
 
     flow testflow testflow test_add <<< "{\"a\": 300,\"b\":120}"
