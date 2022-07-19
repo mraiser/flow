@@ -23,6 +23,8 @@ ndata="0.1.5"
 state="0.5.3"
 jni = { version = "0.19.0", features = ["invocation"], optional = true }
 js-sandbox = "0.1.6"
+sha-1 = "0.10.0"
+base64 = "0.13.0"
 
 [[bin]]
 name = "flow"

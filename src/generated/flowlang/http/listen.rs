@@ -8,9 +8,16 @@ use std::panic;
 use std::fs;
 use chrono::Utc;
 use ndata::dataarray::*;
+use std::sync::RwLock;
+use state::Storage;
+use std::sync::Once;
+use std::net::TcpStream;
+
 
 use crate::command::*;
 use crate::datastore::*;
+
+use ndata::heap::Heap;
 
 use crate::generated::flowlang::http::hex_decode::hex_decode;
 use crate::generated::flowlang::system::time::time;
@@ -28,6 +35,10 @@ o
 }
 
 pub fn listen(mut socket_address:String, mut library:String, mut control:String, mut command:String) -> String {
+START.call_once(|| {
+  WEBSOCKS.set(RwLock::new(Heap::new()));
+});
+
 let listener = TcpListener::bind(socket_address).unwrap();
 for stream in listener.incoming() {
   let cmd_path = [library.to_owned(), control.to_owned(), command.to_owned()];
@@ -140,6 +151,8 @@ for stream in listener.incoming() {
           }
         }
       }
+    
+      let stream_id = &mut WEBSOCKS.get().write().unwrap().push((stream.try_clone().unwrap(), reader));
 
       let cmd:String;
       if path.contains("?"){
@@ -258,6 +271,7 @@ for stream in listener.incoming() {
       request.put_object("headers", headers.duplicate());
       request.put_object("params", params);
       request.put_i64("timestamp", time());
+      request.put_i64("stream_id", *stream_id as i64);
 
       // FIXME
   //		CONTAINER.getDefault().fireEvent("HTTP_BEGIN", log);
@@ -270,65 +284,50 @@ for stream in listener.incoming() {
         }
       }
 
-      if headers.has("SEC-WEBSOCKET-KEY") {
-        //let key = headers.get_string("SEC-WEBSOCKET-KEY");
+      
+      // FIXME - Implement keep-alive
+      let mut ka = "close".to_string();
+      if headers.has("CONNECTION") { ka = headers.get_string("CONNECTION"); }
 
-        // FIXME - Implement
+      // FIXME - origin is never used
+      let mut origin = "null".to_string();
+      if headers.has("ORIGIN") { origin = headers.get_string("ORIGIN"); }
 
-        panic!("WEBSOCKET NOT IMPLEMENTED");
-      }
-      else {
-        // FIXME - Implement keep-alive
-        let mut ka = "close".to_string();
-        if headers.has("CONNECTION") { ka = headers.get_string("CONNECTION"); }
+      // FIXME
+//			setRequestParameters(params);
 
-        // FIXME - origin is never used
-        let mut origin = "null".to_string();
-        if headers.has("ORIGIN") { origin = headers.get_string("ORIGIN"); }
+      let command = Command::lookup(&cmd_path[0], &cmd_path[1], &cmd_path[2]);
+      let mut response = DataObject::new();
+      let dataref = response.data_ref;
 
-        // FIXME
-  //			setRequestParameters(params);
-
-        let command = Command::lookup(&cmd_path[0], &cmd_path[1], &cmd_path[2]);
-        let mut response = DataObject::new();
-        let dataref = response.data_ref;
-
-        let result = panic::catch_unwind(|| {
-          let mut p = DataObject::get(dataref);
-          let o = command.execute(request).unwrap();
-  //        let o = o.get_object("a").duplicate(); // FIXME - Side effect of rust. Require a flow command instead?
-          p.put_object("a", o);
-        });
-        
-
-		match result {
-          Ok(_x) => (),
-          Err(e) => {
-            
-            let s = match e.downcast::<String>() {
-              Ok(panic_msg) => format!("{}", panic_msg),
-              Err(_) => "unknown error".to_string()
-            };        
-            
-            let mut o = DataObject::new();
-            let s = format!("<html><head><title>500 - Server Error</title></head><body><h2>500</h2>Server Error: {}</body></html>", s);
-            o.put_str("body", &s);
-            o.put_i64("code", 500);
-            o.put_str("mimetype", "text/html");
-            response.put_object("a", o);
-          }
-		}
-
-/*        
-        if result.is_err() {
+      let result = panic::catch_unwind(|| {
+        let mut p = DataObject::get(dataref);
+        let o = command.execute(request).unwrap();
+//        let o = o.get_object("a").duplicate(); // FIXME - Side effect of rust. Require a flow command instead?
+        p.put_object("a", o);
+      });
+      
+      match result {
+        Ok(_x) => (),
+        Err(e) => {
+          
+          let s = match e.downcast::<String>() {
+            Ok(panic_msg) => format!("{}", panic_msg),
+            Err(_) => "unknown error".to_string()
+          };        
+          
           let mut o = DataObject::new();
-          let s = format!("<html><head><title>500 - Server Error</title></head><body><h2>500</h2>Server Error: {:?}</body></html>", result.unwrap_err());
+          let s = format!("<html><head><title>500 - Server Error</title></head><body><h2>500</h2>Server Error: {}</body></html>", s);
           o.put_str("body", &s);
           o.put_i64("code", 500);
           o.put_str("mimetype", "text/html");
           response.put_object("a", o);
         }
-*/
+      }
+
+      &mut WEBSOCKS.get().write().unwrap().decr(*stream_id);
+        
+      if !headers.has("SEC-WEBSOCKET-KEY") {
         let response = response.get_object("a").duplicate();
 
         let body:String;
@@ -424,11 +423,11 @@ for stream in listener.incoming() {
           stream.write(response.as_bytes()).unwrap();
         }
         stream.flush().unwrap();
-
+      }
         // FIXME
   //				clearRequestParameters();
 
-      }
+      
     }
     // FIXME
 //				CONTAINER.getDefault().fireEvent("HTTP_END", log);
@@ -437,6 +436,15 @@ for stream in listener.incoming() {
   });
 }
 "OK".to_string()
+
+
+
+}
+
+static START: Once = Once::new();
+pub static WEBSOCKS:Storage<RwLock<Heap<(TcpStream, BufReader<TcpStream>)>>> = Storage::new();
+
+fn xxx() {
 
 }
 
