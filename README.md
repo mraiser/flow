@@ -1,4 +1,9 @@
 # Flow
+### The Flowlang crate - https://crates.io/crates/flowlang
+This repo is published on crates.io and provides a unified Functional Programming API 
+across functions written in Rust, Java, JavaScript, Python and Flow.
+
+### The Flow Language
 The Flow language is a 3D visual dataflow language, which is based loosely on the Prograph programming language 
 (https://en.wikipedia.org/wiki/Prograph). Flow allows you to construct a diagram of how data flows through your 
 application, and then execute it. The official IDE for the Flow language is Newbound 
@@ -22,7 +27,7 @@ as a binary (on Linux):
 To use as a Rust library, add the following to your Cargo.toml file:
 
     [dependencies]
-    flowlang = "0.1.7"
+    flowlang = "0.1.8"
     # NOTE: Change version to latest version: https://crates.io/crates/flowlang
 
 To use as a **native library in Java** (on Linux), build and add libflowlang.so to your Java library path. Then add 
@@ -68,7 +73,7 @@ Test your HTTP service in a web browser:
 http://127.0.0.1:7878/testflow/testflow/test_add?a=42&b=378
 
 ### Support for commands in multiple languages
-Flow commands can be written in Java, Python, Rust, Javascript, or Flow. All languages except Python maintain state 
+Flow commands can be written in Java, Python, Rust, Javascript, or Flow. All languages maintain state 
 between calls. When developing Flow code using Newbound, the IDE automatically builds, compiles, and runs any files 
 needed. Newbound has its own instructions for enabling support for multiple languages 
 (https://github.com/mraiser/newbound). The following only applies to running Flow code *outside* of the Newbound IDE.

@@ -77,6 +77,7 @@ impl JSCmd{
     let cmdname = "NNAPI.".to_string()+(&self.lib)+"."+(&ctl)+"."+&name;
 //    println!("{}", cmdname);
     
+    // FIXME - Use timestamp instead
     let h1 = calculate_hash(&js);
     
     JSCmd::init();
@@ -94,8 +95,6 @@ impl JSCmd{
     let script = &mut wrap.script;
     
     if !hasfunc || h2 != h1 {
-      let jsfunctions = 1;
-      
       let mut newjs = cmdname.to_owned()+" = function(";
       let keys = args.duplicate().keys();
       let mut b = false;
