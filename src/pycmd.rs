@@ -143,6 +143,14 @@ impl PyCmd{
     let code = cmd.get_string("python");
     let ctl = cmd.get_string("ctl");
     let returntype = cmd.get_string("returntype");
+    let params = cmd.get_array("params");
+    
+    let mut a = DataObject::new();
+    for o in params.objects(){
+      let key = o.object().get_string("name");
+      let val = args.get_property(&key);
+      a.set_property(&key, val);
+    }
     
     // FIXME - Use timestamp instead
     let h1 = calculate_hash(&code);
@@ -161,7 +169,7 @@ impl PyCmd{
     if !hasfunc || h2 != h1 {
       wrap.register(&self.lib, &ctl, &name, &self.id, f.to_str().unwrap());
     }
-    let a:Value = args.to_json();
+    let a:Value = a.to_json();
     let res = wrap.execute(&self.lib, &ctl, &name, &a.to_string());
     Ok(DataObject::from_json(serde_json::from_str(&res).unwrap()))
   }

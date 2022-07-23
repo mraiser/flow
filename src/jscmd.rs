@@ -73,6 +73,13 @@ impl JSCmd{
     let js = cmd.get_string("js");
     let ctl = cmd.get_string("ctl");
     let returntype = cmd.get_string("returntype");
+    let params = cmd.get_array("params");
+    let mut param_names = DataArray::new();
+    for param in params.objects() {
+      let param_name = param.object().get_string("name");
+      param_names.push_str(&param_name);
+    }
+//    println!("{:?}", param_names.objects());
     
     let cmdname = "NNAPI.".to_string()+(&self.lib)+"."+(&ctl)+"."+&name;
 //    println!("{}", cmdname);
@@ -96,12 +103,12 @@ impl JSCmd{
     
     if !hasfunc || h2 != h1 {
       let mut newjs = cmdname.to_owned()+" = function(";
-      let keys = args.duplicate().keys();
+      let keys = param_names.objects();
       let mut b = false;
       for key in keys {
         if b { newjs += ","; }
         b = true;
-        newjs += &key;
+        newjs += &key.string();
       }
       newjs += "){";
       newjs += &js;
@@ -125,20 +132,18 @@ impl JSCmd{
     newjs += &cmdname;
     newjs += "(";
     
-    let keys = args.duplicate().keys();
+    let keys = param_names.objects();
     let mut b = false;
     for key in keys {
       if b { newjs += ","; }
       b = true;
       newjs += &var;
       newjs += ".";
-      newjs += &key;
+      newjs += &key.string();
     }
     newjs += ");";
 
 //    println!("{}", newjs);
-
-
 
     let mut jo = DataObject::new();
     let result: Result<Value, _> = script.call("execute", &newjs);

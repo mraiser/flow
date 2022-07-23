@@ -1,1 +1,1 @@
-return "hello world from java "+abc;
+return "Hello "+a+" from java";
