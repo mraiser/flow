@@ -14,29 +14,24 @@ application, and then execute it. The official IDE for the Flow language is Newb
 https://youtu.be/5vZKR4FGJyU
 
 ### Installation
-This repo can be used as a binary or a library. I assume if you are using this to develop something and want debug 
-information, you already know how to convert the below instructions from "release" to "debug". To compile and use 
-as a binary (on Linux):
+This repo can be used as a binary or a library. I assume if you are using this to develop something and want to 
+publish something for release, you already know how to convert the below instructions from "debug" to "release". 
+To compile and use as a binary (on Linux):
 
     git clone https://github.com/mraiser/flow.git flow
     cd flow
-    cargo build --release
-    sudo cp target/release/flow /usr/bin/flow
-    sudo cp target/release/flowb /usr/bin/flowb
+    cargo build
+    mypath=$(pwd)
+    cd /usr/bin
+    sudo ln -s $mypath/target/debug/flow flow
+    sudo ln -s $mypath/target/debug/flowb flowb
+    cd -
 
 To use as a Rust library, add the following to your Cargo.toml file:
 
     [dependencies]
     flowlang = "0.1.8"
     # NOTE: Change version to latest version: https://crates.io/crates/flowlang
-
-To use as a **native library in Java** (on Linux), build and add libflowlang.so to your Java library path. Then add 
-a native class in Java, like this one: 
-https://github.com/mraiser/newbound/blob/master/runtime/botmanager/src/com/newbound/code/LibFlow.java
-
-    cd libflowlang
-    cargo build --release
-    sudo cp target/release/libflowlang.so /usr/lib/jni/libflowlang.so
 
 ### Executing Flow Code
 This repo includes a "data" folder which contains the "testflow" library. You can add your own libraries to the "data" 
@@ -79,20 +74,26 @@ needed. Newbound has its own instructions for enabling support for multiple lang
 (https://github.com/mraiser/newbound). The following only applies to running Flow code *outside* of the Newbound IDE.
 
 #### Enabling JavaScript commands:
-JavaScript support is enabled by default and requires no additional configuration.
+Since JavaScript support is a feature that is disabled by default, you will have to compile flow with the 
+`--features=javascript_runtime` flag.
+
+    cargo run --features javascript_runtime --bin flow testflow testflow test_javascript <<< "{\"a\":\"world\"}"
 
 #### Enabling Python commands:
-Python support is enabled by default. You must install Python3 in the local environment first.
+Since Python support is a feature that is disabled by default, you will have to compile flow with the
+`--features=python_runtime` flag. You must install Python3 in the local environment first. In order to 
+run Libraries that contain commands written in Python, you will need to generate the Python files.
+
+    # To rebuild all rust and python commands, use: flowb all
+    cargo run --bin flowb testflow testflow test_python
+    cargo run --features python_runtime --bin flow testflow testflow test_python <<< "{\"a\":\"world\"}"
 
 #### Enabling Rust commands:
-In order to run Libraries that contain commands written in Rust, you will need to copy them into your data folder 
-and then compile them.
+In order to run Libraries that contain commands written in Rust, you will need to generate the Rust files.
 
-    # From the directory containing the "data" directory with your flow code that has rust commands
-    flowb all
-    cargo build --release
-    # Example from testflow library:
-    flow testflow testflow test_rust <<< "{\"a\":1, \"b\":2}"
+    # To rebuild all rust and python commands, use: flowb all
+    cargo run --bin flowb testflow testflow test_rust
+    cargo run --bin flow testflow testflow test_rust <<< "{\"a\":\"world\"}"
 
 #### Enabling Java commands
 In order to run Libraries that contain commands written in Java, you will need to add data/botmanager, 

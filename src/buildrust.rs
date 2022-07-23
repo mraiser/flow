@@ -9,6 +9,7 @@ use serde_json::Value;
 use serde_json::json;
 use std::fs::create_dir_all;
 use std::fs::OpenOptions;
+use std::io::BufReader;
 
 use crate::datastore::*;
 
@@ -70,6 +71,32 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
       
       println!("Building Rust: {}:{}:{}", lib, ctl, cmd);
       build_rust(path, meta, &src);
+    }
+    else if typ == "python" {
+      let cid = data["python"].as_str().unwrap();
+      let mut meta = store.get_json(lib, cid);
+      
+      let path = store.get_data_file(lib, &(cid.to_owned()+".python"));
+      
+      let src = store.read_file(path);
+      let pypath = store.root.parent().unwrap().join("lib_python");
+      let path = store.root.parent().unwrap()
+                                    .join("generated")
+                                    .join("com")
+                                    .join("newbound")
+                                    .join("robot")
+                                    .join("published")
+                                    .join(lib);
+      
+      meta["ctlid"] = json!(id);
+      meta["lib"] = json!(lib);
+      meta["ctl"] = json!(ctl);
+      meta["cmd"] = json!(cmd);
+      
+      // FIXME - Don't rebuild if current
+      
+      println!("Building Python: {}:{}:{}", lib, ctl, cmd);
+      build_python(pypath, path, meta, &src);
     }
   }
 }
@@ -276,3 +303,54 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
   }
 }
 
+fn build_python(pypath:PathBuf, path:PathBuf, meta:Value, src:&str) {
+  let _x = create_dir_all(&pypath);
+  let _x = create_dir_all(&path);
+  let id = meta["id"].as_str().unwrap();
+  let lib = meta["lib"].as_str().unwrap();
+  let ctl = meta["ctl"].as_str().unwrap();
+  let ctlid = meta["ctlid"].as_str().unwrap();
+  let cmd = meta["cmd"].as_str().unwrap();
+  let data = &meta["data"];
+  let import = data["import"].as_str().unwrap();
+  let import = import.replace("\r", "\n");
+  let returntype = &lookup_type(data["returntype"].as_str().unwrap());
+  let params = &data["params"];
+  
+  let path2 = &path.join(ctlid.to_string()+"-f.py");
+  let mut file = File::create(&path2).unwrap();
+
+  let _x = file.write_all(b"import sys\nsys.path.append(\"");
+  let _x = file.write_all(pypath.canonicalize().unwrap().to_str().unwrap().as_bytes());
+  let _x = file.write_all(b"\")\n\n");
+  let _x = file.write_all(import.as_bytes());
+  let _x = file.write_all(b"\ndef execute(args):\n  return ");
+  let _x = file.write_all(ctlid.as_bytes());
+  let _x = file.write_all(b"(**args)\n");
+  let _x = file.write_all(b"\ndef ");
+  let _x = file.write_all(ctlid.as_bytes());
+  let _x = file.write_all(b"(");
+  
+  let mut invoke = "".to_string();
+  for param in params.as_array().unwrap().iter() {
+    if invoke != "" { invoke += ", "; }
+    invoke += param["name"].as_str().unwrap();
+  }
+  let _x = file.write_all(invoke.as_bytes());
+  let _x = file.write_all(b"):\n");
+  
+  let src = indent(src.to_string());
+  let _x = file.write_all(src.as_bytes());
+  let _x = file.write_all(b"\n");
+}
+
+fn indent(src:String) -> String {
+  let mut s = "".to_string();
+  let mut lines = BufReader::new(src.as_bytes()).lines();
+  while let Some(line) = lines.next() {
+    s += "  ";
+    s += &line.unwrap();
+    s += "\n";
+  }
+  s
+}

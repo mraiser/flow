@@ -2,3 +2,5 @@
 /.idea
 Cargo.lock
 /libflowlang/target/
+/generated/
+/lib_python/

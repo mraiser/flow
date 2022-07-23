@@ -13,19 +13,21 @@ repository = "https://github.com/mraiser/flow"
 
 [features]
 java_runtime = ["jni"]
+python_runtime = ["pyo3"]
+javascript_runtime = ["js-sandbox"]
 
 [dependencies]
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.79"
 chrono="0.4.19"
-ndata="0.1.5"
-#ndata={path="../ndata"}
-state="0.5.3"
-jni = { version = "0.19.0", features = ["invocation"], optional = true }
-pyo3 = { version = "0.16.4", features = ["auto-initialize"] }
-js-sandbox = "0.1.6"
 sha-1 = "0.10.0"
 base64 = "0.13.0"
+state="0.5.3"
+ndata="0.1.5"
+#ndata={path="../ndata"}
+jni = { version = "0.19.0", features = ["invocation"], optional = true }
+pyo3 = { version = "0.16.4", features = ["auto-initialize"], optional = true }
+js-sandbox = { version = "0.1.6", optional = true }
 
 [[bin]]
 name = "flow"

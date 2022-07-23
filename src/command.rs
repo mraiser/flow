@@ -5,11 +5,14 @@ use crate::code::*;
 use crate::datastore::*;
 use crate::case::*;
 use crate::rustcmd::*;
+use crate::generated::*;
+
 #[cfg(feature="java_runtime")]
 use crate::javacmd::*;
+#[cfg(feature="javascript_runtime")]
 use crate::jscmd::*;
+#[cfg(feature="python_runtime")]
 use crate::pycmd::*;
-use crate::generated::*;
 
 #[derive(Debug)]
 pub enum Source {
@@ -17,7 +20,9 @@ pub enum Source {
   Rust(RustCmd),
   #[cfg(feature="java_runtime")]
   Java(JavaCmd),
+  #[cfg(feature="javascript_runtime")]
   JavaScript(JSCmd),
+  #[cfg(feature="python_runtime")]
   Python(PyCmd),
 }
 
@@ -56,9 +61,11 @@ impl Command {
       "java" => {
         Source::Java(JavaCmd::new(lib, id))
       },
+      #[cfg(feature="javascript_runtime")]
       "js" => {
         Source::JavaScript(JSCmd::new(lib, id))
       },
+      #[cfg(feature="python_runtime")]
       "python" => {
         Source::Python(PyCmd::new(lib, id))
       },
@@ -99,11 +106,17 @@ impl Command {
         return r.execute(args);
       }
     }
-    if let Source::JavaScript(r) = &self.src {
-      return r.execute(args);
+    #[cfg(feature="javascript_runtime")]
+    {
+      if let Source::JavaScript(r) = &self.src {
+        return r.execute(args);
+      }
     }
-    if let Source::Python(r) = &self.src {
-      return r.execute(args);
+    #[cfg(feature="python_runtime")]
+    {
+      if let Source::Python(r) = &self.src {
+        return r.execute(args);
+      }
     }
     panic!("Language not supported: {:?}", &self.src);
   }
