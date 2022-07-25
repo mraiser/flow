@@ -118,7 +118,7 @@ the JDK's libjvm library is in your `LD_LIBRARY_PATH`.
     # Something along the lines of:
     export LD_LIBRARY_PATH=/usr/lib/jvm/java-11-openjdk-amd64/lib/server/
     # Example from testflow library:
-    cargo run --bin flow --features=java_runtime testflow testflow test_java <<< "{\"abc\":\"xxx\"}"
+    cargo run --bin flow --features=java_runtime testflow testflow test_java <<< "{\"a\":\"world\"}"
 
 ### Background:
 Flow was originally written in Java as part of Newbound, an integrated development environment for peer-to-peer HTML5 
