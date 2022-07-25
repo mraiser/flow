@@ -1,0 +1,1 @@
+{"data":{"import":"use ndata::dataarray::*;\nuse std::fs;\n","lib":"flowlang","returntype":"JSONArray","ctl":"file","cmd":"list","type":"rust","params":[{"name":"path","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"ohgvku182368963c4s1c","time":1658772370252,"addr":"/0:0:0:0:0:0:0:1:32854","username":"admin"}

@@ -33,6 +33,7 @@ impl Primitive {
       map.insert("unique_session_id".to_string(), (flowlang::system::unique_session_id::execute, "{ in: {}, out: { a: {} } }".to_string()));
       map.insert("sleep".to_string(), (flowlang::system::sleep::execute, "{ in: { millis: {} }, out: {} }".to_string()));
       map.insert("stdout".to_string(), (flowlang::system::stdout::execute, "{ in: { a: {} }, out: {} }".to_string()));
+      map.insert("system_call".to_string(), (flowlang::system::system_call::execute, "{ in: { a: {} }, out: {} }".to_string()));
       map.insert("split".to_string(), (flowlang::string::split::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("trim".to_string(), (flowlang::string::trim::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("ends_with".to_string(), (flowlang::string::ends_with::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
@@ -66,6 +67,7 @@ impl Primitive {
       map.insert("file_visit".to_string(), (flowlang::file::visit::execute, "{ in: { path: {}, recursive: {}, lib: {}, ctl: {}, cmd: {} }, out: { a: {} } }".to_string()));
       map.insert("file_is_dir".to_string(), (flowlang::file::is_dir::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("mime_type".to_string(), (flowlang::file::mime_type::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_list".to_string(), (flowlang::file::list::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("data_read".to_string(), (flowlang::data::read::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));
       map.insert("data_write".to_string(), (flowlang::data::write::execute, "{ in: { lib: {}, id: {}, data: {}, readers: {}, writers: {} }, out: {} }".to_string()));
       map.insert("data_exists".to_string(), (flowlang::data::exists::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));
