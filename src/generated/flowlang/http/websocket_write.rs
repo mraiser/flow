@@ -15,7 +15,7 @@ o
 pub fn websocket_write(mut stream_id:i64, mut msg:String) -> i64 {
 let mut msg = msg.as_bytes();
 
-let n = msg.len();
+let n = msg.len() as i64;
 let mut reply: Vec<u8> = Vec::new();
 
 reply.push(129); // Text = 129 / Binary = 130;
