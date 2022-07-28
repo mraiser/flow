@@ -33,7 +33,7 @@ impl Primitive {
       map.insert("unique_session_id".to_string(), (flowlang::system::unique_session_id::execute, "{ in: {}, out: { a: {} } }".to_string()));
       map.insert("sleep".to_string(), (flowlang::system::sleep::execute, "{ in: { millis: {} }, out: {} }".to_string()));
       map.insert("stdout".to_string(), (flowlang::system::stdout::execute, "{ in: { a: {} }, out: {} }".to_string()));
-      map.insert("system_call".to_string(), (flowlang::system::system_call::execute, "{ in: { a: {} }, out: {} }".to_string()));
+      map.insert("system_call".to_string(), (flowlang::system::system_call::execute, "{ in: { command: {} }, out: {} }".to_string()));
       map.insert("split".to_string(), (flowlang::string::split::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
       map.insert("trim".to_string(), (flowlang::string::trim::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("ends_with".to_string(), (flowlang::string::ends_with::execute, "{ in: { a: {}, b: {} }, out: { a: {} } }".to_string()));
