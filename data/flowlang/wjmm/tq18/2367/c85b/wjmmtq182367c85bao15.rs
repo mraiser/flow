@@ -1,10 +1,19 @@
 let mut out = DataObject::new();
 
-let mut cmd = Command::new(&command)
-                            .stderr(Stdio::piped())
-                            .stdout(Stdio::piped())
-                            .spawn()
-                            .expect("failed to execute process");
+let a = command.get_string(0);
+command.remove_property(0);
+
+let mut args = Vec::<String>::new();
+for arg in command.objects() {
+  args.push(arg.string());
+}
+
+let mut cmd = Command::new(&a)
+  .args(args)
+  .stderr(Stdio::piped())
+  .stdout(Stdio::piped())
+  .spawn()
+  .expect("failed to execute process");
 
 let output = cmd.wait_with_output().unwrap();
 let result = std::str::from_utf8(&output.stdout).unwrap();
