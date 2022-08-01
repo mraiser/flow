@@ -1,0 +1,1 @@
+{"data":{"import":"use ndata::data::*;\n","lib":"flowlang","returntype":"Boolean","ctl":"types","cmd":"to_boolean","type":"rust","params":[{"name":"a","type":"Any"}],"attachmentkeynames":["rs"],"desc":""},"id":"wskvnq1825a38c770w1a","time":1659371126955,"addr":"/0:0:0:0:0:0:0:1:57102","username":"admin"}

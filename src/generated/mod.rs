@@ -5,6 +5,10 @@ pub struct Generated {}
 impl Generated {
   pub fn init() {
     RustCmd::init();
+    RustCmd::add("xzhuqo1825a3a8102x1d".to_string(), flowlang::types::to_string::execute, "".to_string());
+    RustCmd::add("wskvnq1825a38c770w1a".to_string(), flowlang::types::to_boolean::execute, "".to_string());
+    RustCmd::add("npzhil1825a37d602p17".to_string(), flowlang::types::to_float::execute, "".to_string());
+    RustCmd::add("lmvhmw1825a03e3e3o1e".to_string(), flowlang::types::to_int::execute, "".to_string());
     RustCmd::add("ohgvku182368963c4s1c".to_string(), flowlang::file::list::execute, "".to_string());
     RustCmd::add("wjmmtq182367c85bao15".to_string(), flowlang::system::system_call::execute, "".to_string());
     RustCmd::add("mwtghp182164edb0bk19".to_string(), flowlang::http::websocket_write::execute, "".to_string());
