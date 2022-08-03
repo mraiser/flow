@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::fs::metadata;
 
 pub fn execute(o: DataObject) -> DataObject {
@@ -10,7 +9,7 @@ o.put_bool("a", ax);
 o
 }
 
-pub fn is_dir(mut path:String) -> bool {
+pub fn is_dir(path:String) -> bool {
 let md = metadata(&path).unwrap();
 md.is_dir()
 }

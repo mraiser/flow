@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::{num::ParseIntError};
 
 pub fn execute(o: DataObject) -> DataObject {
@@ -10,7 +9,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn hex_decode(mut input:String) -> String {
+pub fn hex_decode(input:String) -> String {
 let mut old = input;
 let mut out = "".to_string();
 let mut i;

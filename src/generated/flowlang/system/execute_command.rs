@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use crate::command::*;
 
 pub fn execute(o: DataObject) -> DataObject {
@@ -13,7 +12,7 @@ o.put_object("a", ax);
 o
 }
 
-pub fn execute_command(mut lib:String, mut ctl:String, mut cmd:String, mut params:DataObject) -> DataObject {
+pub fn execute_command(lib:String, ctl:String, cmd:String, params:DataObject) -> DataObject {
 let cmd = Command::lookup(&lib, &ctl, &cmd);
 cmd.execute(params).unwrap()
 }

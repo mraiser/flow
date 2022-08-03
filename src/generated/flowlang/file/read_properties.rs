@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::fs::File;
 use std::io;
 use std::io::BufRead;
@@ -11,7 +10,7 @@ o.put_object("a", ax);
 o
 }
 
-pub fn read_properties(mut path:String) -> DataObject {
+pub fn read_properties(path:String) -> DataObject {
 let mut o = DataObject::new();
 let file = File::open(path).unwrap();
 let lines = io::BufReader::new(file).lines();

@@ -1,2 +1,2 @@
-a.push_property(b);
+a.duplicate().push_property(b);
 a

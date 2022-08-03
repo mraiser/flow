@@ -1,9 +1,8 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::time::UNIX_EPOCH;
 use std::time::SystemTime;
 
-pub fn execute(o: DataObject) -> DataObject {
+pub fn execute(_o: DataObject) -> DataObject {
 let ax = time();
 let mut o = DataObject::new();
 o.put_i64("a", ax);

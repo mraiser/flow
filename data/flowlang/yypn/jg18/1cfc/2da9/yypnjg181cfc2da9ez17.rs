@@ -459,6 +459,8 @@ START.call_once(|| {
   map.insert(".264","video/mp4");
   map.insert(".vdi","application/x-virtualbox-vdi");
   MIMETYPES.set(RwLock::new(map));
+  
+  xxx();
 });
 
 let mut a = path.to_owned();

@@ -1,0 +1,1 @@
+{"data":{"import":"use ndata::data::Data;\n","lib":"flowlang","returntype":"Boolean","ctl":"types","cmd":"is_string","type":"rust","params":[{"name":"a","type":"Any"}],"attachmentkeynames":["rs"],"desc":""},"id":"yunyvp1825eaa551fn16","time":1659458849794,"addr":"/0:0:0:0:0:0:0:1:60932","username":"admin"}

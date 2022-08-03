@@ -4,7 +4,7 @@ let stream = &mut sock.0;
 let key = key.trim();
 let key = key.to_string()+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 let mut hasher = Sha1::new();
-let hash = hasher.update(key.as_bytes());
+let _hash = hasher.update(key.as_bytes());
 let hash = hasher.finalize();
 let key = base64::encode(&hash);
 

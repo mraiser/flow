@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use crate::command::*;
 
 pub fn execute(o: DataObject) -> DataObject {
@@ -12,7 +11,7 @@ o.put_object("a", ax);
 o
 }
 
-pub fn execute_id(mut lib:String, mut id:String, mut params:DataObject) -> DataObject {
+pub fn execute_id(lib:String, id:String, params:DataObject) -> DataObject {
 let cmd = Command::new(&lib, &id);
 cmd.execute(params).unwrap()
 }

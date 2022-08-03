@@ -1,2 +1,2 @@
-object.set_property(&key, value);
+object.duplicate().set_property(&key, value);
 object

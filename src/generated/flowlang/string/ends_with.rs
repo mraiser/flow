@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("a");
@@ -10,7 +9,7 @@ o.put_bool("a", ax);
 o
 }
 
-pub fn ends_with(mut a:String, mut b:String) -> bool {
+pub fn ends_with(a:String, b:String) -> bool {
 a.ends_with(&b)
 }
 

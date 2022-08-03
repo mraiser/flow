@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use crate::datastore::*;
 
 pub fn execute(o: DataObject) -> DataObject {
@@ -11,7 +10,7 @@ o.put_object("a", ax);
 o
 }
 
-pub fn read(mut lib:String, mut id:String) -> DataObject {
+pub fn read(lib:String, id:String) -> DataObject {
 let store = DataStore::new();
 store.get_data(&lib, &id)
 }

@@ -1,5 +1,6 @@
 START.call_once(|| {
   STREAMHEAP.set(RwLock::new(Heap::new()));
+  xxx();
 });
 
 let mut o = DataObject::new();

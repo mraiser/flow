@@ -1,7 +1,5 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::process::Command;
-use std::io::Write;
 use std::process::Stdio;
 use ndata::dataarray::DataArray;
 
@@ -13,9 +11,10 @@ o.put_object("a", ax);
 o
 }
 
-pub fn system_call(mut command:DataArray) -> DataObject {
+pub fn system_call(command:DataArray) -> DataObject {
 let mut out = DataObject::new();
 
+let mut command = command.duplicate();
 let a = command.get_string(0);
 command.remove_property(0);
 
@@ -24,7 +23,7 @@ for arg in command.objects() {
   args.push(arg.string());
 }
 
-let mut cmd = Command::new(&a)
+let cmd = Command::new(&a)
   .args(args)
   .stderr(Stdio::piped())
   .stdout(Stdio::piped())

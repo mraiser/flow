@@ -1,6 +1,6 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use ndata::dataarray::DataArray;
+use ndata::data::Data;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_array("a");
@@ -11,10 +11,10 @@ o.put_i64("a", ax);
 o
 }
 
-pub fn index_of(mut a:DataArray, mut b:Data) -> i64 {
+pub fn index_of(a:DataArray, b:Data) -> i64 {
 let mut i = 0;
 let n = a.len();
-while (i<n) {
+while i<n {
   let d = a.get_property(i);
   if Data::equals(d,b.clone()) { return i as i64; }
   i = i + 1;

@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::thread;
 
 use crate::command::Command;
@@ -14,7 +13,7 @@ o.put_i64("a", ax);
 o
 }
 
-pub fn thread_id(mut lib:String, mut id:String, mut params:DataObject) -> i64 {
+pub fn thread_id(lib:String, id:String, params:DataObject) -> i64 {
 thread::spawn(move || {
   let cmd = Command::new(&lib, &id);
   let _x = cmd.execute(params).unwrap();

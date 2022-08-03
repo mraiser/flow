@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::sync::RwLock;
 use state::Storage;
 use std::sync::Once;
@@ -16,9 +15,10 @@ o.put_object("a", ax);
 o
 }
 
-pub fn accept(mut listener:i64) -> DataObject {
+pub fn accept(listener:i64) -> DataObject {
 START.call_once(|| {
   STREAMHEAP.set(RwLock::new(Heap::new()));
+  xxx();
 });
 
 let mut o = DataObject::new();

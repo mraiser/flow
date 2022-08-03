@@ -3,8 +3,6 @@ use state::Storage;
 use std::sync::Once;
 use jni::*;
 use jni::objects::JValue;
-use jni::objects::JString;
-use std::ffi::CString;
 use std::sync::Arc;
 
 use ndata::dataobject::*;
@@ -36,11 +34,11 @@ impl JavaCmd{
           .build()
           .unwrap();
       
-      let storeroot = toproot.join("runtime");
-      let storeroot = storeroot.join("botmanager");
+//      let storeroot = toproot.join("runtime");
+//      let storeroot = storeroot.join("botmanager");
       let jvm = JavaVM::new(jvm_args).unwrap();
       let exec = Executor::new(Arc::new(jvm));
-      let val = exec.with_attached(|env| {
+      let _val = exec.with_attached(|env| {
         let cls = env.find_class("Startup").expect("missing class");
         let ss = env.new_string(toproot.to_str().unwrap()).unwrap();
         let s = JValue::Object(ss.into());

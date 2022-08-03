@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("a");
@@ -10,7 +9,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn left(mut a:String, mut b:i64) -> String {
+pub fn left(a:String, b:i64) -> String {
 let b = b as usize;
 a[..b].to_string()
 }

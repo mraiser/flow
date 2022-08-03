@@ -35,6 +35,7 @@ impl Rand{
       (self.x, self.y, self.z, self.w)
     }
     
+    #[allow(dead_code)]
     pub fn build(x:u32, y:u32, z:u32, w:u32) -> Rand {
         Rand{
             x: x, y: y,
@@ -43,6 +44,7 @@ impl Rand{
     }
 
     // Xorshift 128, taken from German Wikipedia
+    #[allow(dead_code)]
     pub fn rand(&mut self) -> u32 {
         let t = self.x^self.x.wrapping_shl(11);
         self.x = self.y; self.y = self.z; self.z = self.w;
@@ -50,6 +52,7 @@ impl Rand{
         return self.w;
     }
 
+    #[allow(dead_code)]
     pub fn shuffle<T>(&mut self, a: &mut [T]) {
         if a.len()==0 {return;}
         let mut i = a.len()-1;
@@ -60,16 +63,19 @@ impl Rand{
         }
     }
 
+    #[allow(dead_code)]
     pub fn rand_range(&mut self, a: i32, b: i32) -> i32 {
         let m = (b-a+1) as u32;
         return a+(self.rand()%m) as i32;
     }
 
+    #[allow(dead_code)]
     pub fn rand_float(&mut self) -> f64 {
         (self.rand() as f64)/(<u32>::max_value() as f64)
     }
 }
 
+#[allow(dead_code)]
 pub fn rand() -> u32 {
   unsafe {
     let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
@@ -79,6 +85,7 @@ pub fn rand() -> u32 {
   }
 }
 
+#[allow(dead_code)]
 pub fn shuffle<T>(a: &mut [T]) {
   unsafe {
     let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
@@ -88,6 +95,7 @@ pub fn shuffle<T>(a: &mut [T]) {
   }
 }
 
+#[allow(dead_code)]
 pub fn rand_range(a: i32, b: i32) -> i32 {
   unsafe {
     let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);
@@ -97,6 +105,7 @@ pub fn rand_range(a: i32, b: i32) -> i32 {
   }
 }
 
+#[allow(dead_code)]
 pub fn rand_float() -> f64 {
   unsafe {
     let mut rand = Rand::build(RANDOM.0, RANDOM.1, RANDOM.2, RANDOM.3);

@@ -1,5 +1,5 @@
 use ndata::dataobject::*;
-use ndata::data::*;
+use ndata::data::Data;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_object("object");
@@ -11,8 +11,8 @@ o.put_object("a", ax);
 o
 }
 
-pub fn set(mut object:DataObject, mut key:String, mut value:Data) -> DataObject {
-object.set_property(&key, value);
+pub fn set(object:DataObject, key:String, value:Data) -> DataObject {
+object.duplicate().set_property(&key, value);
 object
 }
 

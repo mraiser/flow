@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("a");
@@ -9,7 +8,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn trim(mut a:String) -> String {
+pub fn trim(a:String) -> String {
 a.trim().to_string()
 }
 

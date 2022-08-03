@@ -1,6 +1,5 @@
 use ndata::dataobject::*;
-use ndata::data::*;
-use ndata::dataarray::DataArray;
+
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("a");
 let ax = test_rust(a0);
@@ -9,7 +8,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn test_rust(mut a:String) -> String {
+pub fn test_rust(a:String) -> String {
 "Hello ".to_string()+&a+" from rust"
 }
 

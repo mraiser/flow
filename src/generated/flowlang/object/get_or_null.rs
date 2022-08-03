@@ -1,6 +1,5 @@
 use ndata::dataobject::*;
-use ndata::data::*;
-use ndata::dataarray::DataArray;
+use ndata::data::Data;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_property("a");
@@ -11,7 +10,7 @@ o.set_property("a", ax);
 o
 }
 
-pub fn get_or_null(mut a:Data, mut b:Data) -> Data {
+pub fn get_or_null(a:Data, b:Data) -> Data {
 if a.is_object(){
   let a = a.object();
   let b = b.string();

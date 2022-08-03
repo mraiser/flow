@@ -43,10 +43,12 @@ impl DataStore {
     };
   }
   
+  #[allow(dead_code)]
   pub fn globals() -> DataObject {
     DataObject::get(0)
   }
   
+  #[allow(dead_code)]
   pub fn gc() {
     DataObject::gc();
     DataArray::gc();
@@ -74,10 +76,11 @@ impl DataStore {
     panic!("No such command {}:{}:{}", lib, ctl, cmd);
   }
   
+  #[allow(dead_code)]
   pub fn set_data(&self, db: &str, id: &str, data:DataObject) {
     let s = data.to_json().to_string();
     let f = self.get_data_file(db, id);
-    fs::create_dir_all(f.parent().unwrap());
+    fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, s).expect("Unable to write file");
 
   }
@@ -103,6 +106,7 @@ impl DataStore {
     data
   }
   
+  #[allow(dead_code)]
   pub fn get_data(&self, db: &str, id: &str) -> DataObject {
     let data = self.get_json(db, id);
     DataObject::from_json(data)

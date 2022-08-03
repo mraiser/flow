@@ -32,8 +32,8 @@ pub struct JSCmd {
 impl JSCmd{
   pub fn init(){
     START.call_once(|| {
-      let store = DataStore::new();
-      let toproot = store.root;
+//      let store = DataStore::new();
+//      let toproot = store.root;
       let src = r#"
 		    var NNAPI = {};
 		    function register(o) { 
@@ -45,8 +45,8 @@ impl JSCmd{
 		    { 
 		      return eval(js);
 		    }"#;
-      let mut script = Script::from_string(src).expect("Initialization succeeds");
-      let mut ptr = WrappedPointer{
+      let script = Script::from_string(src).expect("Initialization succeeds");
+      let ptr = WrappedPointer{
         script: script,
         map: HashMap::new(),
       };
@@ -72,7 +72,7 @@ impl JSCmd{
 //    println!("{}", cmd.to_json());
     let js = cmd.get_string("js");
     let ctl = cmd.get_string("ctl");
-    let returntype = cmd.get_string("returntype");
+//    let returntype = cmd.get_string("returntype");
     let params = cmd.get_array("params");
     let mut param_names = DataArray::new();
     for param in params.objects() {
@@ -89,7 +89,7 @@ impl JSCmd{
     
     JSCmd::init();
     let wrap = &mut SCRIPT.get().write().unwrap();
-    let mut hasfunc = false;
+    let hasfunc;
     let mut h2 = 0;
     {
       let jsfunctions = &mut wrap.map;

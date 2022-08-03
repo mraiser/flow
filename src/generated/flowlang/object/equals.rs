@@ -1,5 +1,5 @@
 use ndata::dataobject::*;
-use ndata::data::*;
+use ndata::data::Data;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_property("a");
@@ -10,7 +10,7 @@ o.put_bool("a", ax);
 o
 }
 
-pub fn equals(mut a:Data, mut b:Data) -> bool {
+pub fn equals(a:Data, b:Data) -> bool {
 Data::equals(a, b)
 }
 

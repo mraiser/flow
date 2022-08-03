@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use state::Storage;
@@ -13,7 +12,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn mime_type(mut path:String) -> String {
+pub fn mime_type(path:String) -> String {
 START.call_once(|| {
   let mut map = HashMap::new();
   map.insert(".3dm","x-world/x-3dmf");
@@ -475,6 +474,8 @@ START.call_once(|| {
   map.insert(".264","video/mp4");
   map.insert(".vdi","application/x-virtualbox-vdi");
   MIMETYPES.set(RwLock::new(map));
+  
+  xxx();
 });
 
 let mut a = path.to_owned();

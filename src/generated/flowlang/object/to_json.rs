@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_object("a");
@@ -9,7 +8,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn to_json(mut a:DataObject) -> String {
+pub fn to_json(a:DataObject) -> String {
 a.to_json().to_string()
 }
 

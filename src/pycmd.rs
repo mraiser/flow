@@ -142,7 +142,7 @@ impl PyCmd{
 //    println!("{}", cmd.to_json());
     let code = cmd.get_string("python");
     let ctl = cmd.get_string("ctl");
-    let returntype = cmd.get_string("returntype");
+//    let returntype = cmd.get_string("returntype");
     let params = cmd.get_array("params");
     
     let mut a = DataObject::new();
@@ -155,7 +155,7 @@ impl PyCmd{
     // FIXME - Use timestamp instead
     let h1 = calculate_hash(&code);
     let wrap = &mut PYENV.get().write().unwrap();
-    let mut hasfunc = false;
+    let hasfunc;
     let mut h2 = 0;
     {
       let cmdname = "NNAPI.".to_string()+(&self.lib)+"."+(&ctl)+"."+&name;

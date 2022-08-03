@@ -1,5 +1,5 @@
 use ndata::dataobject::*;
-use ndata::data::*;
+use ndata::data::Data;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_property("a");
@@ -10,7 +10,7 @@ o.set_property("a", ax);
 o
 }
 
-pub fn remove(mut a:Data, mut b:Data) -> Data {
+pub fn remove(a:Data, b:Data) -> Data {
 if a.is_array() {
   let mut aa = a.array();
   let b = b.int() as usize;

@@ -1,6 +1,6 @@
 let store = DataStore::new();
 let mut path = store.root.join(lib);
-if !path.exists() { fs::create_dir_all(&path); }
+if !path.exists() { let _ = fs::create_dir_all(&path).unwrap(); }
 
 let mut meta = DataObject::new();
 meta.put_str("username", "system");

@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use crate::datastore::*;
 use std::path::Path;
 
@@ -12,7 +11,7 @@ o.put_bool("a", ax);
 o
 }
 
-pub fn exists(mut lib:String, mut id:String) -> bool {
+pub fn exists(lib:String, id:String) -> bool {
 let store = DataStore::new();
 let path = store.get_data_file(&lib, &id);
 Path::new(&path).exists()

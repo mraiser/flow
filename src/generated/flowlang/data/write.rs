@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use ndata::dataarray::DataArray;
 use crate::datastore::*;
 use crate::generated::flowlang::system::time::time;
@@ -16,7 +15,7 @@ o.put_i64("a", ax);
 o
 }
 
-pub fn write(mut lib:String, mut id:String, mut data:DataObject, mut readers:DataArray, mut writers:DataArray) -> i64 {
+pub fn write(lib:String, id:String, data:DataObject, readers:DataArray, writers:DataArray) -> i64 {
 let store = DataStore::new();
 let mut o = DataObject::new();
 o.put_str("id", &id);

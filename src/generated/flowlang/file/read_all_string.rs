@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::fs;
 
 pub fn execute(o: DataObject) -> DataObject {
@@ -10,7 +9,7 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn read_all_string(mut path:String) -> String {
+pub fn read_all_string(path:String) -> String {
 fs::read_to_string(&path).unwrap()
 }
 

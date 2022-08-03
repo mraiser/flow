@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_bool("a");
@@ -10,7 +9,7 @@ o.put_bool("a", ax);
 o
 }
 
-pub fn or(mut a:bool, mut b:bool) -> bool {
+pub fn or(a:bool, b:bool) -> bool {
 a || b
 }
 

@@ -1,6 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
-use std::path::Path;
 use std::fs;
 
 use ndata::dataarray::*;
@@ -17,10 +15,10 @@ o.put_i64("a", ax);
 o
 }
 
-pub fn library_new(mut lib:String, mut readers:DataArray, mut writers:DataArray) -> i64 {
+pub fn library_new(lib:String, readers:DataArray, writers:DataArray) -> i64 {
 let store = DataStore::new();
 let mut path = store.root.join(lib);
-if !path.exists() { fs::create_dir_all(&path); }
+if !path.exists() { let _ = fs::create_dir_all(&path).unwrap(); }
 
 let mut meta = DataObject::new();
 meta.put_str("username", "system");

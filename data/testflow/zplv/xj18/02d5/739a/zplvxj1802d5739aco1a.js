@@ -3,12 +3,12 @@ var ME = $('#'+me.UUID)[0];
 
 me.ready = function(){
   me.testSync("websock", function(){
-    var hold = SOCK;
-    SOCK = null;
-	me.testSync("ajax", function(){
-      SOCK = hold;
+//    var hold = SOCK;
+//    SOCK = null;
+//	me.testSync("ajax", function(){
+//      SOCK = hold;
       me.testAsync();
-    });
+//    });
   });
 };
 

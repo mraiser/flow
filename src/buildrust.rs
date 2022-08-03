@@ -1,4 +1,3 @@
-use std::env;
 use std::io;
 use std::io::BufRead;
 use std::fs;
@@ -13,7 +12,7 @@ use std::io::BufReader;
 
 use crate::datastore::*;
 
-pub fn buildAll() {
+pub fn build_all() {
   let libs = fs::read_dir("data").unwrap();
   let store = DataStore::new();
   for db in libs {
@@ -160,9 +159,13 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
   let mut file = File::create(&path2).unwrap();
 
   let _x = file.write_all(b"use ndata::dataobject::*;\n");
-  let _x = file.write_all(b"use ndata::data::*;\n");
+//  let _x = file.write_all(b"use ndata::data::*;\n");
   let _x = file.write_all(import.as_bytes());
-  let _x = file.write_all(b"\npub fn execute(o: DataObject) -> DataObject {\n");
+  
+  let n = params.as_array().unwrap().len();
+  let _x = file.write_all(b"\npub fn execute(");
+  if n == 0 { let _x = file.write_all(b"_"); }
+  let _x = file.write_all(b"o: DataObject) -> DataObject {\n");
   
   let mut index = 0;
   let mut invoke1 = "let ax = ".to_string()+cmd+"(";
@@ -184,7 +187,8 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
       invoke2 = invoke2 + ", ";
     }
     invoke1 = invoke1 + "a" + &index.to_string();
-    invoke2 = invoke2 + "mut " + name + ":" + typ;
+//    invoke2 = invoke2 + "mut " + name + ":" + typ;
+    invoke2 = invoke2 + name + ":" + typ;
     index += 1;
   }
   invoke1 = invoke1 + ");\n";
@@ -210,7 +214,7 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
       let _x = file.write_all(b"(\"a\", ax);\n");
     }
     else if returntype == "DataArray" {
-      let _x = file.write_all(b"list");
+      let _x = file.write_all(b"array");
       let _x = file.write_all(b"(\"a\", ax);\n");
     }
     else {
@@ -306,15 +310,15 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
 fn build_python(pypath:PathBuf, path:PathBuf, meta:Value, src:&str) {
   let _x = create_dir_all(&pypath);
   let _x = create_dir_all(&path);
-  let id = meta["id"].as_str().unwrap();
-  let lib = meta["lib"].as_str().unwrap();
-  let ctl = meta["ctl"].as_str().unwrap();
+//  let id = meta["id"].as_str().unwrap();
+//  let lib = meta["lib"].as_str().unwrap();
+//  let ctl = meta["ctl"].as_str().unwrap();
   let ctlid = meta["ctlid"].as_str().unwrap();
-  let cmd = meta["cmd"].as_str().unwrap();
+//  let cmd = meta["cmd"].as_str().unwrap();
   let data = &meta["data"];
   let import = data["import"].as_str().unwrap();
   let import = import.replace("\r", "\n");
-  let returntype = &lookup_type(data["returntype"].as_str().unwrap());
+//  let returntype = &lookup_type(data["returntype"].as_str().unwrap());
   let params = &data["params"];
   
   let path2 = &path.join(ctlid.to_string()+"-f.py");

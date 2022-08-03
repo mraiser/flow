@@ -192,7 +192,7 @@ impl Code {
     }
     else {
       let mut out3 = DataObject::new();
-      for key in &list_out { out3.put_list(&key, DataArray::new()); }
+      for key in &list_out { out3.put_array(&key, DataArray::new()); }
       let mut count = 0;
       if n>0 {
         count = in1.get_array(&list_in[0]).len();
@@ -206,7 +206,7 @@ impl Code {
       let mut i = 0;
       if loopn == 0 && count == 0 {
         //cmd.result = Some(out3.duplicate());
-        for (k,v) in &mut cmd.output {
+        for (k,_v) in &mut cmd.output {
           if !out3.has(&k) { out3.put_null(&k); }
         }
         cmd.done = true;
@@ -335,7 +335,7 @@ impl Code {
             out.put_object(&key, DataObject::from_json(serde_json::from_str(v).unwrap())); 
           }
           else if ctype == "array" { 
-            out.put_list(&key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_array(&key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
           }
           else { out.put_null(&key); }
         }
@@ -386,7 +386,7 @@ impl Code {
           let dp1 = &in1.get_property(key);
           g.set_property(v, dp1.clone());
         }
-        let cmdout = &mut cmd.output;
+//        let cmdout = &mut cmd.output;
         let value: Data;
         if g.has(v) {
           value = g.get_property(v);

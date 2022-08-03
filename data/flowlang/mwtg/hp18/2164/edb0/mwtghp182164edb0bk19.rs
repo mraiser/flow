@@ -1,4 +1,4 @@
-let mut msg = msg.as_bytes();
+let msg = msg.as_bytes();
 
 let n = msg.len() as i64;
 let mut reply: Vec<u8> = Vec::new();
@@ -29,6 +29,6 @@ reply.extend_from_slice(msg);
 
 let heap = &mut WEBSOCKS.get().write().unwrap();
 let sock = &mut heap.get(stream_id as usize);
-sock.0.write(&reply);
+let _ = sock.0.write(&reply).unwrap();
 
 n as i64

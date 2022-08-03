@@ -20,7 +20,7 @@ pub struct RustCmd {
 impl RustCmd{
   pub fn init(){
     START.call_once(|| {
-      let mut map = HashMap::<String, (Transform, String)>::new();
+      let map = HashMap::<String, (Transform, String)>::new();
       COMMANDS.set(RwLock::new(map));
     });
   }

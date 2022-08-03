@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use crate::generated::flowlang::http::listen::*;
 use std::io::Write;
 
@@ -12,8 +11,8 @@ o.put_i64("a", ax);
 o
 }
 
-pub fn websocket_write(mut stream_id:i64, mut msg:String) -> i64 {
-let mut msg = msg.as_bytes();
+pub fn websocket_write(stream_id:i64, msg:String) -> i64 {
+let msg = msg.as_bytes();
 
 let n = msg.len() as i64;
 let mut reply: Vec<u8> = Vec::new();
@@ -44,7 +43,7 @@ reply.extend_from_slice(msg);
 
 let heap = &mut WEBSOCKS.get().write().unwrap();
 let sock = &mut heap.get(stream_id as usize);
-sock.0.write(&reply);
+let _ = sock.0.write(&reply).unwrap();
 
 n as i64
 

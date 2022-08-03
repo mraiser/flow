@@ -5,7 +5,6 @@ use crate::code::*;
 use crate::datastore::*;
 use crate::case::*;
 use crate::rustcmd::*;
-use crate::generated::*;
 
 #[cfg(feature="java_runtime")]
 use crate::javacmd::*;
@@ -45,7 +44,7 @@ impl Command {
     let typ = &data["type"];
     let typ = typ.as_str().unwrap();
     
-    let mut code = match typ.as_ref() {
+    let code = match typ.as_ref() {
       "flow" => {
         let codename:&str = data["flow"].as_str().unwrap();
         let path = store.get_data_file(lib, &(codename.to_owned()+".flow"));

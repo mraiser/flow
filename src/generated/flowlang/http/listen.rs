@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::io::prelude::*;
 use std::net::TcpListener;
 use std::thread;
@@ -18,6 +17,7 @@ use crate::command::*;
 use crate::datastore::*;
 
 use ndata::heap::Heap;
+use ndata::data::Data;
 
 use crate::generated::flowlang::http::hex_decode::hex_decode;
 use crate::generated::flowlang::system::time::time;
@@ -34,9 +34,10 @@ o.put_str("a", &ax);
 o
 }
 
-pub fn listen(mut socket_address:String, mut library:String, mut control:String, mut command:String) -> String {
+pub fn listen(socket_address:String, library:String, control:String, command:String) -> String {
 START.call_once(|| {
   WEBSOCKS.set(RwLock::new(Heap::new()));
+  xxx();
 });
 
 let listener = TcpListener::bind(socket_address).unwrap();
@@ -84,7 +85,7 @@ for stream in listener.incoming() {
               let mut v = DataArray::new();
               v.push_str(&old);
               v.push_str(&val);
-              headers.put_list(&key, v);
+              headers.put_array(&key, v);
             }
           }
           last = key;
@@ -286,12 +287,12 @@ for stream in listener.incoming() {
 
       
       // FIXME - Implement keep-alive
-      let mut ka = "close".to_string();
-      if headers.has("CONNECTION") { ka = headers.get_string("CONNECTION"); }
+//      let mut ka = "close".to_string();
+//      if headers.has("CONNECTION") { ka = headers.get_string("CONNECTION"); }
 
       // FIXME - origin is never used
-      let mut origin = "null".to_string();
-      if headers.has("ORIGIN") { origin = headers.get_string("ORIGIN"); }
+//      let mut origin = "null".to_string();
+//      if headers.has("ORIGIN") { origin = headers.get_string("ORIGIN"); }
 
       // FIXME
 //			setRequestParameters(params);
@@ -325,7 +326,7 @@ for stream in listener.incoming() {
         }
       }
 
-      &mut WEBSOCKS.get().write().unwrap().decr(*stream_id);
+      WEBSOCKS.get().write().unwrap().decr(*stream_id);
         
       if !headers.has("SEC-WEBSOCKET-KEY") {
         let response = response.get_object("a").duplicate();

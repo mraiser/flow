@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use std::thread;
 
 use crate::command::Command;
@@ -15,7 +14,7 @@ o.put_i64("a", ax);
 o
 }
 
-pub fn thread(mut lib:String, mut ctl:String, mut cmd:String, mut params:DataObject) -> i64 {
+pub fn thread(lib:String, ctl:String, cmd:String, params:DataObject) -> i64 {
 thread::spawn(move || {
   let cmd = Command::lookup(&lib, &ctl, &cmd);
   let _x = cmd.execute(params).unwrap();

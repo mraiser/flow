@@ -1,8 +1,7 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use crate::rand::*;
 
-pub fn execute(o: DataObject) -> DataObject {
+pub fn execute(_o: DataObject) -> DataObject {
 let ax = random_non_hex_char();
 let mut o = DataObject::new();
 o.put_str("a", &ax);

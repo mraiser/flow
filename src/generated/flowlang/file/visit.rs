@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::data::*;
 use ndata::dataarray::*;
 use std::fs;
 
@@ -12,11 +11,11 @@ let a3 = o.get_string("ctl");
 let a4 = o.get_string("cmd");
 let ax = visit(a0, a1, a2, a3, a4);
 let mut o = DataObject::new();
-o.put_list("a", ax);
+o.put_array("a", ax);
 o
 }
 
-pub fn visit(mut path:String, mut recursive:bool, mut lib:String, mut ctl:String, mut cmd:String) -> DataArray {
+pub fn visit(path:String, recursive:bool, lib:String, ctl:String, cmd:String) -> DataArray {
 let mut a = DataArray::new();
 
 for file in fs::read_dir(&path).unwrap() {
