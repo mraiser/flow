@@ -1,13 +1,13 @@
 use std::sync::RwLock;
 use state::Storage;
 use std::sync::Once;
-use js_sandbox::*;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use serde_json::Value;
 use ndata::dataobject::*;
 use ndata::dataarray::*;
+use deno_core::JsRuntime;
+use deno_core::RuntimeOptions;
 
 use crate::code::*;
 use crate::datastore::*;
@@ -16,7 +16,7 @@ static START: Once = Once::new();
 static SCRIPT:Storage<RwLock<WrappedPointer>> = Storage::new();
 
 struct WrappedPointer{
-  script: Script,
+  runtime: JsRuntime,
   map: HashMap<String, u64>,
 }
 
@@ -40,14 +40,14 @@ impl JSCmd{
 		      if (typeof NNAPI[o.lib] == 'undefined') NNAPI[o.lib] = {};
 		      if (typeof NNAPI[o.lib][o.ctl] == 'undefined') NNAPI[o.lib][o.ctl] = {};
 		      eval(o.js);
-		    }
-		    function execute(js) 
-		    { 
-		      return eval(js);
 		    }"#;
-      let script = Script::from_string(src).expect("Initialization succeeds");
+      let mut runtime = JsRuntime::new(RuntimeOptions {
+        ..Default::default()
+      });
+      let _ = runtime.execute_script("<usage>", src).unwrap();
+//      println!("{:?}", x);
       let ptr = WrappedPointer{
-        script: script,
+        runtime: runtime,
         map: HashMap::new(),
       };
       SCRIPT.set(RwLock::new(ptr));
@@ -99,7 +99,7 @@ impl JSCmd{
       jsfunctions.insert(cmdname.to_owned(), h1);
     }
 
-    let script = &mut wrap.script;
+    let runtime = &mut wrap.runtime;
     
     if !hasfunc || h2 != h1 {
       let mut newjs = cmdname.to_owned()+" = function(";
@@ -121,7 +121,7 @@ impl JSCmd{
       o.put_str("cmd", &name);
       o.put_str("js", &newjs);
 //      println!("{}", o.to_json());
-      let _: () = script.call("register", &o.to_json()).unwrap();
+      let _ = runtime.execute_script("<usage>", &("register(".to_string()+&o.to_json().to_string()+");")).unwrap();
     }
     
     let var = "x".to_string()+&h1.to_string();
@@ -146,13 +146,17 @@ impl JSCmd{
 //    println!("{}", newjs);
 
     let mut jo = DataObject::new();
-    let result: Result<Value, _> = script.call("execute", &newjs);
+    let result = runtime.execute_script("<usage>", &newjs);
+        
     if result.is_err() {
       jo.put_str("status", "err");
       let msg = format!("{:?}", result);
       jo.put_str("msg", &msg);
     }
     else {
+      let mut scope = runtime.handle_scope();
+      let local = deno_core::v8::Local::new(&mut scope, result.unwrap());
+      let result = serde_v8::from_v8::<serde_json::Value>(&mut scope, local);
       jo.put_str("status", "ok");
       let val = result.unwrap();
       if val.is_string() {
