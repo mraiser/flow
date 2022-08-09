@@ -27,9 +27,11 @@ pub enum Source {
 
 #[derive(Debug)]
 pub struct Command {
+  pub name: String,
   pub lib: String,
   pub id: String,
   pub src: Source,
+  pub return_type: String,
 }
 
 impl Command {
@@ -41,14 +43,16 @@ impl Command {
     let store = DataStore::new();
     let src = store.get_json(lib, id);
     let data = &src["data"];
-    let typ = &data["type"];
-    let typ = typ.as_str().unwrap();
+    let typ = &data["type"].as_str().unwrap();
+    let name = &data["name"].as_str().unwrap();
+    
+    let codename:&str = data[typ].as_str().unwrap();
+    let code = &store.get_json(lib, codename)["data"];
+    let ret = code.get("returntype").unwrap().as_str().unwrap();
     
     let code = match typ.as_ref() {
       "flow" => {
-        let codename:&str = data["flow"].as_str().unwrap();
-        let path = store.get_data_file(lib, &(codename.to_owned()+".flow"));
-        let s = store.read_file(path);
+        let s = code["flow"].to_string();
         let case = Case::new(&s).unwrap();
         Source::Flow(case)
       },
@@ -72,9 +76,11 @@ impl Command {
     };
     
     return Command {
+      name: name.to_string(),
       lib: lib.to_string(),
       id: id.to_string(),
       src: code, 
+      return_type: ret.to_string(),
     };
   }
   

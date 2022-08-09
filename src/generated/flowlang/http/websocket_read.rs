@@ -1,7 +1,6 @@
 use ndata::dataobject::*;
 use crate::generated::flowlang::http::listen::*;
 use std::io::Read;
-use std::io::BufReader;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_i64("stream_id");
@@ -16,7 +15,7 @@ let mut reader;
 {
   let heap = &mut WEBSOCKS.get().write().unwrap();
   let sock = &mut heap.get(stream_id as usize);
-  reader = BufReader::new(sock.0.try_clone().unwrap());
+  reader = sock.0.try_clone().unwrap();
 }
 
 let base:i64 = 2;
