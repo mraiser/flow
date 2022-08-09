@@ -2,7 +2,6 @@ use ndata::dataobject::*;
 use std::io::prelude::*;
 use std::net::TcpListener;
 use std::thread;
-//use std::io::BufReader;
 use std::panic;
 use std::fs;
 use chrono::Utc;
@@ -45,7 +44,6 @@ for stream in listener.incoming() {
   let mut stream = stream.unwrap();
   thread::spawn(move || {
     let remote_addr = stream.peer_addr().unwrap();
-//    let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut reader = stream.try_clone().unwrap();
     let mut line = read_line(&mut reader);
     let mut count = line.len();
@@ -388,7 +386,6 @@ for stream in listener.incoming() {
 }
 
 static START: Once = Once::new();
-//pub static WEBSOCKS:Storage<RwLock<Heap<(TcpStream, BufReader<TcpStream>)>>> = Storage::new();
 pub static WEBSOCKS:Storage<RwLock<Heap<(TcpStream, TcpStream)>>> = Storage::new();
 
 fn read_line(reader: &mut TcpStream) -> String {
@@ -425,5 +422,6 @@ fn read_until(reader: &mut TcpStream, c: u8, bufout: &mut Vec<u8>) -> usize {
     if i >= 4096 { break; } // FIXME - What is an appropriate max HTTP request line length?
   }
   i
+
 }
 

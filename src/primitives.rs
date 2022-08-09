@@ -81,6 +81,7 @@ impl Primitive {
       map.insert("to_boolean".to_string(), (flowlang::types::to_boolean::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("to_string".to_string(), (flowlang::types::to_string::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("is_string".to_string(), (flowlang::types::is_string::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
+      map.insert("is_object".to_string(), (flowlang::types::is_object::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       PRIMITIVES.set(RwLock::new(map));
     });
   }

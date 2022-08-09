@@ -1,6 +1,5 @@
 START.call_once(|| {
   WEBSOCKS.set(RwLock::new(Heap::new()));
-  xxx();
 });
 
 let listener = TcpListener::bind(socket_address).unwrap();
@@ -9,9 +8,9 @@ for stream in listener.incoming() {
   let mut stream = stream.unwrap();
   thread::spawn(move || {
     let remote_addr = stream.peer_addr().unwrap();
-    let mut reader = BufReader::new(stream.try_clone().unwrap());
-    let mut line = String::new();
-    let mut count = reader.read_line(&mut line).unwrap();
+    let mut reader = stream.try_clone().unwrap();
+    let mut line = read_line(&mut reader);
+    let mut count = line.len();
     if count > 2 {
       line = (&line[0..count-2]).to_string();
       count = line.find(" ").unwrap();
@@ -24,8 +23,8 @@ for stream in listener.incoming() {
       let mut headers = DataObject::new();
       let mut last = "".to_string();
       loop {
-        let mut line = String::new();
-        count = reader.read_line(&mut line).unwrap();
+        let line = read_line(&mut reader);
+        let mut count = line.len();
         if count == 2 {
           break;
         }
@@ -90,8 +89,9 @@ for stream in listener.incoming() {
         }
         else {
           while max > 0 {
+            let mut b = false;
             let mut buf = vec![];
-            let n = reader.read_until(b'=', &mut buf).expect("reading from cursor won't fail"); // FIXME - WUT?
+            let n = read_until(&mut reader, b'=', &mut buf);
             max -= n as i64;
             let mut key = std::str::from_utf8(&buf).unwrap().to_string();
             if key.ends_with("=") {
@@ -99,12 +99,13 @@ for stream in listener.incoming() {
             }
 
             buf = vec![];
-            let n = reader.read_until(b'&', &mut buf).expect("reading from cursor won't fail"); // FIXME - WUT?
+            let n = read_until(&mut reader, b'&', &mut buf);
             max -= n as i64;
             let mut value = std::str::from_utf8(&buf).unwrap().to_string();
             if value.ends_with("&") {
               value = (&value[..n-1]).to_string();
             }
+            else { b = true; }
 
             key = key.replace("+"," ");
             value = value.replace("+"," ");
@@ -112,6 +113,8 @@ for stream in listener.incoming() {
             value = hex_decode(value);
 
             params.put_str(&key, &value);
+            
+            if b { break; }
           }
         }
       }
@@ -147,64 +150,9 @@ for stream in listener.incoming() {
       else {
         cmd = path;
       }
-  /*    
-      let mut sid = "".to_string();
-      if params.has("sessionid") { sid = params.get_string("sessionid"); }
-      else if headers.has("COOKIE"){ 
-        let c = headers.get_string("COOKIE");
-        let split = c.split("; ");
-        for s in split {
-          if s.starts_with("sessionid=") {
-            sid = s[10..].to_string();
-            break;
-          }
-        }
-      }
-
-      if sid == "" { sid = unique_session_id(); }
-      headers.put_str("nn-sessionid", &sid);
-      params.put_str("sessionid", &sid);
-
-      let mut globals = DataStore::globals();
-      if !globals.has("SESSIONS") { globals.put_object("SESSIONS", DataObject::new()); }
-      if !globals.has("SESSION_TIMEOUT") { globals.put_i64("SESSION_TIMEOUT", 900000); }
-      let mut sessions = globals.get_object("SESSIONS");
-      let session_timeout = globals.get_i64("SESSION_TIMEOUT");
-      if !sessions.has(&sid) {
-        let mut ses = DataObject::new();
-        ses.put_i64("expire", time()+session_timeout);
-        sessions.put_object(&sid, ses);
-      }
-
-      let mut ses = sessions.get_object(&sid);
-  */    
       let loc = remote_addr.to_string();
-  //    ses.put_str("userlocation", &loc);
       headers.put_str("nn-userlocation", &loc);
-  //    params.put_str("userlocation", &loc);
-
-      // FIXME
-  //		o = new JSONObject(headers);
-  //		params.put("request_headers", o.toString());
-  //		params.put("request_input_stream", parser.is);
-  //		params.put("request_output_stream", parser.os);
-
-  /*    
-      if ses.has("user") {
-        headers.put_str("nn-username", &ses.get_string("username"));
-        let user = ses.get_object("user");
-        let groups:String;
-        if user.has("groups") { groups = user.get_string("groups"); }
-        else { groups = "anonymous".to_string(); }
-        headers.put_str("nn-groups", &groups);
-      }
-      else {
-        headers.put_str("nn-username", "anonymous");
-        headers.put_str("nn-groups", "anonymous");
-      }
-  */    
       let mut request = DataObject::new();
-  //    request.put_str("sessionid", &sid);
 
       // FIXME - Is this necessary?
       if headers.has("ACCEPT-LANGUAGE"){ 
@@ -267,7 +215,6 @@ for stream in listener.incoming() {
       let result = panic::catch_unwind(|| {
         let mut p = DataObject::get(dataref);
         let o = command.execute(request).unwrap();
-//        let o = o.get_object("a").duplicate(); // FIXME - Side effect of rust. Require a flow command instead?
         p.put_object("a", o);
       });
       
@@ -400,12 +347,42 @@ for stream in listener.incoming() {
   });
 }
 "OK".to_string()
-
-
-
 }
 
 static START: Once = Once::new();
-pub static WEBSOCKS:Storage<RwLock<Heap<(TcpStream, BufReader<TcpStream>)>>> = Storage::new();
+pub static WEBSOCKS:Storage<RwLock<Heap<(TcpStream, TcpStream)>>> = Storage::new();
 
-fn xxx() {
+fn read_line(reader: &mut TcpStream) -> String {
+  let mut buf = [0];
+  let mut line: String = "".to_string();
+  loop {
+    let res = reader.read_exact(&mut buf);
+    if res.is_err() { break; }
+    line = line + &std::str::from_utf8(&buf).unwrap();
+    if buf[0] == b'\r' {
+      let res = reader.read_exact(&mut buf);
+      if res.is_err() { break; }
+      line = line + std::str::from_utf8(&buf).unwrap();
+      if buf[0] == b'\n' {
+        break;
+      }
+    }
+    if line.len() >= 4096 { break; } // FIXME - What is an appropriate max HTTP request line length?
+  }
+  line
+}
+
+fn read_until(reader: &mut TcpStream, c: u8, bufout: &mut Vec<u8>) -> usize {
+  let mut buf = [0];
+  let mut i = 0;
+  loop {
+    let res = reader.read_exact(&mut buf);
+    if res.is_err() { break; }
+    i += 1;
+    bufout.push(buf[0]);
+    if buf[0] == c {
+      break;
+    }
+    if i >= 4096 { break; } // FIXME - What is an appropriate max HTTP request line length?
+  }
+  i

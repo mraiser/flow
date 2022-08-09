@@ -1,0 +1,1 @@
+{"data":{"import":"import org.json.*;\nimport com.newbound.robot.*;\n","lib":"flowlang","returntype":"JSONObject","ctl":"types","cmd":"is_object","type":"java","params":[{"name":"a","type":"Any"}],"attachmentkeynames":["java"],"desc":""},"id":"tqyoxs18283399182l161a","time":1660059001278,"addr":"/0:0:0:0:0:0:0:1:52260","username":"admin"}

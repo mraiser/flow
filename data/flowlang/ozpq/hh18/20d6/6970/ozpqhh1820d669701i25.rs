@@ -2,7 +2,7 @@ let mut reader;
 {
   let heap = &mut WEBSOCKS.get().write().unwrap();
   let sock = &mut heap.get(stream_id as usize);
-  reader = BufReader::new(sock.0.try_clone().unwrap());
+  reader = sock.0.try_clone().unwrap();
 }
 
 let base:i64 = 2;
