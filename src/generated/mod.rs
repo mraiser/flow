@@ -5,6 +5,7 @@ pub struct Generated {}
 impl Generated {
   pub fn init() {
     RustCmd::init();
+    RustCmd::add("psnvun182883c2b36y7e5".to_string(), flowlang::data::root::execute, "".to_string());
     RustCmd::add("tjhuni18283434ae2k178c".to_string(), flowlang::types::is_object::execute, "".to_string());
     RustCmd::add("yunyvp1825eaa551fn16".to_string(), flowlang::types::is_string::execute, "".to_string());
     RustCmd::add("xzhuqo1825a3a8102x1d".to_string(), flowlang::types::to_string::execute, "".to_string());

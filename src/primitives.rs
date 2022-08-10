@@ -73,6 +73,7 @@ impl Primitive {
       map.insert("data_exists".to_string(), (flowlang::data::exists::execute, "{ in: { lib: {}, id: {} }, out: { a: {} } }".to_string()));
       map.insert("library_exists".to_string(), (flowlang::data::library_exists::execute, "{ in: { lib: {} }, out: { a: {} } }".to_string()));
       map.insert("library_new".to_string(), (flowlang::data::library_new::execute, "{ in: { lib: {}, readers: {}, writers: {} }, out: { a: {} } }".to_string()));
+      map.insert("data_root".to_string(), (flowlang::data::root::execute, "{ in: {}, out: { a: {} } }".to_string()));
       map.insert("http_listen".to_string(), (flowlang::http::listen::execute, "{ in: { socket_address: {}, library: {}, control: {}, command: {} }, out: { a: {} } }".to_string()));
       map.insert("cast_params".to_string(), (flowlang::http::cast_params::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {} }, out: { a: {} } }".to_string()));
       map.insert("http_hex_decode".to_string(), (flowlang::http::hex_decode::execute, "{ in: { input: {} }, out: { a: {} } }".to_string()));
