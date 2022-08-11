@@ -284,8 +284,7 @@ for stream in listener.incoming() {
   //		if (range[1] != -1) len = range[1] - range[0] + 1;
   //		String res = range[0] == -1 ? "200 OK" : "206 Partial Content";
 
-        let now = Utc::now();
-        let date = now.to_rfc2822();
+        let date = RFC2822Date::now().to_string();
 
         headers.put_str("Date", &date);
         headers.put_str("Content-Type", &mimetype);

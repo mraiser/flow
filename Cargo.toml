@@ -19,7 +19,6 @@ javascript_runtime = ["deno_core","serde_v8"]
 [dependencies]
 serde = { version = "1.0.136", features = ["derive"] }
 serde_json = "1.0.79"
-chrono="0.4.19"
 sha-1 = "0.10.0"
 base64 = "0.13.0"
 state="0.5.3"

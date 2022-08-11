@@ -10,6 +10,7 @@ pub mod primitives;
 pub mod rustcmd;
 pub mod generated;
 pub mod rand;
+pub mod rfc2822date;
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
 #[cfg(feature="javascript_runtime")]

@@ -4,24 +4,21 @@ use std::net::TcpListener;
 use std::thread;
 use std::panic;
 use std::fs;
-use chrono::Utc;
 use ndata::dataarray::*;
 use std::sync::RwLock;
 use state::Storage;
 use std::sync::Once;
 use std::net::TcpStream;
-
+use ndata::heap::Heap;
+use ndata::data::Data;
 
 use crate::command::*;
 use crate::datastore::*;
-
-use ndata::heap::Heap;
-use ndata::data::Data;
+use crate::rfc2822date::*;
 
 use crate::generated::flowlang::http::hex_decode::hex_decode;
 use crate::generated::flowlang::system::time::time;
 use crate::generated::flowlang::file::mime_type::*;
-
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("socket_address");
 let a1 = o.get_string("library");
@@ -320,8 +317,7 @@ for stream in listener.incoming() {
   //		if (range[1] != -1) len = range[1] - range[0] + 1;
   //		String res = range[0] == -1 ? "200 OK" : "206 Partial Content";
 
-        let now = Utc::now();
-        let date = now.to_rfc2822();
+        let date = RFC2822Date::now().to_string();
 
         headers.put_str("Date", &date);
         headers.put_str("Content-Type", &mimetype);
@@ -422,6 +418,5 @@ fn read_until(reader: &mut TcpStream, c: u8, bufout: &mut Vec<u8>) -> usize {
     if i >= 4096 { break; } // FIXME - What is an appropriate max HTTP request line length?
   }
   i
-
 }
 
