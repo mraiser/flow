@@ -26,11 +26,12 @@ meta.put_array("readers", readers);
 meta.put_array("writers", writers);
 
 path = path.join("meta.json");
-fs::write(path, meta.to_json().to_string()).expect("Unable to write file");
+fs::write(path, meta.to_string()).expect("Unable to write file");
 
 // FIXME
 // fireEvent("newdb", meta);
 
 1
+
 }
 

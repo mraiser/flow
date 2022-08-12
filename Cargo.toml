@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -9,25 +9,24 @@ homepage = "https://github.com/mraiser/flow"
 documentation = "https://docs.rs/flowlang/latest/flowlang/"
 repository = "https://github.com/mraiser/flow"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [features]
+serde_support = ["serde","serde_json","ndata/serde_support"]
 java_runtime = ["jni"]
 python_runtime = ["pyo3"]
-javascript_runtime = ["deno_core","serde_v8"]
+javascript_runtime = ["deno_core","serde_v8","serde_support"]
 
 [dependencies]
-serde = { version = "1.0.136", features = ["derive"] }
-serde_json = "1.0.79"
 sha-1 = "0.10.0"
 base64 = "0.13.0"
-state="0.5.3"
-ndata="0.1.5"
-#ndata={path="../ndata"}
+state = "0.5.3"
+ndata = "0.2.0"
+#ndata = { path = "../ndata" }
 jni = { version = "0.19.0", features = ["invocation"], optional = true }
 pyo3 = { version = "0.16.4", features = ["auto-initialize"], optional = true }
 deno_core = { version = "0.145.0", optional = true }
 serde_v8 = { version = "0.56.0", optional = true }
+serde = { version = "1.0.143", features = ["derive"], optional = true }
+serde_json = { version = "1.0.83", optional = true }
 
 [[bin]]
 name = "flow"

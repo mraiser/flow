@@ -15,8 +15,8 @@ for param in list.objects() {
   if t == "Integer" { outparams.put_i64(&n, params.get_string(&n).parse::<i64>().unwrap()); }
   else if t == "Float" { outparams.put_float(&n, params.get_string(&n).parse::<f64>().unwrap()); }
   else if t == "Boolean" { outparams.put_bool(&n, params.get_string(&n).parse::<bool>().unwrap()); }
-  else if t == "JSONObject" { outparams.put_object(&n, DataObject::from_json(serde_json::from_str(&params.get_string(&n)).unwrap())); }
-  else if t == "JSONArray" { outparams.put_array(&n, DataArray::from_json(serde_json::from_str(&params.get_string(&n)).unwrap())); }
+  else if t == "JSONObject" { outparams.put_object(&n, DataObject::from_string(&params.get_string(&n))); }
+  else if t == "JSONArray" { outparams.put_array(&n, DataArray::from_string(&params.get_string(&n))); }
   else { outparams.put_str(&n, &params.get_string(&n)); }
 }
 outparams

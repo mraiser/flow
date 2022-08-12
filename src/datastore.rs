@@ -1,8 +1,9 @@
-use serde_json::*;
 use std::fs::File;
 use std::path::*;
 use std::io::Read;
 use std::fs;
+#[cfg(feature="serde_support")]
+use serde_json::*;
 
 use ndata::dataobject::*;
 use ndata::dataarray::*;
@@ -56,19 +57,20 @@ impl DataStore {
   }
   
   pub fn lookup_cmd_id(&self, lib:&str, ctl:&str, cmd:&str) -> String {
-    let data = self.get_json(lib, "controls");
-    let data = &data["data"]["list"];
-    for c in data.as_array().unwrap() {
-      let n = c["name"].as_str().unwrap();
+    let data = self.get_data(lib, "controls");
+    let data = data.get_object("data").get_array("list");
+    for c in data.objects() {
+      let c = c.object();
+      let n = c.get_string("name");
       if n == ctl {
-        let ctlid = c["id"].as_str().unwrap();
-        let ctldata = self.get_json(lib, ctlid);
-        let ctldata = &ctldata["data"];
-        for cmddata in ctldata["cmd"].as_array().unwrap() {
-          let n2 = cmddata["name"].as_str().unwrap();
+        let ctlid = c.get_string("id");
+        let ctldata = self.get_data(lib, &ctlid);
+        let ctldata = ctldata.get_object("data");
+        for cmddata in ctldata.get_array("cmd").objects() {
+          let cmddata = cmddata.object();
+          let n2 = cmddata.get_string("name");
           if n2 == cmd {
-            let id = cmddata["id"].as_str().unwrap();
-            return id.to_string();
+            return cmddata.get_string("id");
           }
         }
       }
@@ -78,13 +80,14 @@ impl DataStore {
   
   #[allow(dead_code)]
   pub fn set_data(&self, db: &str, id: &str, data:DataObject) {
-    let s = data.to_json().to_string();
+    let s = data.to_string();
     let f = self.get_data_file(db, id);
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, s).expect("Unable to write file");
 
   }
-    
+  
+  #[cfg(feature="serde_support")]
   pub fn get_json(&self, db: &str, id: &str) -> Value {
     let path = self.get_data_file(db, id);
     let s = self.read_file(path);
@@ -106,10 +109,34 @@ impl DataStore {
     data
   }
   
-  #[allow(dead_code)]
   pub fn get_data(&self, db: &str, id: &str) -> DataObject {
-    let data = self.get_json(db, id);
-    DataObject::from_json(data)
+    #[cfg(feature="serde_support")]
+    {
+      let data = self.get_json(db, id);
+      return DataObject::from_json(data);
+    }
+    #[allow(unreachable_code)]
+    {
+      let path = self.get_data_file(db, id);
+      let s = self.read_file(path);
+      let data = DataObject::from_string(&s);
+      let mut d = data.get_object("data");
+      if d.has("attachmentkeynames") {
+        let attachments: DataArray = d.get_array("attachmentkeynames");
+        for a in attachments.objects(){
+          let b = &a.string();
+          let aid = id.to_string()+"."+b;
+          let apath = self.get_data_file(db, &aid);
+          let astr = self.read_file(apath);
+          if astr.len() > 0 && astr[0..1].to_string() == "{" { // FIXME - Legacy hack
+            d.put_object(b, DataObject::from_string(&astr)); 
+          } else {
+            d.put_str(b, &astr); 
+          }
+        }
+      }
+      return data;
+    }
   }
   
   pub fn exists(&self, db: &str, id: &str) -> bool {

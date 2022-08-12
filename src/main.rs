@@ -1,7 +1,3 @@
-use std::env;
-use std::io;
-use std::io::BufRead;
-
 pub mod code;
 pub mod case;
 pub mod command;
@@ -18,10 +14,14 @@ pub mod jscmd;
 #[cfg(feature="python_runtime")]
 pub mod pycmd;
 
+use std::env;
+use std::io;
+use std::io::BufRead;
+use ndata::dataobject::*;
+
 use command::Command as Command;
 use datastore::DataStore;
 use generated::Generated;
-use ndata::dataobject::*;
 
 pub fn main() {
   DataStore::init("data");
@@ -41,10 +41,10 @@ pub fn main() {
       s = s + &line.unwrap();
     }
     
-    let args = DataObject::from_json(serde_json::from_str(&s).unwrap());
+    let args = DataObject::from_string(&s);
     let cmd = Command::lookup(lib, ctl, cmd);
     let res = cmd.execute(args).unwrap();
-    println!("{}", res.to_json());
+    println!("{}", res.to_string());
     
 //    DataObject::print_heap();
 //    DataArray::print_heap();

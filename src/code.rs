@@ -332,10 +332,10 @@ impl Code {
           else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap()); }
           else if ctype == "string" { out.put_str(&key, v); }
           else if ctype == "object" { 
-            out.put_object(&key, DataObject::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_object(&key, DataObject::from_string(v)); 
           }
           else if ctype == "array" { 
-            out.put_array(&key, DataArray::from_json(serde_json::from_str(v).unwrap())); 
+            out.put_array(&key, DataArray::from_string(v)); 
           }
           else { out.put_null(&key); }
         }

@@ -66,13 +66,13 @@ impl JavaCmd{
       let s1 = JValue::Object(ss.into());
       let ss = env.new_string(self.id.to_owned()).unwrap();
       let s2 = JValue::Object(ss.into());
-      let ss = env.new_string(&args.to_json().to_string()).unwrap();
+      let ss = env.new_string(&args.to_string()).unwrap();
       let s3 = JValue::Object(ss.into());
       let r = env.call_static_method(cls, "executeFromRust", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", &[s1, s2, s3]);
       let sss:String = env.get_string(r.unwrap().l().unwrap().into())?.into();
       Ok(sss)
     });
-    Ok(DataObject::from_json(serde_json::from_str(&val.unwrap()).unwrap()))
+    Ok(DataObject::from_string(&val.unwrap()))
   }
 }
 

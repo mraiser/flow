@@ -9,6 +9,7 @@ o
 }
 
 pub fn to_json(a:DataObject) -> String {
-a.to_json().to_string()
+a.to_string()
+
 }
 

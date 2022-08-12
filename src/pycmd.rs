@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
-use serde_json::Value;
 use std::collections::HashMap;
 use ndata::dataobject::*;
 use std::sync::RwLock;
@@ -169,9 +168,8 @@ impl PyCmd{
     if !hasfunc || h2 != h1 {
       wrap.register(&self.lib, &ctl, &name, &self.id, f.to_str().unwrap());
     }
-    let a:Value = a.to_json();
     let res = wrap.execute(&self.lib, &ctl, &name, &a.to_string());
-    Ok(DataObject::from_json(serde_json::from_str(&res).unwrap()))
+    Ok(DataObject::from_string(&res))
   }
 }
 

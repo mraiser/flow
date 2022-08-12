@@ -4,11 +4,10 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::*;
-use serde_json::Value;
-use serde_json::json;
 use std::fs::create_dir_all;
 use std::fs::OpenOptions;
 use std::io::BufReader;
+use ndata::dataobject::*;
 
 use crate::datastore::*;
 
@@ -21,21 +20,23 @@ pub fn build_all() {
       println!("No controls in library {}", &lib);
     }
     else {
-      let controls = store.get_json(&lib, "controls");
-      let list = controls["data"]["list"].as_array().unwrap();
-      for control in list {
-        let ctl = (&control["name"]).as_str().unwrap();
-        let id = (&control["id"]).as_str().unwrap();
+      let controls = store.get_data(&lib, "controls");
+      let list = controls.get_object("data").get_array("list");
+      for control in list.objects() {
+        let control = control.object();
+        let ctl = control.get_string("name");
+        let id = control.get_string("id");
         if !store.exists(&lib, &id) {
           println!("No control file for {}:{}", &lib, &id);
         }
         else {
-          let ctldata = store.get_json(&lib, &id);
-          let cmdlist = &ctldata["data"]["cmd"];
-          if !cmdlist.is_null() {
-            let cmdlist = ctldata["data"]["cmd"].as_array().unwrap();
-            for command in cmdlist {
-              let cmd = (&command["name"]).as_str().unwrap();
+          let ctldata = store.get_data(&lib, &id);
+          let d = ctldata.get_object("data");
+          if d.has("cmd") {
+            let cmdlist = d.get_array("cmd");
+            for command in cmdlist.objects() {
+              let command = command.object();
+              let cmd = command.get_string("name");
               build(&lib, &ctl, &cmd);
             }
           }
@@ -50,21 +51,21 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
   let id = &store.lookup_cmd_id(lib, ctl, cmd);
   
   if store.exists(lib, id) {
-    let meta = store.get_json(lib, id);
-    let data = &meta["data"];
-    let typ = &data["type"];
+    let meta = store.get_data(lib, id);
+    let data = meta.get_object("data");
+    let typ = data.get_string("type");
     
     if typ == "rust" {
-      let id = data["rust"].as_str().unwrap();
-      let mut meta = store.get_json(lib, id);
+      let id = &data.get_string("rust");
+      let mut meta = store.get_data(lib, id);
       
       let path = store.get_data_file(lib, &(id.to_owned()+".rs"));
       let src = store.read_file(path);
       let path = store.root.parent().unwrap().join("src").join("generated").join(lib).join(ctl);
       
-      meta["lib"] = json!(lib);
-      meta["ctl"] = json!(ctl);
-      meta["cmd"] = json!(cmd);
+      meta.put_str("lib", lib);
+      meta.put_str("ctl", ctl);
+      meta.put_str("cmd", cmd);
       
       // FIXME - Don't rebuild if current
       
@@ -72,8 +73,8 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
       build_rust(path, meta, &src);
     }
     else if typ == "python" {
-      let cid = data["python"].as_str().unwrap();
-      let mut meta = store.get_json(lib, cid);
+      let cid = &data.get_string("python");
+      let mut meta = store.get_data(lib, cid);
       
       let path = store.get_data_file(lib, &(cid.to_owned()+".python"));
       
@@ -87,10 +88,10 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
                                     .join("published")
                                     .join(lib);
       
-      meta["ctlid"] = json!(id);
-      meta["lib"] = json!(lib);
-      meta["ctl"] = json!(ctl);
-      meta["cmd"] = json!(cmd);
+      meta.put_str("ctlid", id);
+      meta.put_str("lib", lib);
+      meta.put_str("ctl", ctl);
+      meta.put_str("cmd", cmd);
       
       // FIXME - Don't rebuild if current
       
@@ -144,16 +145,16 @@ fn build_mod(path2:&PathBuf, m:&str) {
   }
 }
 
-fn build_rust(path:PathBuf, meta:Value, src:&str) {
+fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
   let _x = create_dir_all(&path);
-  let id = meta["id"].as_str().unwrap();
-  let lib = meta["lib"].as_str().unwrap();
-  let ctl = meta["ctl"].as_str().unwrap();
-  let cmd = meta["cmd"].as_str().unwrap();
-  let data = &meta["data"];
-  let import = data["import"].as_str().unwrap();
-  let returntype = &lookup_type(data["returntype"].as_str().unwrap());
-  let params = &data["params"];
+  let id = &meta.get_string("id");
+  let lib = &meta.get_string("lib");
+  let ctl = &meta.get_string("ctl");
+  let cmd = &meta.get_string("cmd");
+  let data = meta.get_object("data");
+  let import = &data.get_string("import");
+  let returntype = &lookup_type(&data.get_string("returntype"));
+  let params = &data.get_array("params");
   
   let path2 = &path.join(cmd.to_string()+".rs");
   let mut file = File::create(&path2).unwrap();
@@ -162,7 +163,7 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
 //  let _x = file.write_all(b"use ndata::data::*;\n");
   let _x = file.write_all(import.as_bytes());
   
-  let n = params.as_array().unwrap().len();
+  let n = params.len();
   let _x = file.write_all(b"\npub fn execute(");
   if n == 0 { let _x = file.write_all(b"_"); }
   let _x = file.write_all(b"o: DataObject) -> DataObject {\n");
@@ -170,9 +171,10 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
   let mut index = 0;
   let mut invoke1 = "let ax = ".to_string()+cmd+"(";
   let mut invoke2 = "pub fn ".to_string()+cmd+"(";
-  for v in params.as_array().unwrap() {
-    let name = v["name"].as_str().unwrap();
-    let t = v["type"].as_str().unwrap();
+  for v in params.objects() {
+    let v = v.object();
+    let name = &v.get_string("name");
+    let t = &v.get_string("type");
     let typ = &lookup_type(t);
     let typ2;
     if typ == "DataObject" { typ2 = "object".to_string(); }
@@ -307,19 +309,19 @@ fn build_rust(path:PathBuf, meta:Value, src:&str) {
   }
 }
 
-fn build_python(pypath:PathBuf, path:PathBuf, meta:Value, src:&str) {
+fn build_python(pypath:PathBuf, path:PathBuf, meta:DataObject, src:&str) {
   let _x = create_dir_all(&pypath);
   let _x = create_dir_all(&path);
 //  let id = meta["id"].as_str().unwrap();
 //  let lib = meta["lib"].as_str().unwrap();
 //  let ctl = meta["ctl"].as_str().unwrap();
-  let ctlid = meta["ctlid"].as_str().unwrap();
+  let ctlid = &meta.get_string("ctlid");
 //  let cmd = meta["cmd"].as_str().unwrap();
-  let data = &meta["data"];
-  let import = data["import"].as_str().unwrap();
+  let data = meta.get_object("data");
+  let import = data.get_string("import");
   let import = import.replace("\r", "\n");
 //  let returntype = &lookup_type(data["returntype"].as_str().unwrap());
-  let params = &data["params"];
+  let params = data.get_array("params");
   
   let path2 = &path.join(ctlid.to_string()+"-f.py");
   let mut file = File::create(&path2).unwrap();
@@ -336,9 +338,10 @@ fn build_python(pypath:PathBuf, path:PathBuf, meta:Value, src:&str) {
   let _x = file.write_all(b"(");
   
   let mut invoke = "".to_string();
-  for param in params.as_array().unwrap().iter() {
+  for param in params.objects() {
+    let param = param.object();
     if invoke != "" { invoke += ", "; }
-    invoke += param["name"].as_str().unwrap();
+    invoke += &param.get_string("name");
   }
   let _x = file.write_all(invoke.as_bytes());
   let _x = file.write_all(b"):\n");

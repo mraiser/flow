@@ -41,23 +41,23 @@ impl Command {
     // FIXME - support other languages
 
     let store = DataStore::new();
-    let src = store.get_json(lib, id);
-    let data = &src["data"];
-    let typ = &data["type"].as_str().unwrap();
-    let name = &data["name"].as_str().unwrap();
+    let src = store.get_data(lib, id);
+    let data = src.get_object("data");
+    let typ = &data.get_string("type");
+    let name = &data.get_string("name");
     
-    let codename:&str = data[typ].as_str().unwrap();
-    let code = &store.get_json(lib, codename)["data"];
-    let ret = code.get("returntype").unwrap().as_str().unwrap();
+    let codename = &data.get_string(typ);
+    let code = store.get_data(lib, codename).get_object("data");
+    let ret = &code.get_string("returntype");
     
     let code = match typ.as_ref() {
       "flow" => {
-        let s = code["flow"].to_string();
-        let case = Case::new(&s).unwrap();
+        let s = code.get_object("flow");
+        let case = Case::from_data(s);
         Source::Flow(case)
       },
       "rust" => {
-        let codename:&str = data["rust"].as_str().unwrap();
+        let codename:&str = &data.get_string("rust");
         Source::Rust(RustCmd::new(codename))
       },
       #[cfg(feature="java_runtime")]

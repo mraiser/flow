@@ -10,7 +10,7 @@ o
 }
 
 pub fn array_from_json(a:String) -> DataArray {
-let v = serde_json::from_str(&a).unwrap();
-DataArray::from_json(v)
+DataArray::from_string(&a)
+
 }
 
