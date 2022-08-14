@@ -7,6 +7,8 @@ pub mod rustcmd;
 pub mod generated;
 pub mod rand;
 pub mod rfc2822date;
+pub mod sha1;
+pub mod base64;
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
 #[cfg(feature="javascript_runtime")]
