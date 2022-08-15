@@ -77,6 +77,9 @@ impl Primitive {
       map.insert("http_listen".to_string(), (flowlang::http::listen::execute, "{ in: { socket_address: {}, library: {}, control: {}, command: {} }, out: { a: {} } }".to_string()));
       map.insert("cast_params".to_string(), (flowlang::http::cast_params::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {} }, out: { a: {} } }".to_string()));
       map.insert("http_hex_decode".to_string(), (flowlang::http::hex_decode::execute, "{ in: { input: {} }, out: { a: {} } }".to_string()));
+      map.insert("http_websocket_open".to_string(), (flowlang::http::websocket::execute, "{ in: { stream_id: {}, key: {} }, out: { a: {} } }".to_string()));
+      map.insert("http_websocket_read".to_string(), (flowlang::http::websocket_read::execute, "{ in: { stream_id: {} }, out: { a: {} } }".to_string()));
+      map.insert("http_websocket_write".to_string(), (flowlang::http::websocket_write::execute, "{ in: { stream_id: {}, msg: {} }, out: { a: {} } }".to_string()));
       map.insert("to_int".to_string(), (flowlang::types::to_int::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("to_float".to_string(), (flowlang::types::to_float::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("to_boolean".to_string(), (flowlang::types::to_boolean::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
