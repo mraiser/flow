@@ -30,8 +30,10 @@ pub struct Command {
   pub name: String,
   pub lib: String,
   pub id: String,
+  pub lang: String,
   pub src: Source,
   pub return_type: String,
+  pub params: Vec<(String, String)>,
 }
 
 impl Command {
@@ -49,6 +51,15 @@ impl Command {
     let codename = &data.get_string(typ);
     let code = store.get_data(lib, codename).get_object("data");
     let ret = &code.get_string("returntype");
+    
+    let p = &code.get_array("params");
+    let mut params: Vec<(String, String)> = Vec::new();
+    for d in p.objects() {
+      let d = d.object();
+      let a = d.get_string("name");
+      let b = d.get_string("type");
+      params.push((a,b));
+    }
     
     let code = match typ.as_ref() {
       "flow" => {
@@ -74,13 +85,17 @@ impl Command {
       },
       _ => panic!("Unknown command type {}", typ),
     };
+
+    DataStore::gc();
     
     return Command {
       name: name.to_string(),
       lib: lib.to_string(),
       id: id.to_string(),
+      lang: typ.to_string(),
       src: code, 
       return_type: ret.to_string(),
+      params: params,
     };
   }
   
@@ -93,13 +108,25 @@ impl Command {
     Command::new(lib, &id)
   }
   
+  pub fn cast_params(&self, mut params:DataObject) {
+    for p in &self.params {
+      let n = &p.0;
+      let t = &p.1;
+      if t == "Integer" { params.put_i64(&n, params.get_string(&n).parse::<i64>().unwrap()); }
+      else if t == "Float" { params.put_float(&n, params.get_string(&n).parse::<f64>().unwrap()); }
+      else if t == "Boolean" { params.put_bool(&n, params.get_string(&n).parse::<bool>().unwrap()); }
+      else if t == "JSONObject" { params.put_object(&n, DataObject::from_string(&params.get_string(&n))); }
+      else if t == "JSONArray" { params.put_array(&n, DataArray::from_string(&params.get_string(&n))); }
+      else { params.put_str(&n, &params.get_string(&n)); }
+    }
+  }
+  
   pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
     if let Source::Flow(f) = &self.src { 
       let mut code = Code::new(f.duplicate());
       //println!("executing: {:?}", self.src);
       let o = code.execute(args);
-      DataObject::gc();
-      DataArray::gc();
+      DataStore::gc();
       return o;
     }
     if let Source::Rust(r) = &self.src {
