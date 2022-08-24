@@ -30,7 +30,7 @@ To compile and use as a binary (on Linux):
 To use as a Rust library, add the following to your Cargo.toml file:
 
     [dependencies]
-    flowlang = "0.1.10"
+    flowlang = "0.1.15"
     # NOTE: Change version to latest version: https://crates.io/crates/flowlang
 
 ### Executing Flow Code
