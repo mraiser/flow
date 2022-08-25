@@ -5,6 +5,7 @@ use ndata::dataobject::*;
 use ndata::dataarray::*;
 use ndata::databytes::*;
 use ndata::data::*;
+use ndata::json_util::*;
 use crate::command::*;
 use crate::case::*;
 use crate::datastore::*;
@@ -330,7 +331,7 @@ impl Code {
           if ctype == "int" { out.put_i64(&key, v.parse::<i64>().unwrap()); }
           else if ctype == "decimal" { out.put_float(&key, v.parse::<f64>().unwrap()); }
           else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap()); }
-          else if ctype == "string" { out.put_str(&key, v); }
+          else if ctype == "string" { out.put_str(&key, &unescape(&v)); }
           else if ctype == "object" { 
             out.put_object(&key, DataObject::from_string(v)); 
           }
