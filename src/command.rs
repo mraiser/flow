@@ -1,5 +1,6 @@
 use ndata::dataobject::*;
 use ndata::dataarray::*;
+use ndata::data::Data;
 
 use crate::code::*;
 use crate::datastore::*;
@@ -34,16 +35,22 @@ pub struct Command {
   pub src: Source,
   pub return_type: String,
   pub params: Vec<(String, String)>,
+  pub readers: Vec<String>,
+  pub writers: Vec<String>,
 }
 
 impl Command {
   pub fn new(lib:&str, id:&str) -> Command {
-
-
-    // FIXME - support other languages
-
     let store = DataStore::new();
     let src = store.get_data(lib, id);
+    let mut readers = Vec::new();
+    let mut writers = Vec::new();
+    if src.has("readers") { 
+      for r in src.get_array("readers").objects() { readers.push(r.string()); }
+    }
+    if src.has("writers") { 
+      for w in src.get_array("writers").objects() { writers.push(w.string()); }
+    }
     let data = src.get_object("data");
     let typ = &data.get_string("type");
     let name = &data.get_string("name");
@@ -96,6 +103,8 @@ impl Command {
       src: code, 
       return_type: ret.to_string(),
       params: params,
+      readers: readers,
+      writers: writers,
     };
   }
   
@@ -111,13 +120,15 @@ impl Command {
   pub fn cast_params(&self, mut params:DataObject) {
     for p in &self.params {
       let n = &p.0;
-      let t = &p.1;
-      if t == "Integer" { params.put_i64(&n, params.get_string(&n).parse::<i64>().unwrap()); }
-      else if t == "Float" { params.put_float(&n, params.get_string(&n).parse::<f64>().unwrap()); }
-      else if t == "Boolean" { params.put_bool(&n, params.get_string(&n).parse::<bool>().unwrap()); }
-      else if t == "JSONObject" { params.put_object(&n, DataObject::from_string(&params.get_string(&n))); }
-      else if t == "JSONArray" { params.put_array(&n, DataArray::from_string(&params.get_string(&n))); }
-      else { params.put_str(&n, &params.get_string(&n)); }
+      if params.has(&n) {
+        let t = &p.1;
+        if t == "Integer" { params.put_i64(&n, Data::as_string(params.get_property(&n)).parse::<i64>().unwrap()); }
+        else if t == "Float" { params.put_float(&n, Data::as_string(params.get_property(&n)).parse::<f64>().unwrap()); }
+        else if t == "Boolean" { params.put_bool(&n, Data::as_string(params.get_property(&n)).parse::<bool>().unwrap()); }
+        else if t == "JSONObject" { params.put_object(&n, DataObject::from_string(&Data::as_string(params.get_property(&n)))); }
+        else if t == "JSONArray" { params.put_array(&n, DataArray::from_string(&Data::as_string(params.get_property(&n)))); }
+        else { params.put_str(&n, &Data::as_string(params.get_property(&n))); }
+      }
     }
   }
   

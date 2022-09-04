@@ -107,6 +107,7 @@ fn lookup_type(t:&str) -> String {
     "Integer" => "i64",
     "Float" => "f64",
     "String" => "String",
+    "File" => "String",
     "Boolean" => "bool",
     "JSONArray" => "DataArray",
     _ => "DataObject"

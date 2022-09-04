@@ -63,6 +63,7 @@ impl Primitive {
       map.insert("tcp_accept".to_string(), (flowlang::tcp::accept::execute, "{ in: { listener: {} }, out: { a: {} } }".to_string()));
       map.insert("file_read_all_string".to_string(), (flowlang::file::read_all_string::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("file_read_properties".to_string(), (flowlang::file::read_properties::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
+      map.insert("file_write_properties".to_string(), (flowlang::file::write_properties::execute, "{ in: { path: {}, data: {} }, out: { a: {} } }".to_string()));
       map.insert("file_exists".to_string(), (flowlang::file::exists::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
       map.insert("file_visit".to_string(), (flowlang::file::visit::execute, "{ in: { path: {}, recursive: {}, lib: {}, ctl: {}, cmd: {} }, out: { a: {} } }".to_string()));
       map.insert("file_is_dir".to_string(), (flowlang::file::is_dir::execute, "{ in: { path: {} }, out: { a: {} } }".to_string()));
@@ -77,6 +78,7 @@ impl Primitive {
       map.insert("http_listen".to_string(), (flowlang::http::listen::execute, "{ in: { socket_address: {}, library: {}, control: {}, command: {} }, out: { a: {} } }".to_string()));
       map.insert("cast_params".to_string(), (flowlang::http::cast_params::execute, "{ in: { lib: {}, ctl: {}, cmd: {}, params: {} }, out: { a: {} } }".to_string()));
       map.insert("http_hex_decode".to_string(), (flowlang::http::hex_decode::execute, "{ in: { input: {} }, out: { a: {} } }".to_string()));
+      map.insert("http_hex_encode".to_string(), (flowlang::http::hex_encode::execute, "{ in: { input: {} }, out: { a: {} } }".to_string()));
       map.insert("http_websocket_open".to_string(), (flowlang::http::websocket::execute, "{ in: { stream_id: {}, key: {} }, out: { a: {} } }".to_string()));
       map.insert("http_websocket_read".to_string(), (flowlang::http::websocket_read::execute, "{ in: { stream_id: {} }, out: { a: {} } }".to_string()));
       map.insert("http_websocket_write".to_string(), (flowlang::http::websocket_write::execute, "{ in: { stream_id: {}, msg: {} }, out: { a: {} } }".to_string()));
