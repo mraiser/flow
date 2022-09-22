@@ -1,0 +1,1 @@
+{"data":{"params":[{"name":"src","type":"String"},{"type":"String","name":"dest"}],"type":"rust","desc":"","import":"use std::fs;\nuse std::path::{Path, PathBuf};\n","attachmentkeynames":["rs"],"lib":"flowlang","ctl":"file","returntype":"Boolean","cmd":"copy_dir"},"writers":[],"time":1663720639423,"username":"system","readers":[],"id":"xrnrjm1835d79671eye"}

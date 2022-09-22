@@ -120,8 +120,8 @@ impl Command {
   pub fn cast_params(&self, mut params:DataObject) {
     for p in &self.params {
       let n = &p.0;
+      let t = &p.1;
       if params.has(&n) {
-        let t = &p.1;
         if t == "Integer" { params.put_i64(&n, Data::as_string(params.get_property(&n)).parse::<i64>().unwrap()); }
         else if t == "Float" { params.put_float(&n, Data::as_string(params.get_property(&n)).parse::<f64>().unwrap()); }
         else if t == "Boolean" { params.put_bool(&n, Data::as_string(params.get_property(&n)).parse::<bool>().unwrap()); }
@@ -129,6 +129,7 @@ impl Command {
         else if t == "JSONArray" { params.put_array(&n, DataArray::from_string(&Data::as_string(params.get_property(&n)))); }
         else { params.put_str(&n, &Data::as_string(params.get_property(&n))); }
       }
+      else if t == "Any" { params.put_null(&n); }
     }
   }
   

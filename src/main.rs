@@ -9,6 +9,7 @@ pub mod rand;
 pub mod rfc2822date;
 pub mod sha1;
 pub mod base64;
+pub mod appserver;
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
 #[cfg(feature="javascript_runtime")]
@@ -25,9 +26,18 @@ use command::Command as Command;
 use datastore::DataStore;
 use generated::Generated;
 
-pub fn main() {
-  DataStore::init("data");
+pub fn init(dir:&str) -> (&str, ((usize,usize),(usize,usize),(usize,usize))) {
   Generated::init();
+  DataStore::init(dir)
+}
+
+pub fn mirror(q:(&str, ((usize,usize),(usize,usize),(usize,usize)))) {
+  Generated::init();
+  DataStore::mirror(q)
+}
+
+pub fn main() {
+  init("data");
   
   env::set_var("RUST_BACKTRACE", "1");
   {
@@ -47,13 +57,5 @@ pub fn main() {
     let cmd = Command::lookup(lib, ctl, cmd);
     let res = cmd.execute(args).unwrap();
     println!("{}", res.to_string());
-    
-//    DataObject::print_heap();
-//    DataArray::print_heap();
-//    DataBytes::print_heap();
   }
-//  DataStore::gc();
-//  DataObject::print_heap();
-//  DataArray::print_heap();
-//  DataBytes::print_heap();
 }

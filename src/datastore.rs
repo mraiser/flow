@@ -5,6 +5,7 @@ use std::fs;
 #[cfg(feature="serde_support")]
 use serde_json::*;
 
+use ndata::data::*;
 use ndata::dataobject::*;
 use ndata::dataarray::*;
 use ndata::databytes::*;
@@ -19,19 +20,28 @@ pub struct DataStore {
 }
 
 impl DataStore {
-  pub fn init(dir:&str) {
+  pub fn init(dir:&str) -> (&str, ((usize,usize),(usize,usize),(usize,usize))) {
     let d = Path::new(dir);
-
-    unsafe { 
-      STORE_PATH = Some(d.to_path_buf()); 
-    }
+    unsafe { STORE_PATH = Some(d.to_path_buf()); }
     
     Rand::init();
-    DataObject::init();
-    DataArray::init();
-    DataBytes::init();
+    let q = ndata::init();
+    
     let o = DataObject::new();
-    let _x = &mut OHEAP.get().lock().unwrap().incr(o.data_ref);
+    let _x = o.incr();
+    (dir, q)
+  }
+  
+  #[allow(dead_code)]
+  pub fn mirror(q:(&str, ((usize,usize),(usize,usize),(usize,usize)))) {
+    let d = Path::new(q.0);
+    unsafe { STORE_PATH = Some(d.to_path_buf()); }
+    
+    Rand::init();
+    ndata::mirror(q.1);
+    
+    let o = DataObject::new();
+    let _x = o.incr();
   }
   
   pub fn new() -> DataStore {
@@ -80,11 +90,24 @@ impl DataStore {
   
   #[allow(dead_code)]
   pub fn set_data(&self, db: &str, id: &str, data:DataObject) {
+    let mut d = data.get_object("data");
+    if d.has("attachmentkeynames") {
+      let v = d.get_array("attachmentkeynames");
+      for b in v.objects() {
+        let b = &b.string();
+        let aid = id.to_string()+"."+b;
+        let f = self.get_data_file(db, &aid);
+        let s = Data::as_string(d.get_property(b));
+        fs::create_dir_all(f.parent().unwrap()).unwrap();
+        fs::write(f, s).expect("Unable to write file");
+        d.remove_property(b);
+      }
+    }
+  
     let s = data.to_string();
     let f = self.get_data_file(db, id);
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, s).expect("Unable to write file");
-
   }
   
   #[cfg(feature="serde_support")]
@@ -98,11 +121,13 @@ impl DataStore {
         let b = &a.as_str().unwrap();
         let aid = id.to_string()+"."+b;
         let apath = self.get_data_file(db, &aid);
-        let astr = self.read_file(apath);
-        if astr.len() > 0 && astr[0..1].to_string() == "{" { // FIXME - Legacy hack
-          data["data"][b] = serde_json::from_str(&astr).unwrap(); 
-        } else {
-          data["data"][b] = serde_json::Value::String(astr); 
+        if apath.exists(){
+          let astr = self.read_file(apath);
+          if astr.len() > 0 && astr[0..1].to_string() == "{" { // FIXME - Legacy hack
+            data["data"][b] = serde_json::from_str(&astr).unwrap(); 
+          } else {
+            data["data"][b] = serde_json::Value::String(astr); 
+          }
         }
       }
     }

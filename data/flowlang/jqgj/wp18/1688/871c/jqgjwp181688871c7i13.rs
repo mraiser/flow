@@ -6,5 +6,5 @@ o.put_str("username", "system");
 o.put_i64("time", time());  
 o.put_array("readers", readers);
 o.put_array("writers", writers);
-store.set_data(&lib, &id, o);
-1
+store.set_data(&lib, &id, o.duplicate());
+o

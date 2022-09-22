@@ -10,6 +10,7 @@ pub mod buildrust;
 pub mod rfc2822date;
 pub mod sha1;
 pub mod base64;
+pub mod appserver;
 
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
@@ -17,4 +18,18 @@ pub mod javacmd;
 pub mod jscmd;
 #[cfg(feature="python_runtime")]
 pub mod pycmd;
+
+use datastore::DataStore;
+use generated::Generated;
+
+pub fn init(dir:&str) -> (&str, ((usize,usize),(usize,usize),(usize,usize))) {
+  let q = DataStore::init(dir);
+  Generated::init();
+  q
+}
+
+pub fn mirror(q:(&str, ((usize,usize),(usize,usize),(usize,usize)))) {
+  DataStore::mirror(q);
+  Generated::init();
+}
 

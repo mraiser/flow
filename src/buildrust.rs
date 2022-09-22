@@ -61,7 +61,7 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
       
       let path = store.get_data_file(lib, &(id.to_owned()+".rs"));
       let src = store.read_file(path);
-      let path = store.root.parent().unwrap().join("src").join("generated").join(lib).join(ctl);
+      let path = store.root.parent().unwrap().join("cmd").join("src").join(lib).join(ctl);
       
       meta.put_str("lib", lib);
       meta.put_str("ctl", ctl);
@@ -161,7 +161,6 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
   let mut file = File::create(&path2).unwrap();
 
   let _x = file.write_all(b"use ndata::dataobject::*;\n");
-//  let _x = file.write_all(b"use ndata::data::*;\n");
   let _x = file.write_all(import.as_bytes());
   
   let n = params.len();
@@ -182,7 +181,6 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
     else if typ == "DataArray" { typ2 = "array".to_string(); }
     else if typ == "Data" { typ2 = "property".to_string(); }
     else { typ2 = typ.to_lowercase(); }
-    //println!("{} / {}", name, typ);
     let line = "let a".to_string() + &index.to_string() + " = o.get_" + &typ2 + "(\"" + name + "\");\n";
     let _x = file.write_all(line.as_bytes());
     if index > 0 {
@@ -190,7 +188,6 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
       invoke2 = invoke2 + ", ";
     }
     invoke1 = invoke1 + "a" + &index.to_string();
-//    invoke2 = invoke2 + "mut " + name + ":" + typ;
     invoke2 = invoke2 + name + ":" + typ;
     index += 1;
   }
@@ -239,9 +236,9 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
   let path2 = &path2.parent().unwrap().parent().unwrap().join("mod.rs");
   build_mod(path2, &m);  
   
-  let m = "    RustCmd::add(\"".to_string()+id+"\".to_string(), "+lib+"::"+ctl+"::"+cmd+"::execute, \"\".to_string());";
+  let m = "    state.cmds.push((\"".to_string()+id+"\".to_string(), "+lib+"::"+ctl+"::"+cmd+"::execute, \"\".to_string()));";
   let mm = "pub mod ".to_string()+lib+";";
-  let path2 = &path2.parent().unwrap().parent().unwrap().join("mod.rs");
+  let path2 = &path2.parent().unwrap().parent().unwrap().join("lib.rs");
   if path2.exists() {
     let file = File::open(&path2).unwrap();
     let lines = io::BufReader::new(file).lines();
@@ -250,7 +247,7 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
     let mut a = true;
     let mut b = true;
     let mut c = true;
-    let begin = "    RustCmd::init();";
+    let begin = "    state.cmds.clear();";
     for line in lines {
       if let Ok(ip) = line {
         if ip == m {
@@ -291,22 +288,13 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
         let _x = file.write_all(b"\n");
       }
     }
-//    println!("{}",b);
-//    println!("{}",m);
   }
   else {
       let mut file = File::create(&path2).unwrap();
       let _x = file.write_all(mm.as_bytes());
-      let _x = file.write_all(b"\n");
-      let _x = file.write_all(b"use flowlang::rustcmd::*;\n");
-      let _x = file.write_all(b"pub struct Generated {}\n");
-      let _x = file.write_all(b"impl Generated {\n");
-      let _x = file.write_all(b"  pub fn init() {\n");
-      let _x = file.write_all(b"    RustCmd::init();\n");
+      let _x = file.write_all(b"\nuse flowlang::rustcmd::*;\n\n#[derive(Debug)]\npub struct Initializer {\n    pub data_ref: (&'static str, ((usize,usize),(usize,usize),(usize,usize))),\n    pub cmds: Vec<(String, Transform, String)>,\n}\n\n#[no_mangle]\npub fn mirror(state: &mut Initializer) {\n    flowlang::mirror(state.data_ref);\n    state.cmds.clear();\n");
       let _x = file.write_all(m.as_bytes());
-      let _x = file.write_all(b"\n");
-      let _x = file.write_all(b"  }\n");
-      let _x = file.write_all(b"}\n");
+      let _x = file.write_all(b"\n    for q in &state.cmds { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }\n}\n");
   }
 }
 

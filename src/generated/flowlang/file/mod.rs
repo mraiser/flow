@@ -6,3 +6,4 @@ pub mod is_dir;
 pub mod mime_type;
 pub mod list;
 pub mod write_properties;
+pub mod copy_dir;
