@@ -6,6 +6,7 @@ use std::panic;
 use std::fs;
 use std::path::Path;
 use std::fs::metadata;
+use std::fs::create_dir_all;
 use ndata::dataarray::*;
 use std::net::TcpStream;
 use std::time::Duration;
@@ -23,6 +24,9 @@ use crate::generated::flowlang::file::mime_type::mime_type;
 use crate::generated::flowlang::system::unique_session_id::unique_session_id;
 use crate::generated::flowlang::object::index_of::index_of;
 use crate::generated::flowlang::file::read_properties::read_properties;
+use crate::generated::flowlang::file::write_properties::write_properties;
+
+// FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 
 pub fn run() {
   let _system = init_globals();
@@ -408,6 +412,7 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
     session.put_i64("count", 0);
     session.put_str("id", &session_id);
 
+    // FIXME - Replace this with alt login scheme
     let file = DataStore::new().root
                 .parent().unwrap()
                 .join("runtime")
@@ -838,6 +843,11 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
 pub fn check_auth(lib:&str, id:&str, session_id:&str, write:bool) -> bool {
   let store = DataStore::new();
   let system = DataStore::globals().get_object("system");
+  
+  if !system.get_object("config").get_bool("security") { 
+    return true; 
+  }
+  
   let libdata = system.get_object("libraries").get_object(lib);
   let libgroups = libdata.get_property("readers");
   
@@ -890,6 +900,11 @@ pub fn check_auth(lib:&str, id:&str, session_id:&str, write:bool) -> bool {
 pub fn check_security(command:&Command, session_id:&str) -> bool {
 //  println!("session id: {}", session_id);
   let system = DataStore::globals().get_object("system");
+  
+  if !system.get_object("config").get_bool("security") { 
+    return true; 
+  }
+    
   let lib = system.get_object("libraries").get_object(&command.lib);
   
   let libgroups = lib.get_property("readers");
@@ -938,35 +953,15 @@ pub fn log_in(sessionid:&str, username:&str, password:&str) -> bool {
       session.put_str("username", username);
       session.put_object("user", user);
       
-      fire_event("securitybot", "LOGIN", e);
+      fire_event("security", "LOGIN", e);
 
       return true;
     }
   }
 
-  fire_event("securitybot", "LOGIN_FAIL", e);
+  fire_event("security", "LOGIN_FAIL", e);
   
   false
-}
-
-pub fn get_user(username:&str) -> Option<DataObject> {
-  let file = DataStore::new().root
-              .parent().unwrap()
-              .join("runtime")
-              .join("securitybot")
-              .join("users")
-              .join(&(username.to_string()+".properties"));
-  if file.exists() {
-    let mut user = read_properties(file.into_os_string().into_string().unwrap());
-    let mut groups = DataArray::new();
-    for g in user.get_string("groups").split(",") {
-      groups.push_str(g);
-    }
-    user.put_array("groups", groups);
-    user.put_str("username", username);
-    return Some(user);
-  }
-  None
 }
 
 pub fn remove_timer(tid:&str) -> bool {
@@ -1114,12 +1109,111 @@ pub fn load_library(j:&str) {
   libraries.put_object(j, o2);
 }
 
+pub fn get_user(username:&str) -> Option<DataObject> {
+  let system = DataStore::globals().get_object("system");
+  if system.get_object("config").get_bool("security") { 
+    let users = system.get_object("users");
+    if users.has(username) {
+      return Some(users.get_object(username));
+    }
+  }
+  None
+}
+
+pub fn delete_user(username:&str) -> bool{
+  let system = DataStore::globals().get_object("system");
+  if system.get_object("config").get_bool("security") { 
+    let mut users = system.get_object("users");
+    if users.has(&username) {
+      users.remove_property(&username);
+      let root = DataStore::new().root.parent().unwrap().join("users");
+      let propfile = root.join(&(username.to_owned()+".properties"));
+      let x = fs::remove_file(propfile);
+      if x.is_ok() { return true; }
+    }
+  }
+  false
+}
+
+pub fn set_user(username:&str, user:DataObject) {
+  let system = DataStore::globals().get_object("system");
+  if system.get_object("config").get_bool("security") { 
+    let mut users = system.get_object("users");
+    if users.has(&username) {
+      let mut u2 = users.get_object(&username);
+      for (k,v) in user.objects() { u2.set_property(&k, v); }
+    }
+    else { users.put_object(username, user.duplicate()); }
+    
+    let mut user = user.deep_copy();
+    let groups = user.get_array("groups");
+    let mut s = "".to_string();
+    for g in groups.objects() {
+      let g = g.string();
+      if s != "" { s += ","; }
+      s += &g
+    }
+    user.put_str("groups", &s);
+    let root = DataStore::new().root.parent().unwrap().join("users");
+    let propfile = root.join(&(username.to_owned()+".properties"));
+    write_properties(propfile.into_os_string().into_string().unwrap(), user);
+  }
+}
+
+pub fn load_users() {
+  let mut system = DataStore::globals().get_object("system");
+  if system.get_object("config").get_bool("security") { 
+    let mut users;
+    let mut b = false;
+    if system.has("users") { users = system.get_object("users"); }
+    else {
+      b = true;
+      users = DataObject::new();
+    }
+    
+    let root = DataStore::new().root.parent().unwrap().join("users");
+    let propfile = root.join("admin.properties");
+    if !propfile.exists() {
+      let _x = create_dir_all(&root);
+      let mut admin = DataObject::new();
+      admin.put_str("displayname", "System Administrator");
+      admin.put_str("groups", "admin");
+      admin.put_str("password", &unique_session_id());
+      write_properties(propfile.into_os_string().into_string().unwrap(), admin);
+    }
+    
+    for file in fs::read_dir(&root).unwrap() {
+      let file = file.unwrap();
+      let name = file.file_name().into_string().unwrap();
+      if name.ends_with(".properties") {
+        let mut user = read_properties(file.path().into_os_string().into_string().unwrap());
+        let id = &name[..name.len()-11];
+        let groups = user.get_string("groups");
+        let mut da = DataArray::new();
+        for group in groups.split(",") { da.push_str(group); }
+        user.put_array("groups", da);
+        users.put_object(id, user);
+      }
+    }
+    
+    if b { system.put_object("users", users.duplicate()); }
+  }
+}
+
 pub fn load_config() -> DataObject {
+  println!("Loading appserver configuration");
   let mut config;
   if Path::new("config.properties").exists() {
     config = read_properties("config.properties".to_string());
   }
   else { config = DataObject::new(); }
+  
+  if !config.has("security") { config.put_bool("security", true); }
+  else { 
+    let b = config.get_string("security") == "on";
+    config.put_bool("security", b); 
+    if !b { println!("Warning! Security is OFF!"); }
+  }
   
   if !config.has("socket_address") {
     if !config.has("http_address") { config.put_str("http_address", "127.0.0.1"); }
@@ -1172,6 +1266,7 @@ pub fn init_globals() -> DataObject {
   }
 
   let config = load_config();
+  load_users();
   
   system.put_object("timers", DataObject::new());
   system.put_object("events", DataObject::new());

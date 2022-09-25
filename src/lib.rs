@@ -22,13 +22,13 @@ pub mod pycmd;
 use datastore::DataStore;
 use generated::Generated;
 
-pub fn init(dir:&str) -> (&str, ((usize,usize),(usize,usize),(usize,usize))) {
+pub fn init(dir:&str) -> (&str, (((usize,usize),(usize,usize)),((usize,usize),(usize,usize)),((usize,usize),(usize,usize)))) {
   let q = DataStore::init(dir);
   Generated::init();
   q
 }
 
-pub fn mirror(q:(&str, ((usize,usize),(usize,usize),(usize,usize)))) {
+pub fn mirror(q:(&str, (((usize,usize),(usize,usize)),((usize,usize),(usize,usize)),((usize,usize),(usize,usize))))) {
   DataStore::mirror(q);
   Generated::init();
 }
