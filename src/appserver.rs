@@ -29,7 +29,7 @@ use crate::generated::flowlang::file::write_properties::write_properties;
 // FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 
 pub fn run() {
-  let _system = init_globals();
+  let system = init_globals();
   
   // Start Timers
   thread::spawn(timer_loop);
@@ -38,8 +38,19 @@ pub fn run() {
   thread::spawn(http_listen);
   
   // FIXME - Check sessions
-  loop {
-    let dur = Duration::from_millis(5000);
+  let dur = Duration::from_millis(5000);
+  let mut sessions = system.get_object("sessions");
+  let sessiontimeoutmillis = system.get_object("config").get_i64("sessiontimeoutmillis");
+  while system.get_bool("running") {
+    let expired = time() - sessiontimeoutmillis; 
+    for (k,v) in sessions.objects() {
+      let v = v.object();
+      let expire = v.get_i64("expire");
+      if expire < expired {
+        println!("Session expired {}: {}", k, v.to_string());
+        sessions.remove_property(&k);
+      }
+    }
     thread::sleep(dur);
   }
 }
@@ -52,6 +63,7 @@ pub fn http_listen() {
   for stream in listener.incoming() {
     let mut stream = stream.unwrap();
     thread::spawn(move || {
+      let system = DataStore::globals().get_object("system");
       let remote_addr = stream.peer_addr().unwrap();
       let mut line = read_line(&mut stream);
       let mut count = line.len();
@@ -332,7 +344,7 @@ pub fn http_listen() {
     //      if (expires != -1) h.put("Expires", toHTTPDate(new Date(expires)));
 
           let session_id = request.get_object("session").get_string("id");
-          let later = now + 31536000000; //system.get_object("config").get_i64("sessiontimeoutmillis");
+          let later = now + system.get_object("config").get_i64("sessiontimeoutmillis");
           let cookie = "sessionid=".to_string()+&session_id+"; Path=/; Expires="+&RFC2822Date::new(later).to_string();
           headers.put_str("Set-Cookie", &cookie);
 
@@ -412,35 +424,12 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
     session.put_i64("count", 0);
     session.put_str("id", &session_id);
 
-    // FIXME - Replace this with alt login scheme
-    let file = DataStore::new().root
-                .parent().unwrap()
-                .join("runtime")
-                .join("securitybot")
-                .join("session.properties");
-    let mut b = false;
-    if file.exists() {
-      let p = read_properties(file.to_owned().into_os_string().into_string().unwrap());
-      if p.has(&session_id) { 
-        let r = p.get_string(&session_id); 
-        let user = get_user(&r);
-        if user.is_some(){
-          let user = user.unwrap();
-          session.put_str("username", &r);
-          session.put_object("user", user);
-          b = true;
-        }
-      }
-    }
-    
-    if !b {
-      let mut user = DataObject::new();
-      user.put_str("displayname", "Anonymous");
-      user.put_array("groups", DataArray::new());
-      user.put_str("username", "anonymous");
-      session.put_str("username", "anonymous");
-      session.put_object("user", user);
-    }
+    let mut user = DataObject::new();
+    user.put_str("displayname", "Anonymous");
+    user.put_array("groups", DataArray::new());
+    user.put_str("username", "anonymous");
+    session.put_str("username", "anonymous");
+    session.put_object("user", user);
     
     sessions.put_object(&session_id, session.duplicate());
   }
@@ -613,7 +602,6 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
 
         let msg = std::str::from_utf8(&baos).unwrap().to_owned();        
         
-        let system = system.duplicate();
         let mut stream = stream.try_clone().unwrap();
         let request = request.duplicate();
         
@@ -633,7 +621,7 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
               }
             }
             
-            let (b, ctldb, id) = lookup_command_id(system.duplicate(), app, cmd.to_owned());
+            let (b, ctldb, id) = lookup_command_id(app, cmd.to_owned());
             
             let mut o;
             if b {
@@ -778,7 +766,7 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
           }
           else {
             // try app command
-            let (bb, ctldb, id) = lookup_command_id(system.duplicate(), appname, cmd.to_owned());
+            let (bb, ctldb, id) = lookup_command_id(appname, cmd.to_owned());
             if bb {
               b = true;
               
@@ -1192,6 +1180,7 @@ pub fn load_users() {
         let mut da = DataArray::new();
         for group in groups.split(",") { da.push_str(group); }
         user.put_array("groups", da);
+        user.put_array("connections", DataArray::new());
         users.put_object(id, user);
       }
     }
@@ -1408,7 +1397,8 @@ pub fn format_result(command:Command, o:DataObject) -> DataObject {
   d
 }
 
-fn lookup_command_id(system: DataObject, app:String, cmd: String) -> (bool, String, String) {
+pub fn lookup_command_id(app:String, cmd: String) -> (bool, String, String) {
+  let system = DataStore::globals().get_object("system");
   let mut b = false;
   let mut ctldb = "".to_string();
   let mut id = "".to_string();
