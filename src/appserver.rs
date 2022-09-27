@@ -1228,7 +1228,8 @@ pub fn load_config() -> DataObject {
   }
   
   if !config.has("apps") {
-    config.put_str("apps", "app,lib");
+    // FIXME - scan for app.properties files
+    config.put_str("apps", "app,dev,peer,security");
   }
   
   if !config.has("default_app") {
@@ -1277,10 +1278,12 @@ pub fn init_globals() -> DataObject {
     o.put_str("id", i);
     let path_base = "runtime/".to_string()+i+"/";
     let path = path_base.to_owned()+"botd.properties";
-    let p = read_properties(path);
+    let p;
+    if Path::new(&path).exists(){ p = read_properties(path); } else { p = DataObject::new(); }
     o.put_object("runtime", p);
     let path = path_base+"app.properties";
-    let p = read_properties(path);
+    let p;
+    if Path::new(&path).exists(){ p = read_properties(path); } else { p = DataObject::new(); }
     o.put_object("app", p.duplicate());
     apps.put_object(i, o);
     
