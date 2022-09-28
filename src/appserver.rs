@@ -37,7 +37,7 @@ pub fn run() {
   // Start HTTP
   thread::spawn(http_listen);
   
-  // FIXME - Check sessions
+  // Check sessions
   let dur = Duration::from_millis(5000);
   let mut sessions = system.get_object("sessions");
   let sessiontimeoutmillis = system.get_object("config").get_i64("sessiontimeoutmillis");
@@ -57,22 +57,38 @@ pub fn run() {
 
 pub fn http_listen() {
   let system = DataStore::globals().get_object("system");
-  let socket_address = system.get_object("config").get_string("socket_address");
+  let mut config = system.get_object("config");
+  let ipaddr = config.get_string("http_address");
+  let port = config.get_string("http_port");
+  let socket_address = ipaddr+":"+&port;
 
+  let b = port == "0";
   let listener = TcpListener::bind(socket_address).unwrap();
+  let port = listener.local_addr().unwrap().port();
+  println!("HTTP TCP listening on port {}", port);
+
+  config.put_i64("http_port", port as i64);
+  if b { save_config(config); }
+  
   for stream in listener.incoming() {
     let mut stream = stream.unwrap();
     thread::spawn(move || {
       let system = DataStore::globals().get_object("system");
       let remote_addr = stream.peer_addr().unwrap();
       let mut line = read_line(&mut stream);
-      let mut count = line.len();
+      let count = line.len();
       if count > 2 {
         line = (&line[0..count-2]).to_string();
-        count = line.find(" ").unwrap();
+        let count = line.find(" ").unwrap();
         let method = (&line[0..count]).to_string();
         line = (&line[count+1..]).to_string();
-        count = line.find(" ").unwrap();
+        let count = line.find(" ");
+        if count.is_none() { 
+          println!("HTTP TCP unexpected request protocol: {}", line); 
+          return; 
+        }
+        
+        let count = count.unwrap();
         let protocol = (&line[count+1..]).to_string();
         let path = (&line[0..count]).to_string();
 
@@ -604,15 +620,12 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
         
         let mut stream = stream.try_clone().unwrap();
         let request = request.duplicate();
-        
         let sid = session_id.to_owned();
         thread::spawn(move || {
           if msg.starts_with("cmd ") {
             let msg = &msg[4..];
             let d = DataObject::from_string(msg);
-            let app = d.get_string("bot");
-            let cmd = d.get_string("cmd");
-            let pid = d.get_string("pid");
+            
             let mut params = d.get_object("params");
             
             for (k,v) in request.objects() {
@@ -621,55 +634,7 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
               }
             }
             
-            let (b, ctldb, id) = lookup_command_id(app, cmd.to_owned());
-            
-            let mut o;
-            if b {
-              let command = Command::new(&ctldb, &id);
-              if check_security(&command, &sid) {
-                command.cast_params(params.duplicate());
-                
-                let response = DataObject::new();
-                let dataref = response.data_ref;
-
-                let result = panic::catch_unwind(|| {
-                  let mut p = DataObject::get(dataref);
-                  let o = command.execute(params).unwrap();
-                  p.put_object("a", o);
-                });
-                
-                match result {
-                  Ok(_x) => {
-                    let oo = response.get_object("a");
-                    o = format_result(command, oo);
-                  },
-                  Err(e) => {
-                    let msg = match e.downcast::<String>() {
-                      Ok(panic_msg) => format!("{}", panic_msg),
-                      Err(_) => "unknown error".to_string()
-                    };        
-                    o = DataObject::new();
-                    o.put_str("status", "err");
-                    o.put_str("msg", &msg);
-                  },
-                }
-              }
-              else {
-                o = DataObject::new();
-                o.put_str("status", "err");
-                let err = format!("UNAUTHORIZED: {}", &cmd);
-                o.put_str("msg", &err);
-              }
-            }
-            else {
-              o = DataObject::new();
-              o.put_str("status", "err");
-              let err = format!("Unknown websocket command: {}", &cmd);
-              o.put_str("msg", &err);
-            }
-            
-            if !o.has("status") { o.put_str("status", "ok"); }
-            o.put_str("pid", &pid);
+            let o = handle_command(d, sid);
             
             let msg = o.to_string();
             let msg = msg.as_bytes();
@@ -766,45 +731,35 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
           }
           else {
             // try app command
-            let (bb, ctldb, id) = lookup_command_id(appname, cmd.to_owned());
-            if bb {
-              b = true;
-              
-              let command = Command::new(&ctldb, &id);
-              for (k,v) in request.objects() {
-                if k != "params" {
-                  params.set_property(&("nn_".to_string()+&k), v);
-                }
+            let mut d = DataObject::new();
+            d.put_str("bot", &appname);
+            d.put_str("cmd", &cmd);
+            d.put_i64("pid", 0);
+            d.put_object("params", params.duplicate());
+            
+            for (k,v) in request.objects() {
+              if k != "params" {
+                params.set_property(&("nn_".to_string()+&k), v);
               }
-              //println!("{}", params.to_string());
-              command.cast_params(params.duplicate());
-              
-              if check_security(&command, &(session_id.to_owned())) {
-                let r = command.return_type.to_owned();
-                let o = command.execute(params.duplicate()).unwrap();
-                let d = format_result(command, o);
-                if r == "File" {
-                  res.put_str("file", &d.get_string("data"));
-                  res.put_str("mimetype", &mime_type(p));
-                }
-                else {
-                  let s;
-                  if params.has("callback") {
-                    s = params.get_string("callback") + "(" + &d.to_string() + ")";
-                  }
-                  else {
-                    s = d.to_string();
-                  }
-                  res.put_str("body", &s);
-                  res.put_str("mimetype", "application/json");
-                }
+            }
+            
+            let d = handle_command(d, session_id.to_owned());
+            let r = d.get_string("nn_return_type");
+            if r != "404" {
+              b = true;
+              if r == "File" {
+                res.put_str("file", &d.get_string("data"));
+                res.put_str("mimetype", &mime_type(p));
               }
               else {
-                let mut o = DataObject::new();
-                o.put_str("status", "err");
-                let err = format!("UNAUTHORIZED: {}", &cmd);
-                o.put_str("msg", &err);
-                res.put_str("body", &o.to_string());
+                let s;
+                if params.has("callback") {
+                  s = params.get_string("callback") + "(" + &d.to_string() + ")";
+                }
+                else {
+                  s = d.to_string();
+                }
+                res.put_str("body", &s);
                 res.put_str("mimetype", "application/json");
               }
             }
@@ -828,6 +783,69 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
   res
 }
 
+pub fn handle_command(d: DataObject, sid: String) -> DataObject {
+  let app = d.get_string("bot");
+  let cmd = d.get_string("cmd");
+  let pid = d.get_property("pid");
+  let params = d.get_object("params");
+  
+  let (b, ctldb, id) = lookup_command_id(app, cmd.to_owned());
+  
+  let mut o;
+  if b {
+    let command = Command::new(&ctldb, &id);
+    if check_security(&command, &sid) {
+      command.cast_params(params.duplicate());
+      
+      let response = DataObject::new();
+      let dataref = response.data_ref;
+      let r = command.return_type.to_owned();
+
+      let result = panic::catch_unwind(|| {
+        let mut p = DataObject::get(dataref);
+        let o = command.execute(params).unwrap();
+        p.put_object("a", o);
+      });
+      
+      match result {
+        Ok(_x) => {
+          let oo = response.get_object("a");
+          o = format_result(command, oo);
+          o.put_str("nn_return_type", &r);
+        },
+        Err(e) => {
+          let msg = match e.downcast::<String>() {
+            Ok(panic_msg) => format!("{}", panic_msg),
+            Err(x) => format!("Unknown Error {:?}", x)
+          };        
+          o = DataObject::new();
+          o.put_str("status", "err");
+          o.put_str("msg", &msg);
+          o.put_str("nn_return_type", "500");
+        },
+      }
+    }
+    else {
+      o = DataObject::new();
+      o.put_str("status", "err");
+      let err = format!("UNAUTHORIZED: {}", &cmd);
+      o.put_str("msg", &err);
+      o.put_str("nn_return_type", "String");
+    }
+  }
+  else {
+    o = DataObject::new();
+    o.put_str("status", "err");
+    let err = format!("Unknown command: {}", &cmd);
+    o.put_str("msg", &err);
+    o.put_str("nn_return_type", "404");
+  }
+  
+  if !o.has("status") { o.put_str("status", "ok"); }
+  o.set_property("pid", pid);
+  o
+}
+
 pub fn check_auth(lib:&str, id:&str, session_id:&str, write:bool) -> bool {
   let store = DataStore::new();
   let system = DataStore::globals().get_object("system");
@@ -837,7 +855,7 @@ pub fn check_auth(lib:&str, id:&str, session_id:&str, write:bool) -> bool {
   }
   
   let libdata = system.get_object("libraries").get_object(lib);
-  let libgroups = libdata.get_property("readers");
+  let libgroups = libdata.get_array("readers");
   
   let which;
   if write { which = "writers"; }
@@ -845,18 +863,19 @@ pub fn check_auth(lib:&str, id:&str, session_id:&str, write:bool) -> bool {
   
   let ogroups;
   if !store.get_data_file(lib, id).exists() {
-    ogroups = libgroups.clone();
+    ogroups = libgroups.duplicate();
   }
   else {
     let data = store.get_data(lib, id);
-    let o;
-    if data.has(which) { o = data.get_array(which); }
-    else { o = DataArray::new(); }
-    ogroups = Data::DArray(o.data_ref);
+    if data.has(which) { ogroups = data.get_array(which); }
+    else { ogroups = DataArray::new(); }
   }
+  
+  let lg = Data::DArray(libgroups.data_ref);
+  let og = Data::DArray(ogroups.data_ref);
     
-  if index_of(libgroups.clone(), Data::DString("anonymous".to_string())) != -1 {
-    if index_of(ogroups.clone(), Data::DString("anonymous".to_string())) != -1 {
+  if index_of(lg.clone(), Data::DString("anonymous".to_string())) != -1 {
+    if index_of(og.clone(), Data::DString("anonymous".to_string())) != -1 {
       return true;
     }
   }
@@ -875,8 +894,8 @@ pub fn check_auth(lib:&str, id:&str, session_id:&str, write:bool) -> bool {
   }
   
   for g in groups.objects() {
-    if index_of(libgroups.clone(), g.clone()) != -1 {
-      if index_of(ogroups.clone(), g.clone()) != -1 {
+    if index_of(lg.clone(), g.clone()) != -1 {
+      if index_of(og.clone(), g.clone()) != -1 {
         return true;
       }
     }
@@ -1189,31 +1208,35 @@ pub fn load_users() {
   }
 }
 
+pub fn save_config(config: DataObject) {
+  let mut config = config.deep_copy();
+  if !config.has("security") { config.put_str("security", "on"); }
+  else { 
+    let b = config.get_bool("security");
+    if b { config.put_str("security", "on"); } 
+    else { config.put_str("security", "off"); } 
+  }
+  write_properties("config.properties".to_string(), config);
+}
+
 pub fn load_config() -> DataObject {
   println!("Loading appserver configuration");
+  let mut b = false;
   let mut config;
   if Path::new("config.properties").exists() {
     config = read_properties("config.properties".to_string());
   }
-  else { config = DataObject::new(); }
+  else { config = DataObject::new(); b = true; }
   
-  if !config.has("security") { config.put_bool("security", true); }
+  if !config.has("security") { config.put_bool("security", true); b = true; }
   else { 
     let b = config.get_string("security") == "on";
     config.put_bool("security", b); 
     if !b { println!("Warning! Security is OFF!"); }
   }
   
-  if !config.has("socket_address") {
-    if !config.has("http_address") { config.put_str("http_address", "127.0.0.1"); }
-    if !config.has("http_port") { config.put_str("http_port", "5774"); }
-    
-    let ip = config.get_string("http_address");
-    let port = config.get_string("http_port");
-
-    let socket_address = ip+":"+&port;
-    config.put_str("socket_address", &socket_address);
-  }
+  if !config.has("http_address") { config.put_str("http_address", "127.0.0.1"); b = true; }
+  if !config.has("http_port") { config.put_str("http_port", "0"); }
   
   if config.has("sessiontimeoutmillis") { 
     let d = config.get_property("sessiontimeoutmillis");
@@ -1225,20 +1248,26 @@ pub fn load_config() -> DataObject {
   else { 
     let session_timeout = 900000; 
     config.duplicate().put_i64("sessiontimeoutmillis", session_timeout);
+    b = true;
   }
   
   if !config.has("apps") {
     // FIXME - scan for app.properties files
     config.put_str("apps", "app,dev,peer,security");
+    b = true;
   }
   
   if !config.has("default_app") {
     config.put_str("default_app", "app");
+    b = true;
   }
   
   if !config.has("machineid") {
     config.put_str("machineid", "MY_DEVICE");
+    b = true;
   }
+  
+  if b { save_config(config.duplicate()); }
   
   let mut system = DataStore::globals().get_object("system");
   system.put_object("config", config.duplicate());
