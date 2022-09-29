@@ -985,7 +985,7 @@ pub fn add_timer(tid:&str, mut tdata:DataObject) {
   let system = DataStore::globals().get_object("system");
   let mut timers = system.get_object("timers");    
   let start = tdata.get_i64("start");
-  let start = to_millis(start, tdata.get_string("startunit"));
+  let start = time()+to_millis(start, tdata.get_string("startunit"));
   let interval = tdata.get_i64("interval");
   let interval = to_millis(interval, tdata.get_string("intervalunit"));
   tdata.put_i64("startmillis", start);
