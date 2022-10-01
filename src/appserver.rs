@@ -11,6 +11,10 @@ use ndata::dataarray::*;
 use std::net::TcpStream;
 use std::time::Duration;
 use ndata::data::Data;
+use state::Storage;
+use std::sync::RwLock;
+use std::sync::Once;
+use ndata::heap::Heap;
 
 use crate::command::*;
 use crate::datastore::*;
@@ -28,11 +32,25 @@ use crate::generated::flowlang::file::write_properties::write_properties;
 
 // FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 
+#[derive(Debug)]
+pub struct WebsockConnection {
+  pub stream: TcpStream,
+  pub sub: DataObject,
+}
+
+static START: Once = Once::new();
+pub static WEBSOCKHEAP:Storage<RwLock<Heap<WebsockConnection>>> = Storage::new();
+
 pub fn run() {
+  START.call_once(|| { WEBSOCKHEAP.set(RwLock::new(Heap::new())); });
+  
   let system = init_globals();
   
   // Start Timers
   thread::spawn(timer_loop);
+  
+  // Start Events
+  thread::spawn(event_loop);
   
   // Start HTTP
   thread::spawn(http_listen);
@@ -302,7 +320,11 @@ pub fn http_listen() {
           }
         }
           
-        if headers.has("SEC-WEBSOCKET-KEY") { fire_event("app", "WEBSOCK_END", request.duplicate()); }
+        if headers.has("SEC-WEBSOCKET-KEY") { 
+          fire_event("app", "WEBSOCK_END", request.duplicate()); 
+          let sockref = request.get_i64("websocket_id");
+          WEBSOCKHEAP.get().write().unwrap().decr(sockref as usize);
+        }
         else {
           let response = response.get_object("a").duplicate();
 
@@ -382,25 +404,26 @@ pub fn http_listen() {
           reshead = reshead + "\r\n";
           
           if isfile {
-            stream.write(reshead.as_bytes()).unwrap();
+            let _x = stream.write(reshead.as_bytes());
             let mut file = fs::File::open(&body).unwrap();
             let chunk_size = 0x4000;
             loop {
               let mut chunk = Vec::with_capacity(chunk_size);
               let n = std::io::Read::by_ref(&mut file).take(chunk_size as u64).read_to_end(&mut chunk).unwrap();
               if n == 0 { break; }
-              stream.write(&chunk).unwrap();
+              let x = stream.write(&chunk);
+              if x.is_err() { break; }
               if n < chunk_size { break; }
             }
           }
           else {
             let response = reshead + &body;
-            stream.write(response.as_bytes()).unwrap();
+            let _x = stream.write(response.as_bytes());
           }
     			
     			fire_event("app", "HTTP_END", response);
     			
-          stream.flush().unwrap();
+          let _x = stream.flush();
         }
       }
 
@@ -518,13 +541,23 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
       response += "Sec-WebSocket-Protocol: newbound\r\n\r\n";
       stream.write(response.as_bytes()).unwrap();
       
+      let subs = DataObject::new();
+      let subref = subs.data_ref;
+      let con = WebsockConnection{
+        stream: stream.try_clone().unwrap(),
+        sub: subs,
+      };
+      let sockref = WEBSOCKHEAP.get().write().unwrap().push(con);
+      request.put_i64("websocket_id", sockref as i64);
+      
       fire_event("app", "WEBSOCK_BEGIN", request.duplicate());
+
+      let base:i64 = 2;
+      let pow7 = base.pow(7);
       
       loop {
         if !system.get_bool("running") { break; }
         
-        let base:i64 = 2;
-        let pow7 = base.pow(7);
         let mut lastopcode = 0;
         let mut baos: Vec<u8> = Vec::new();
 
@@ -618,7 +651,7 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
 
         let msg = std::str::from_utf8(&baos).unwrap().to_owned();        
         
-        let mut stream = stream.try_clone().unwrap();
+        let stream = stream.try_clone().unwrap();
         let request = request.duplicate();
         let sid = session_id.to_owned();
         thread::spawn(move || {
@@ -635,38 +668,19 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
             }
             
             let o = handle_command(d, sid);
-            
-            let msg = o.to_string();
-            let msg = msg.as_bytes();
-            
-            let n = msg.len() as i64;
-            let mut reply: Vec<u8> = Vec::new();
-
-            reply.push(129); // Text = 129 / Binary = 130;
-
-            if n < 126 {
-              reply.push((n & 0xFF) as u8);
-            }
-            else if n < 65536 {
-              reply.push(126);
-              reply.push(((n >> 8) & 0xFF) as u8);
-              reply.push((n & 0xFF) as u8);
-            }
-            else {
-              reply.push(127);
-              reply.push(((n >> 56) & 0xFF) as u8);
-              reply.push(((n >> 48) & 0xFF) as u8);
-              reply.push(((n >> 40) & 0xFF) as u8);
-              reply.push(((n >> 32) & 0xFF) as u8);
-              reply.push(((n >> 24) & 0xFF) as u8);
-              reply.push(((n >> 16) & 0xFF) as u8);
-              reply.push(((n >> 8) & 0xFF) as u8);
-              reply.push((n & 0xFF) as u8);
-            }
-
-            reply.extend_from_slice(msg);
-
-            let _ = stream.write(&reply).unwrap();
+            websock_message(stream, o.to_string());
+          }
+          else if msg.starts_with("sub ") {
+            let msg = &msg[4..];
+            let d = DataObject::from_string(msg);
+            let app = d.get_string("app");
+            let event = d.get_string("event");
+            let mut subs = DataObject::get(subref);
+            if !subs.has(&app) { subs.put_array(&app, DataArray::new()); }
+            subs.get_array(&app).push_str(&event);
+          }
+          else {
+            println!("Unknown websocket command: {}", msg);
           }
         });
       }
@@ -783,7 +797,49 @@ fn handle_request(mut request: DataObject, mut stream: TcpStream) -> DataObject 
   res
 }
 
+fn websock_message(mut stream: TcpStream, msg:String){
+  let msg = msg.as_bytes();
+  
+  let n = msg.len() as i64;
+  let mut reply: Vec<u8> = Vec::new();
+
+  reply.push(129); // Text = 129 / Binary = 130;
+
+  if n < 126 {
+    reply.push((n & 0xFF) as u8);
+  }
+  else if n < 65536 {
+    reply.push(126);
+    reply.push(((n >> 8) & 0xFF) as u8);
+    reply.push((n & 0xFF) as u8);
+  }
+  else {
+    reply.push(127);
+    reply.push(((n >> 56) & 0xFF) as u8);
+    reply.push(((n >> 48) & 0xFF) as u8);
+    reply.push(((n >> 40) & 0xFF) as u8);
+    reply.push(((n >> 32) & 0xFF) as u8);
+    reply.push(((n >> 24) & 0xFF) as u8);
+    reply.push(((n >> 16) & 0xFF) as u8);
+    reply.push(((n >> 8) & 0xFF) as u8);
+    reply.push((n & 0xFF) as u8);
+  }
+
+  reply.extend_from_slice(msg);
+
+  let _ = stream.write(&reply).unwrap();
+}
+
 pub fn handle_command(d: DataObject, sid: String) -> DataObject {
+  let system = DataStore::globals().get_object("system");
+  let sessions = system.get_object("sessions");
+  let mut session = sessions.get_object(&sid);
+  let mut user = session.get_object("user");
+  let last_contact = time();
+  let expire = last_contact + system.get_object("config").get_i64("sessiontimeoutmillis");
+  session.put_i64("expire", expire);
+  user.put_i64("last_contact", last_contact);
+  
   let app = d.get_string("bot");
   let cmd = d.get_string("cmd");
   let pid = d.get_property("pid");
@@ -1037,58 +1093,94 @@ pub fn add_event_listener(id:&str, app:&str, event:&str, cmdlib:&str, cmdid:&str
 }
 
 pub fn fire_event(app:&str, event:&str, data:DataObject) {
+  let mut o = DataObject::new();
+  o.put_str("app", &app);
+  o.put_str("event", &event);
+  o.put_object("data", data);
+  DataStore::globals().get_object("system").get_array("fire").push_object(o);
+}
+
+pub fn event_loop() {
   let system = DataStore::globals().get_object("system");
   let mut events = system.get_object("events");
-  if !events.has(app) { events.put_object(app, DataObject::new()); }
-  let mut bot = events.get_object(app);
-  if !bot.has(event) { bot.put_object(event, DataObject::new()); }
-  else {
-    let list = bot.get_object(event);
-    for (_, e) in list.objects() {
-      let e = e.object();
-      let lib = e.get_string("lib");
-      let id = e.get_string("cmd");
-      let command = Command::new(&lib, &id);
-      let  _ = command.execute(data.duplicate());
+  let fire = system.get_array("fire");
+  let dur = Duration::from_millis(100);
+  while system.get_bool("running") {
+    let mut b = true;
+    for oprop in fire.objects(){
+      let o = oprop.object();
+      fire.remove_data(oprop);
+      b = false;
+      
+      let app = o.get_string("app");
+      let event = o.get_string("event");
+      let data = o.get_object("data");
+      
+      if !events.has(&app) { events.put_object(&app, DataObject::new()); }
+      let mut bot = events.get_object(&app);
+      if !bot.has(&event) { bot.put_object(&event, DataObject::new()); }
+      else {
+        let list = bot.get_object(&event);
+        for (_, e) in list.objects() {
+          let e = e.object();
+          let lib = e.get_string("lib");
+          let id = e.get_string("cmd");
+          let command = Command::new(&lib, &id);
+          let  _ = command.execute(data.duplicate());
+        }
+      }
+
+      let de = Data::DString(event);
+      let mut sockheap = WEBSOCKHEAP.get().write().unwrap();
+      for sockref in sockheap.keys(){
+        let sock = sockheap.get(sockref);
+        let subs = sock.sub.duplicate();
+        if subs.has(&app){
+          let app = subs.get_array(&app);
+          if app.index_of(de.clone()) != -1 {
+            let stream = sock.stream.try_clone().unwrap();
+            
+            
+            
+            websock_message(stream, o.to_string());
+          }
+        }
+      }
     }
+        
+    if b { thread::sleep(dur); }
   }
-  
 }
 
 fn timer_loop() {
   let system = DataStore::globals().get_object("system");
-  loop {
-    if system.get_bool("running") {
-      let now = time();
-      let mut timers = system.get_object("timers");
-      for (id, timer) in timers.objects() {
-        let mut timer = timer.object();
-        let when = timer.get_i64("startmillis");
-        if when <= now {
-          timers.remove_property(&id);
-          let cmdid = timer.get_string("cmd");
-          let params = timer.get_object("params");
-          let repeat = timer.get_bool("repeat");
-          let db = timer.get_string("cmddb");
-          let mut ts = timers.duplicate();
-          thread::spawn(move || {
-            let cmd = Command::new(&db, &cmdid);
-            let _x = cmd.execute(params).unwrap();
-            
-            if repeat {
-              let next = now + timer.get_i64("intervalmillis");
-              timer.put_i64("startmillis", next);
-              ts.put_object(&id, timer);
-            }
-          });
-        }
+  let dur = Duration::from_millis(1000);
+  while system.get_bool("running") {
+    let now = time();
+    let mut timers = system.get_object("timers");
+    for (id, timer) in timers.objects() {
+      let mut timer = timer.object();
+      let when = timer.get_i64("startmillis");
+      if when <= now {
+        timers.remove_property(&id);
+        let cmdid = timer.get_string("cmd");
+        let params = timer.get_object("params");
+        let repeat = timer.get_bool("repeat");
+        let db = timer.get_string("cmddb");
+        let mut ts = timers.duplicate();
+        thread::spawn(move || {
+          let cmd = Command::new(&db, &cmdid);
+          let _x = cmd.execute(params).unwrap();
+          
+          if repeat {
+            let next = now + timer.get_i64("intervalmillis");
+            timer.put_i64("startmillis", next);
+            ts.put_object(&id, timer);
+          }
+        });
       }
     }
-    else {
-      break;
-    }
-
-    let dur = Duration::from_millis(1000);
+    
     thread::sleep(dur);
   }
 }
@@ -1289,7 +1381,7 @@ pub fn init_globals() -> DataObject {
   
   system.put_object("timers", DataObject::new());
   system.put_object("events", DataObject::new());
-    
+  if !system.has("fire") { system.put_array("fire", DataArray::new()); }
   let s = config.get_string("apps");
   let s = s.trim().to_string();
   let sa = s.split(",");
