@@ -1292,6 +1292,7 @@ pub fn load_users() {
         for group in groups.split(",") { da.push_str(group); }
         user.put_array("groups", da);
         user.put_array("connections", DataArray::new());
+        user.put_str("id", &id);
         users.put_object(id, user);
       }
     }
