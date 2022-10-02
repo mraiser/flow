@@ -122,12 +122,31 @@ impl Command {
       let n = &p.0;
       let t = &p.1;
       if params.has(&n) {
-        if t == "Integer" { params.put_i64(&n, Data::as_string(params.get_property(&n)).parse::<i64>().unwrap()); }
-        else if t == "Float" { params.put_float(&n, Data::as_string(params.get_property(&n)).parse::<f64>().unwrap()); }
-        else if t == "Boolean" { params.put_bool(&n, Data::as_string(params.get_property(&n)).parse::<bool>().unwrap()); }
-        else if t == "JSONObject" { params.put_object(&n, DataObject::from_string(&Data::as_string(params.get_property(&n)))); }
-        else if t == "JSONArray" { params.put_array(&n, DataArray::from_string(&Data::as_string(params.get_property(&n)))); }
-        else { params.put_str(&n, &Data::as_string(params.get_property(&n))); }
+        let d = params.get_property(&n);
+        if t == "Integer" { 
+          if d.is_int() { params.put_i64(&n, d.int()); }
+          else { params.put_i64(&n, Data::as_string(d).parse::<i64>().unwrap()); }
+        }
+        else if t == "Float" { 
+          if d.is_float() { params.put_float(&n, d.float()); }
+          else { params.put_float(&n, Data::as_string(d).parse::<f64>().unwrap()); }
+        }
+        else if t == "Boolean" { 
+          if d.is_boolean() { params.put_bool(&n, d.boolean()); }
+          else { params.put_bool(&n, Data::as_string(d).parse::<bool>().unwrap()); }
+        }
+        else if t == "JSONObject" { 
+          if d.is_object() { params.put_object(&n, d.object()); }
+          else { params.put_object(&n, DataObject::from_string(&Data::as_string(d))); }
+        }
+        else if t == "JSONArray" { 
+          if d.is_array() { params.put_array(&n, d.array()); }
+          else { params.put_array(&n, DataArray::from_string(&Data::as_string(d))); }
+        }
+        else { 
+          if d.is_string() { params.put_str(&n, &d.string()); }
+          else { params.put_str(&n, &Data::as_string(d)); }
+        }
       }
       else if t == "Any" { params.put_null(&n); }
     }

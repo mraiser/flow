@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.1.25"
+version = "0.1.26"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
