@@ -65,7 +65,7 @@ pub fn run() {
       let v = v.object();
       let expire = v.get_i64("expire");
       if expire < expired {
-        println!("Session expired {}: {}", k, v.to_string());
+        println!("Session expired {} {} {}", k, v.get_string("username"), v.get_object("user").get_string("displayname"));
         sessions.remove_property(&k);
       }
     }
