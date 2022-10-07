@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.1.30"
+version = "0.1.31"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -17,7 +17,7 @@ javascript_runtime = ["deno_core","serde_v8","serde_support"]
 
 [dependencies]
 state = "0.5.3"
-ndata = { version = "0.2.12" }
+ndata = { version = "0.2.13" }
 #ndata = { path = "../ndata" }
 jni = { version = "0.19.0", features = ["invocation"], optional = true }
 pyo3 = { version = "0.16.4", features = ["auto-initialize"], optional = true }
