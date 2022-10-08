@@ -29,6 +29,7 @@ use crate::generated::flowlang::system::unique_session_id::unique_session_id;
 use crate::generated::flowlang::object::index_of::index_of;
 use crate::generated::flowlang::file::read_properties::read_properties;
 use crate::generated::flowlang::file::write_properties::write_properties;
+use crate::generated::flowlang::system::system_call::system_call;
 
 // FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 
@@ -59,6 +60,7 @@ pub fn run() {
   let dur = Duration::from_millis(5000);
   let mut sessions = system.get_object("sessions");
   let sessiontimeoutmillis = system.get_object("config").get_i64("sessiontimeoutmillis");
+  
   while system.get_bool("running") {
     let expired = time() - sessiontimeoutmillis; 
     for (k,v) in sessions.objects() {
@@ -87,6 +89,42 @@ pub fn http_listen() {
 
   config.put_i64("http_port", port as i64);
   if b { save_config(config); }
+  
+  let user = get_user("admin");
+  if user.is_some(){
+    thread::spawn(move || {
+      let user = user.unwrap();
+      
+      // FIXME - Make session creation a function
+      let session_id = unique_session_id();
+      let mut session = DataObject::new();
+      session.put_i64("count", 0);
+      session.put_str("id", &session_id);
+      session.put_str("username", "admin");
+      session.put_object("user", user.duplicate());
+      let sessiontimeoutmillis = system.get_object("config").get_i64("sessiontimeoutmillis");
+      let expire = time() + sessiontimeoutmillis;
+      session.put_i64("expire", expire);
+      let mut sessions = system.get_object("sessions");
+      sessions.put_object(&session_id, session.duplicate());
+      
+      let pass = user.get_string("password");
+      if log_in(&session_id, "admin", &pass){
+        let default_app = system.get_string("default_app");
+              
+        let mut s = "http://localhost:".to_string();
+        s += &port.to_string();
+        s += "/";
+        s += &default_app;
+        s += "/index.html?sessionid=";
+        s += &session_id;
+        let mut a = DataArray::new();
+        a.push_str("open");
+        a.push_str(&s);
+        system_call(a);
+      }
+    });
+  }
   
   for stream in listener.incoming() {
     let mut stream = stream.unwrap();
