@@ -68,7 +68,9 @@ pub fn run() {
       let expire = v.get_i64("expire");
       if expire < expired {
         println!("Session expired {} {} {}", k, v.get_string("username"), v.get_object("user").get_string("displayname"));
+        let session = sessions.get_object(&k);
         sessions.remove_property(&k);
+        fire_event("app", "SESSION_EXPIRE", session);
       }
     }
     thread::sleep(dur);
@@ -872,6 +874,7 @@ pub fn handle_command(d: DataObject, sid: String) -> DataObject {
   let system = DataStore::globals().get_object("system");
   let sessions = system.get_object("sessions");
   let mut session = sessions.get_object(&sid);
+  //println!("session {}", session.to_string());
   let mut user = session.get_object("user");
   let last_contact = time();
   let expire = last_contact + system.get_object("config").get_i64("sessiontimeoutmillis");
