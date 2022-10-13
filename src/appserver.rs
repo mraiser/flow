@@ -68,9 +68,8 @@ pub fn run() {
       let expire = v.get_i64("expire");
       if expire < expired {
         println!("Session expired {} {} {}", k, v.get_string("username"), v.get_object("user").get_string("displayname"));
-        let session = sessions.get_object(&k);
         sessions.remove_property(&k);
-        fire_event("app", "SESSION_EXPIRE", session);
+        fire_event("app", "SESSION_EXPIRE", v);
       }
     }
     thread::sleep(dur);

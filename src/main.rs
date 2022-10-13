@@ -26,12 +26,12 @@ use command::Command as Command;
 use datastore::DataStore;
 use generated::Generated;
 
-pub fn init(dir:&str) -> (&str, (((usize,usize),(usize,usize)),((usize,usize),(usize,usize)),((usize,usize),(usize,usize)))) {
+pub fn init(dir:&str) -> (&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64)))) {
   Generated::init();
   DataStore::init(dir)
 }
 
-pub fn mirror(q:(&str, (((usize,usize),(usize,usize)),((usize,usize),(usize,usize)),((usize,usize),(usize,usize))))) {
+pub fn mirror(q:(&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64))))) {
   Generated::init();
   DataStore::mirror(q)
 }
