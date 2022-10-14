@@ -22,16 +22,26 @@ use std::io;
 use std::io::BufRead;
 use ndata::dataobject::*;
 
+#[cfg(feature="reload")]
+use ndata::NDataConfig;
+
 use command::Command as Command;
 use datastore::DataStore;
 use generated::Generated;
 
-pub fn init(dir:&str) -> (&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64)))) {
+#[cfg(feature="reload")]
+pub fn init(dir:&str) -> (&str, NDataConfig) {
+  Generated::init();
+  DataStore::init(dir)
+}
+#[cfg(not(feature="reload"))]
+pub fn init(dir:&str) {
   Generated::init();
   DataStore::init(dir)
 }
 
-pub fn mirror(q:(&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64))))) {
+#[cfg(feature="reload")]
+pub fn mirror(q:(&str, NDataConfig)) {
   Generated::init();
   DataStore::mirror(q)
 }

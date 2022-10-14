@@ -9,6 +9,7 @@ use ndata::data::*;
 use ndata::dataobject::*;
 use ndata::dataarray::*;
 use ndata::databytes::*;
+use ndata::NDataConfig;
 
 use crate::rand::*;
 
@@ -20,7 +21,7 @@ pub struct DataStore {
 }
 
 impl DataStore {
-  pub fn init(dir:&str) -> (&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64)))) {
+  pub fn init(dir:&str) -> (&str, NDataConfig) {
     let d = Path::new(dir);
     unsafe { STORE_PATH = Some(d.to_path_buf()); }
     
@@ -32,8 +33,9 @@ impl DataStore {
     (dir, q)
   }
   
+  #[cfg(feature="reload")]
   #[allow(dead_code)]
-  pub fn mirror(q:(&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64))))) {
+  pub fn mirror(q:(&str, NDataConfig)) {
     let d = Path::new(q.0);
     unsafe { STORE_PATH = Some(d.to_path_buf()); }
     

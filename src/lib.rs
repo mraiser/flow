@@ -21,14 +21,16 @@ pub mod pycmd;
 
 use datastore::DataStore;
 use generated::Generated;
+use ndata::NDataConfig;
 
-pub fn init(dir:&str) -> (&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64)))) {
+pub fn init(dir:&str) -> (&str, NDataConfig) {
   let q = DataStore::init(dir);
   Generated::init();
   q
 }
 
-pub fn mirror(q:(&str, (((u64,u64),(u64,u64)),((u64,u64),(u64,u64)),((u64,u64),(u64,u64))))) {
+#[cfg(feature="reload")]
+pub fn mirror(q:(&str, NDataConfig)) {
   DataStore::mirror(q);
   Generated::init();
 }
