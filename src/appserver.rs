@@ -91,7 +91,7 @@ pub fn http_listen() {
   config.put_i64("http_port", port as i64);
   if b { save_config(config.duplicate()); }
   
-  if !config.has("headless") || !config.get_bool("headless") {
+  if !config.has("headless") || !(Data::as_string(config.get_property("headless")) == "true".to_string()) {
     let user = get_user("admin");
     if user.is_some(){
       thread::spawn(move || {
