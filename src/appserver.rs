@@ -89,44 +89,46 @@ pub fn http_listen() {
   println!("HTTP TCP listening on port {}", port);
 
   config.put_i64("http_port", port as i64);
-  if b { save_config(config); }
+  if b { save_config(config.duplicate()); }
   
-  let user = get_user("admin");
-  if user.is_some(){
-    thread::spawn(move || {
-      let user = user.unwrap();
-      
-      // FIXME - Make session creation a function
-      let session_id = unique_session_id();
-      let mut session = DataObject::new();
-      session.put_i64("count", 0);
-      session.put_str("id", &session_id);
-      session.put_str("username", "admin");
-      session.put_object("user", user.duplicate());
-      let sessiontimeoutmillis = system.get_object("config").get_i64("sessiontimeoutmillis");
-      let expire = time() + sessiontimeoutmillis;
-      session.put_i64("expire", expire);
-      let mut sessions = system.get_object("sessions");
-      sessions.put_object(&session_id, session.duplicate());
-      
-      let pass = user.get_string("password");
-      if log_in(&session_id, "admin", &pass){
-        let default_app = system.get_string("default_app");
-              
-        let mut s = "http://localhost:".to_string();
-        s += &port.to_string();
-        s += "/";
-        s += &default_app;
-        s += "/index.html?sessionid=";
-        s += &session_id;
-        let mut a = DataArray::new();
-        a.push_str("open");
-        a.push_str(&s);
-        system_call(a);
-      }
-    });
+  if !config.has("headless") || !config.get_bool("headless") {
+    let user = get_user("admin");
+    if user.is_some(){
+      thread::spawn(move || {
+        let user = user.unwrap();
+        
+        // FIXME - Make session creation a function
+        let session_id = unique_session_id();
+        let mut session = DataObject::new();
+        session.put_i64("count", 0);
+        session.put_str("id", &session_id);
+        session.put_str("username", "admin");
+        session.put_object("user", user.duplicate());
+        let sessiontimeoutmillis = system.get_object("config").get_i64("sessiontimeoutmillis");
+        let expire = time() + sessiontimeoutmillis;
+        session.put_i64("expire", expire);
+        let mut sessions = system.get_object("sessions");
+        sessions.put_object(&session_id, session.duplicate());
+        
+        let pass = user.get_string("password");
+        if log_in(&session_id, "admin", &pass){
+          let default_app = system.get_string("default_app");
+                
+          let mut s = "http://localhost:".to_string();
+          s += &port.to_string();
+          s += "/";
+          s += &default_app;
+          s += "/index.html?sessionid=";
+          s += &session_id;
+          let mut a = DataArray::new();
+          a.push_str("open");
+          a.push_str(&s);
+          system_call(a);
+        }
+      });
+    }
   }
-  
+    
   for stream in listener.incoming() {
     let mut stream = stream.unwrap();
     thread::spawn(move || {
