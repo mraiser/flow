@@ -32,7 +32,7 @@ pub fn init(dir:&str) -> (&str, NDataConfig) {
   DataStore::init(dir)
 }
 
-#[cfg(feature="reload")]
+#[cfg(feature="mirror")]
 pub fn mirror(q:(&str, NDataConfig)) {
   Generated::init();
   DataStore::mirror(q)

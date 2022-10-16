@@ -33,7 +33,7 @@ impl DataStore {
     (dir, q)
   }
   
-  #[cfg(feature="reload")]
+  #[cfg(feature="mirror")]
   #[allow(dead_code)]
   pub fn mirror(q:(&str, NDataConfig)) {
     let d = Path::new(q.0);
