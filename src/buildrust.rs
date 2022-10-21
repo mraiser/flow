@@ -110,6 +110,7 @@ fn lookup_type(t:&str) -> String {
     "File" => "String",
     "Boolean" => "bool",
     "JSONArray" => "DataArray",
+    "InputStream" => "DataBytes",
     _ => "DataObject"
   };
   typ.to_string()
@@ -179,6 +180,7 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
     let typ2;
     if typ == "DataObject" { typ2 = "object".to_string(); }
     else if typ == "DataArray" { typ2 = "array".to_string(); }
+    else if typ == "DataBytes" { typ2 = "bytes".to_string(); }
     else if typ == "Data" { typ2 = "property".to_string(); }
     else { typ2 = typ.to_lowercase(); }
     let line = "let a".to_string() + &index.to_string() + " = o.get_" + &typ2 + "(\"" + name + "\");\n";
@@ -215,6 +217,10 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
     }
     else if returntype == "DataArray" {
       let _x = file.write_all(b"array");
+      let _x = file.write_all(b"(\"a\", ax);\n");
+    }
+    else if returntype == "DataBytes" {
+      let _x = file.write_all(b"bytes");
       let _x = file.write_all(b"(\"a\", ax);\n");
     }
     else {
