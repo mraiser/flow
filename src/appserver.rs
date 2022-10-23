@@ -518,18 +518,23 @@ pub fn init_globals() -> DataObject {
   let mut globals = DataStore::globals();
   
   let mut system;
-  if globals.has("system") { system = globals.get_object("system"); }
+  let first_time;
+  if globals.has("system") { system = globals.get_object("system"); first_time = false; }
   else {
     system = DataObject::new();
     globals.put_object("system", system.duplicate());
+    first_time = true;
   }
 
   let config = load_config();
-  load_users();
   
-  system.put_object("timers", DataObject::new());
-  system.put_object("events", DataObject::new());
-  if !system.has("fire") { system.put_array("fire", DataArray::new()); }
+  if first_time {
+    load_users();
+    system.put_object("timers", DataObject::new());
+    system.put_object("events", DataObject::new());
+    system.put_array("fire", DataArray::new());
+  }
+  
   let s = config.get_string("apps");
   let s = s.trim().to_string();
   let sa = s.split(",");
@@ -570,44 +575,46 @@ pub fn init_globals() -> DataObject {
   
   let store = DataStore::new();
 
-  // Init Timers and Events
-  for lib in libraries.duplicate().keys() {
-    let controls = store.get_data(&lib, "controls").get_object("data").get_array("list");
-    for ctldata in controls.objects() {
-      let ctldata = ctldata.object();
-      let ctlid = ctldata.get_string("id");
-      let ctlname = ctldata.get_string("name");
-      let ctl = store.get_data(&lib, &ctlid).get_object("data");
-      if ctl.has("timer") {
-        let ctimers = ctl.get_array("timer");
-        for timer in ctimers.objects() {
-          let timer = timer.object();
-          let tname = timer.get_string("name");
-          let tid = timer.get_string("id");
-          let mut tdata = store.get_data(&lib, &tid).get_object("data");
-          tdata.put_str("ctlname", &ctlname);
-          tdata.put_str("name", &tname);
-          if !tdata.has("start") { println!("Timer {}:{}:{} is not properly configured.", lib, ctlname, tname); }
-          else { add_timer(&tid, tdata); }
-        }
-      }
-      if ctl.has("event") {
-        let cevents = ctl.get_array("event");
-        for event in cevents.objects() {
-          let event = event.object();
-          let eid = event.get_string("id");
-          let edata = store.get_data(&lib, &eid).get_object("data");
-          if !edata.has("bot") { println!("Event listener {}:{}:{} is not properly configured.", lib, ctlname, event.get_string("name")); }
-          else {
-            let app = edata.get_string("bot");
-            let ename = edata.get_string("event");
-            let cmddb = edata.get_string("cmddb");
-            let cmdid = edata.get_string("cmd");
-            add_event_listener(&eid, &app, &ename, &cmddb, &cmdid);
+  if first_time {
+      // Init Timers and Events
+      for lib in libraries.duplicate().keys() {
+        let controls = store.get_data(&lib, "controls").get_object("data").get_array("list");
+        for ctldata in controls.objects() {
+          let ctldata = ctldata.object();
+          let ctlid = ctldata.get_string("id");
+          let ctlname = ctldata.get_string("name");
+          let ctl = store.get_data(&lib, &ctlid).get_object("data");
+          if ctl.has("timer") {
+            let ctimers = ctl.get_array("timer");
+            for timer in ctimers.objects() {
+              let timer = timer.object();
+              let tname = timer.get_string("name");
+              let tid = timer.get_string("id");
+              let mut tdata = store.get_data(&lib, &tid).get_object("data");
+              tdata.put_str("ctlname", &ctlname);
+              tdata.put_str("name", &tname);
+              if !tdata.has("start") { println!("Timer {}:{}:{} is not properly configured.", lib, ctlname, tname); }
+              else { add_timer(&tid, tdata); }
+            }
+          }
+          if ctl.has("event") {
+            let cevents = ctl.get_array("event");
+            for event in cevents.objects() {
+              let event = event.object();
+              let eid = event.get_string("id");
+              let edata = store.get_data(&lib, &eid).get_object("data");
+              if !edata.has("bot") { println!("Event listener {}:{}:{} is not properly configured.", lib, ctlname, event.get_string("name")); }
+              else {
+                let app = edata.get_string("bot");
+                let ename = edata.get_string("event");
+                let cmddb = edata.get_string("cmddb");
+                let cmdid = edata.get_string("cmd");
+                add_event_listener(&eid, &app, &ename, &cmddb, &cmdid);
+              }
+            }
           }
         }
       }
-    }
   }
   
   let p = store.root;
