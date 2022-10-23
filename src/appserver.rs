@@ -570,12 +570,13 @@ pub fn init_globals() -> DataObject {
   
   system.put_str("default_app", &default_app);
   system.put_object("apps", apps);
-  system.put_object("sessions", DataObject::new());
   system.put_bool("running", true);
   
   let store = DataStore::new();
 
   if first_time {
+      system.put_object("sessions", DataObject::new());
+      
       // Init Timers and Events
       for lib in libraries.duplicate().keys() {
         let controls = store.get_data(&lib, "controls").get_object("data").get_array("list");
