@@ -13,37 +13,41 @@ use crate::datastore::*;
 
 pub fn build_all() {
   let libs = fs::read_dir("data").unwrap();
-  let store = DataStore::new();
   for db in libs {
     let lib = db.unwrap().file_name().into_string().unwrap();
-    if !store.exists(&lib, "controls") {
-      println!("No controls in library {}", &lib);
-    }
-    else {
-      let controls = store.get_data(&lib, "controls");
-      let list = controls.get_object("data").get_array("list");
-      for control in list.objects() {
-        let control = control.object();
-        let ctl = control.get_string("name");
-        let id = control.get_string("id");
-        if !store.exists(&lib, &id) {
-          println!("No control file for {}:{}", &lib, &id);
-        }
-        else {
-          let ctldata = store.get_data(&lib, &id);
-          let d = ctldata.get_object("data");
-          if d.has("cmd") {
-            let cmdlist = d.get_array("cmd");
-            for command in cmdlist.objects() {
-              let command = command.object();
-              let cmd = command.get_string("name");
-              build(&lib, &ctl, &cmd);
-            }
+    build_lib(lib);
+  }
+}
+
+pub fn build_lib(lib:String) {
+  let store = DataStore::new();
+  if !store.exists(&lib, "controls") {
+    println!("No controls in library {}", &lib);
+  }
+  else {
+    let controls = store.get_data(&lib, "controls");
+    let list = controls.get_object("data").get_array("list");
+    for control in list.objects() {
+      let control = control.object();
+      let ctl = control.get_string("name");
+      let id = control.get_string("id");
+      if !store.exists(&lib, &id) {
+        println!("No control file for {}:{}", &lib, &id);
+      }
+      else {
+        let ctldata = store.get_data(&lib, &id);
+        let d = ctldata.get_object("data");
+        if d.has("cmd") {
+          let cmdlist = d.get_array("cmd");
+          for command in cmdlist.objects() {
+            let command = command.object();
+            let cmd = command.get_string("name");
+            build(&lib, &ctl, &cmd);
           }
         }
       }
     }
-  }    
+  }
 }
 
 pub fn build(lib:&str, ctl:&str, cmd:&str) {
