@@ -4,6 +4,7 @@ use std::panic;
 use std::fs;
 use std::path::Path;
 use std::fs::create_dir_all;
+use std::fs::File;
 use ndata::dataarray::*;
 use std::time::Duration;
 use ndata::data::Data;
@@ -557,7 +558,12 @@ pub fn init_globals() -> DataObject {
     o.put_object("runtime", p);
     let path = path_base+"app.properties";
     let p;
-    if Path::new(&path).exists(){ p = read_properties(path); } else { p = DataObject::new(); }
+    let ppath = Path::new(&path);
+    if ppath.exists(){ p = read_properties(path); } 
+    else {
+      let _x = File::create(ppath).unwrap();
+      p = DataObject::new(); 
+    }
     o.put_object("app", p.duplicate());
     apps.put_object(i, o);
     
