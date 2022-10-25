@@ -554,7 +554,12 @@ pub fn init_globals() -> DataObject {
     let path_base = "runtime/".to_string()+i+"/";
     let path = path_base.to_owned()+"botd.properties";
     let p;
-    if Path::new(&path).exists(){ p = read_properties(path); } else { p = DataObject::new(); }
+    let ppath = Path::new(&path);
+    if ppath.exists(){ p = read_properties(path); } 
+    else { 
+      let _x = File::create(ppath).unwrap();
+      p = DataObject::new(); 
+    }
     o.put_object("runtime", p);
     let path = path_base+"app.properties";
     let p;
