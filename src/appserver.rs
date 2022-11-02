@@ -337,23 +337,25 @@ pub fn load_library(j:&str) {
   let store = DataStore::new();
   let system = DataStore::globals().get_object("system");
   let path = store.root.join(j).join("meta.json");
-  let s = fs::read_to_string(&path).unwrap();
-  let mut o2 = DataObject::from_string(&s);
-  
-  let mut readers = DataArray::new();
-  let mut writers = DataArray::new();
-  if o2.has("readers") { 
-    for r in o2.get_array("readers").objects() { readers.push_str(&(r.string())); }
-  }
-  if o2.has("writers") { 
-    for w in o2.get_array("writers").objects() { writers.push_str(&(w.string())); }
-  }
-  o2.put_array("readers", readers);
-  o2.put_array("writers", writers);
-  o2.put_str("id", j);
+  if path.exists() {
+    let s = fs::read_to_string(&path).unwrap();
+    let mut o2 = DataObject::from_string(&s);
 
-  let mut libraries = system.get_object("libraries");
-  libraries.put_object(j, o2);
+    let mut readers = DataArray::new();
+    let mut writers = DataArray::new();
+    if o2.has("readers") { 
+    for r in o2.get_array("readers").objects() { readers.push_str(&(r.string())); }
+    }
+    if o2.has("writers") { 
+    for w in o2.get_array("writers").objects() { writers.push_str(&(w.string())); }
+    }
+    o2.put_array("readers", readers);
+    o2.put_array("writers", writers);
+    o2.put_str("id", j);
+
+    let mut libraries = system.get_object("libraries");
+    libraries.put_object(j, o2);
+  }
 }
 
 pub fn get_user(username:&str) -> Option<DataObject> {
