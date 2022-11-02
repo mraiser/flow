@@ -388,11 +388,7 @@ pub fn set_user(username:&str, user:DataObject) {
   let system = DataStore::globals().get_object("system");
   if system.get_object("config").get_bool("security") { 
     let mut users = system.get_object("users");
-    if users.has(&username) {
-      let mut u2 = users.get_object(&username);
-      for (k,v) in user.objects() { u2.set_property(&k, v); }
-    }
-    else { users.put_object(username, user.duplicate()); }
+    if !users.has(&username) { users.put_object(username, user.deep_copy()); }
     
     let mut user = user.deep_copy();
     let groups = user.get_array("groups");
@@ -443,6 +439,13 @@ pub fn load_users() {
         user.put_array("groups", da);
         user.put_array("connections", DataArray::new());
         user.put_str("id", &id);
+        
+        if user.has("addresses"){
+          let s = user.get_string("addresses");
+          let da = DataArray::from_string(&s);
+          user.put_array("addresses", da);
+        }
+        
         users.put_object(id, user);
       }
     }
