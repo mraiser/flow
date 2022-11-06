@@ -286,8 +286,11 @@ pub fn event_loop() {
           let e = e.object();
           let lib = e.get_string("lib");
           let id = e.get_string("cmd");
-          let command = Command::new(&lib, &id);
-          let  _ = command.execute(data.duplicate());
+          let data = data.duplicate();
+          thread::spawn(move || {
+            let command = Command::new(&lib, &id);
+            let  _ = command.execute(data);
+          });
         }
       }
       
