@@ -11,15 +11,18 @@ use ndata::dataobject::*;
 
 use crate::datastore::*;
 
-pub fn build_all() {
+pub fn build_all() -> bool {
+  let mut b = false;
   let libs = fs::read_dir("data").unwrap();
   for db in libs {
     let lib = db.unwrap().file_name().into_string().unwrap();
-    build_lib(lib);
+    b = b || build_lib(lib);
   }
+  b
 }
 
-pub fn build_lib(lib:String) {
+pub fn build_lib(lib:String) -> bool {
+  let mut b = false;
   let store = DataStore::new();
   let root = store.get_lib_root(&lib);
   if !store.exists(&lib, "controls") {
@@ -43,15 +46,17 @@ pub fn build_lib(lib:String) {
           for command in cmdlist.objects() {
             let command = command.object();
             let cmd = command.get_string("name");
-            build(&lib, &ctl, &cmd, &root);
+            b = b || build(&lib, &ctl, &cmd, &root);
           }
         }
       }
     }
   }
+  b
 }
 
-pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) {
+pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) -> bool {
+  let mut b = false;
   let store = DataStore::new();
   let id = &store.lookup_cmd_id(lib, ctl, cmd);
   
@@ -76,6 +81,7 @@ pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) {
       
       println!("Building Rust: {}:{}:{}", lib, ctl, cmd);
       build_rust(path, meta, &src);
+      b = true;
     }
     else if typ == "python" {
       let cid = &data.get_string("python");
@@ -104,6 +110,7 @@ pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) {
       build_python(pypath, path, meta, &src);
     }
   }
+  b
 }
 
 fn lookup_type(t:&str) -> String {
