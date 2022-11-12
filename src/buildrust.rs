@@ -247,9 +247,16 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
   let path2 = &path2.parent().unwrap().parent().unwrap().join("mod.rs");
   build_mod(path2, &m);  
   
-  let m = "    state.cmds.push((\"".to_string()+id+"\".to_string(), "+lib+"::"+ctl+"::"+cmd+"::execute, \"\".to_string()));";
-  let mm = "pub mod ".to_string()+lib+";";
+  let m = "pub mod ".to_string()+lib+";";
   let path2 = &path2.parent().unwrap().parent().unwrap().join("lib.rs");
+  if path2.exists() { build_mod(path2, &m); }
+  
+  let path2 = &path2.parent().unwrap().join("main.rs");
+  if path2.exists() { build_mod(path2, &m); }
+    
+  let m = "    cmds.push((\"".to_string()+id+"\".to_string(), "+lib+"::"+ctl+"::"+cmd+"::execute, \"\".to_string()));";
+  let mm = "use crate::".to_string()+lib+";";
+  let path2 = &path2.parent().unwrap().join("cmdinit.rs");
   if path2.exists() {
     let file = File::open(&path2).unwrap();
     let lines = io::BufReader::new(file).lines();
@@ -258,7 +265,7 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
     let mut a = true;
     let mut b = true;
     let mut c = true;
-    let begin = "    state.cmds.clear();";
+    let begin = "    cmds.clear();";
     for line in lines {
       if let Ok(ip) = line {
         if ip == m {
