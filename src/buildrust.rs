@@ -21,6 +21,7 @@ pub fn build_all() {
 
 pub fn build_lib(lib:String) {
   let store = DataStore::new();
+  let root = store.get_lib_root(&lib);
   if !store.exists(&lib, "controls") {
     println!("No controls in library {}", &lib);
   }
@@ -42,7 +43,7 @@ pub fn build_lib(lib:String) {
           for command in cmdlist.objects() {
             let command = command.object();
             let cmd = command.get_string("name");
-            build(&lib, &ctl, &cmd);
+            build(&lib, &ctl, &cmd, &root);
           }
         }
       }
@@ -50,7 +51,7 @@ pub fn build_lib(lib:String) {
   }
 }
 
-pub fn build(lib:&str, ctl:&str, cmd:&str) {
+pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) {
   let store = DataStore::new();
   let id = &store.lookup_cmd_id(lib, ctl, cmd);
   
@@ -65,7 +66,7 @@ pub fn build(lib:&str, ctl:&str, cmd:&str) {
       
       let path = store.get_data_file(lib, &(id.to_owned()+".rs"));
       let src = store.read_file(path);
-      let path = store.root.parent().unwrap().join("cmd").join("src").join(lib).join(ctl);
+      let path = root.join("src").join(lib).join(ctl);
       
       meta.put_str("lib", lib);
       meta.put_str("ctl", ctl);

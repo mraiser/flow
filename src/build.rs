@@ -19,9 +19,11 @@ fn main() {
       build_all();
     }
     else {
+      let store = DataStore::new();
+      let root = store.get_lib_root(&lib);
       let ctl = &params[2];
       let cmd = &params[3];
-      build(lib, ctl, cmd);
+      build(lib, ctl, cmd, &root);
     }
   }
 }

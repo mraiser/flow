@@ -68,6 +68,32 @@ impl DataStore {
     DataBytes::gc();
   }
   
+  pub fn lib_info(&self, lib:&str) -> DataObject {
+    let path = self.root.join(lib).join("meta.json");
+    let s = self.read_file(path);
+    DataObject::from_string(&s)
+  }
+  
+  pub fn get_lib_root(&self, lib:&str) -> PathBuf {
+    let meta = self.lib_info(&lib);
+
+    let root;
+    if meta.has("root") {
+    let r = meta.get_string("root");
+    if r.starts_with("/") {
+      root = Path::new(&r).to_owned();
+    }
+    else {
+      root = self.root.parent().unwrap().join(r).to_owned();
+    }
+    }
+    else {
+    root = self.root.parent().unwrap().join("cmd").to_owned();
+    }
+    
+    root
+  }
+  
   pub fn lookup_cmd_id(&self, lib:&str, ctl:&str, cmd:&str) -> String {
     let data = self.get_data(lib, "controls");
     let data = data.get_object("data").get_array("list");
