@@ -16,9 +16,9 @@ use crate::command::*;
 use crate::datastore::*;
 use crate::rfc2822date::*;
 
-use crate::generated::flowlang::http::hex_decode::hex_decode;
-use crate::generated::flowlang::system::time::time;
-use crate::generated::flowlang::file::mime_type::*;
+use crate::flowlang::http::hex_decode::hex_decode;
+use crate::flowlang::system::time::time;
+use crate::flowlang::file::mime_type::*;
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("socket_address");
 let a1 = o.get_string("library");

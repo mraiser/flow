@@ -6,7 +6,7 @@ use std::net::TcpStream;
 
 use ndata::heap::Heap;
 
-use crate::generated::flowlang::tcp::listen::TCPHEAP;
+use crate::flowlang::tcp::listen::TCPHEAP;
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_i64("listener");
 let ax = accept(a0);

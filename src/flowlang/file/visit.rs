@@ -2,7 +2,7 @@ use ndata::dataobject::*;
 use ndata::dataarray::*;
 use std::fs;
 
-use crate::generated::flowlang::system::execute_command::*;
+use crate::flowlang::system::execute_command::*;
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("path");
 let a1 = o.get_bool("recursive");

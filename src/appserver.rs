@@ -13,9 +13,9 @@ use std::sync::Once;
 use crate::command::*;
 use crate::datastore::*;
 
-use crate::generated::flowlang::system::time::time;
-use crate::generated::flowlang::file::read_properties::read_properties;
-use crate::generated::flowlang::file::write_properties::write_properties;
+use crate::flowlang::system::time::time;
+use crate::flowlang::file::read_properties::read_properties;
+use crate::flowlang::file::write_properties::write_properties;
 
 // FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 

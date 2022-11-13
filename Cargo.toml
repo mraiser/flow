@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.1.60"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -17,7 +17,6 @@ javascript_runtime = ["deno_core","serde_v8","serde_support"]
 mirror = ["ndata/mirror"]
 
 [dependencies]
-state = "0.5.3"
 ndata = { version = "0.2.25" }
 #ndata = { path = "../ndata" }
 jni = { version = "0.19.0", features = ["invocation"], optional = true }
@@ -26,11 +25,8 @@ deno_core = { version = "0.145.0", optional = true }
 serde_v8 = { version = "0.56.0", optional = true }
 serde = { version = "1.0.143", features = ["derive"], optional = true }
 serde_json = { version = "1.0.83", optional = true }
+state = { version = "0.5.3" }
 
 [[bin]]
 name = "flow"
 path = "src/main.rs"
-
-[[bin]]
-name = "flowb"
-path = "src/build.rs"

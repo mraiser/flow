@@ -1,15 +1,20 @@
+pub mod flowlang;
+
 pub mod code;
 pub mod case;
 pub mod command;
 pub mod datastore;
 pub mod primitives;
 pub mod rustcmd;
-pub mod generated;
 pub mod rand;
+pub mod buildrust;
 pub mod rfc2822date;
 pub mod sha1;
 pub mod base64;
 pub mod appserver;
+
+mod cmdinit;
+
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
 #[cfg(feature="javascript_runtime")]
@@ -25,17 +30,23 @@ use ndata::dataobject::DataObject;
 
 use command::Command as Command;
 use datastore::DataStore;
-use generated::Generated;
+use crate::rustcmd::RustCmd;
+use crate::cmdinit::*;
 
 pub fn init(dir:&str) -> (&str, NDataConfig) {
-  Generated::init();
-  DataStore::init(dir)
+  let cfg = DataStore::init(dir);
+  let mut v = Vec::new();
+  cmdinit(&mut v);
+  for q in &v { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }
+  cfg
 }
 
 #[cfg(feature="mirror")]
 pub fn mirror(q:(&str, NDataConfig)) {
-  Generated::init();
-  DataStore::mirror(q)
+  DataStore::mirror(q);
+  let mut v = Vec::new();
+  cmdinit(&mut v);
+  for q in &v { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }
 }
 
 pub fn main() {

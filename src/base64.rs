@@ -1,9 +1,4 @@
-use std::sync::RwLock;
-use std::sync::Once;
-use state::Storage;
-
-static START: Once = Once::new();
-pub static MAPS:Storage<RwLock<Maps>> = Storage::new();
+const MAPS:Maps = Maps::new();
 
 pub struct Maps {
   map1: [char; 64],
@@ -11,7 +6,7 @@ pub struct Maps {
 }
 
 impl Maps {
-  pub fn new() -> Maps{
+  pub const fn new() -> Maps{
     let mut map1: [char; 64] = [0 as char; 64];
     let mut i = 0;
     let mut c = 'A';
@@ -41,25 +36,18 @@ pub struct Base64 {
 }
 
 impl Base64 {
-  fn init(){
-    START.call_once(|| {
-      MAPS.set(RwLock::new(Maps::new()));
-    });
-  }
-  
   pub fn encode_string(input: &str) -> String {
    Base64::encode(input.as_bytes().to_vec()).into_iter().collect()
   }
   
   pub fn encode(input: Vec<u8>) -> Vec<char> {
     let ilen = input.len();
-    Base64::init();
     let o_data_len = (ilen*4+2)/3;
     let olen = ((ilen+2)/3)*4;
     let mut output: Vec<char> = vec![0 as char; olen];
     let mut ip = 0;
     let mut op = 0;
-    let maps = &mut MAPS.get().write().unwrap();
+    let maps = &MAPS;
     while ip < ilen {
       let i0 = input[ip] & 0xff; ip += 1;
       let i1; if ip < ilen { i1 = input[ip] & 0xff; ip += 1;} else { i1 = 0; }
@@ -88,7 +76,7 @@ impl Base64 {
     let mut output: Vec<u8> = vec![0; olen];
     let mut ip = 0;
     let mut op = 0;
-    let maps = &mut MAPS.get().write().unwrap();
+    let maps = &MAPS;
     while ip < ilen {
       let i0 = input[ip]; ip += 1;
       let i1 = input [ip]; ip += 1;
@@ -113,31 +101,4 @@ impl Base64 {
     }
     output
   }
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
 }

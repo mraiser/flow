@@ -7,6 +7,8 @@ mod buildrust;
 use buildrust::*;
 
 mod rand;
+mod rustcmd;
+mod code;
 
 fn main() {
   DataStore::init("data");

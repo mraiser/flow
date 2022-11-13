@@ -1,9 +1,8 @@
 use ndata::dataobject::*;
 use crate::datastore::*;
 
-use crate::generated::flowlang::system::random_non_hex_char::random_non_hex_char;
-
-use crate::generated::flowlang::system::time::time;
+use crate::flowlang::system::random_non_hex_char::random_non_hex_char;
+use crate::flowlang::system::time::time;
 
 pub fn execute(_o: DataObject) -> DataObject {
 let ax = unique_session_id();

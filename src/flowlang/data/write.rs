@@ -1,7 +1,7 @@
 use ndata::dataobject::*;
 use ndata::dataarray::DataArray;
 use crate::datastore::*;
-use crate::generated::flowlang::system::time::time;
+use crate::flowlang::system::time::time;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("lib");
