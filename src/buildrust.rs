@@ -7,6 +7,7 @@ use std::path::*;
 use std::fs::create_dir_all;
 use std::fs::OpenOptions;
 use std::io::BufReader;
+use std::collections::HashMap;
 use ndata::dataobject::*;
 
 use crate::datastore::*;
@@ -52,6 +53,91 @@ pub fn build_lib(lib:String) -> bool {
       }
     }
   }
+  
+  if b {
+    let meta = store.lib_info(&lib);
+    if meta.has("cargo") {
+      let cargo = meta.get_object("cargo");
+      let filename = root.join("Cargo.toml");
+      let file = File::open(&filename).unwrap();
+      let mut indices = [0,0];
+      let mut i = 0;
+      let mut c = -1;
+      let mut vec = Vec::new();
+      let mut features = HashMap::new();
+      let mut dependencies = HashMap::new();
+      let lines = io::BufReader::new(file).lines();
+      for line in lines {
+        let line = line.unwrap();
+        vec.push(line.to_owned());
+        if line.starts_with("[") {
+            if line == "[features]" {
+              indices[0] = i+1;
+              c = 0;
+            }
+            else if line == "[dependencies]" {
+              indices[1] = i+1;
+              c = 1;
+            }
+            else { c = -1; }
+        }
+        else if c != -1 {
+          let off = line.chars().position(|c| c == '=');
+          if off.is_some() {
+            let off = off.unwrap();
+            let k = line[..off].trim().to_owned();
+            let v = line[off+1..].trim().to_owned();
+            if c == 0 { features.insert(k,v); }
+            else if c == 1 { dependencies.insert(k,v); }
+          }  
+        }
+        
+        i += 1;
+      }
+      
+      let mut rewrite = false;
+      
+      if cargo.has("features") {
+        let newf = cargo.get_object("features");
+        for (k,v) in newf.objects() {
+          let v = v.string();
+          let newv = k.to_string() + " = " + &v;
+          if !features.contains_key(&k) {
+            vec.insert(indices[0], newv);
+            rewrite = true;
+          }
+          else if features.get(&k).unwrap() != &v {
+            println!("WARNING: Feature does not match existing: {}", newv);
+          }
+        }
+      }
+      
+      if cargo.has("dependencies") {
+        let newd = cargo.get_object("dependencies");
+        for (k,v) in newd.objects() {
+          let v = v.string();
+          let newv = k.to_string() + " = " + &v;
+          if !dependencies.contains_key(&k) {
+            vec.insert(indices[1], newv);
+            rewrite = true;
+          }
+          else if dependencies.get(&k).unwrap() != &v {
+            println!("WARNING: Dependency does not match existing: {}", newv);
+          }
+        }
+      }
+      
+      if rewrite {
+        println!("Rewriting {}", filename.display());
+        let mut file = File::create(&filename).unwrap();
+        for line in vec {
+          let line = line + "\n";
+          let _x = file.write_all(line.as_bytes());
+        }
+      }
+    }
+  }
+  
   b
 }
 
