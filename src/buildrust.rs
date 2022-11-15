@@ -47,7 +47,7 @@ pub fn build_lib(lib:String) -> bool {
           for command in cmdlist.objects() {
             let command = command.object();
             let cmd = command.get_string("name");
-            b = b || build(&lib, &ctl, &cmd, &root);
+            if build(&lib, &ctl, &cmd, &root) { b = true; }
           }
         }
       }
