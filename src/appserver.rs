@@ -16,7 +16,6 @@ use crate::datastore::*;
 use crate::flowlang::system::time::time;
 use crate::flowlang::file::read_properties::read_properties;
 use crate::flowlang::file::write_properties::write_properties;
-use crate::flowlang::data::exists::exists;
 
 // FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 
@@ -173,7 +172,7 @@ fn timer_loop() {
       if when <= now {
         let cmdid = timer.get_string("cmd");
         let db = timer.get_string("cmddb");
-        if exists(db.to_owned(), cmdid.to_owned()) {
+        if Command::exists(&db, &cmdid) {
           timers.remove_property(&id);
           let params = timer.get_object("params");
           let repeat = timer.get_bool("repeat");
