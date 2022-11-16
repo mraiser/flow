@@ -16,6 +16,7 @@ use crate::datastore::*;
 use crate::flowlang::system::time::time;
 use crate::flowlang::file::read_properties::read_properties;
 use crate::flowlang::file::write_properties::write_properties;
+use crate::flowlang::data::exists::exists;
 
 // FIXME - The code in this file makes the assumption in several places that the process was launched from the root directory. That assumption should only be made once, in the event that no root directory is specified, by whatever initializes the flowlang DataStore.
 
@@ -170,22 +171,25 @@ fn timer_loop() {
       let mut timer = timer.object();
       let when = timer.get_i64("startmillis");
       if when <= now {
-        timers.remove_property(&id);
         let cmdid = timer.get_string("cmd");
-        let params = timer.get_object("params");
-        let repeat = timer.get_bool("repeat");
         let db = timer.get_string("cmddb");
-        let mut ts = timers.duplicate();
-        thread::spawn(move || {
-          let cmd = Command::new(&db, &cmdid);
-          let _x = cmd.execute(params).unwrap();
-          
-          if repeat {
-            let next = now + timer.get_i64("intervalmillis");
-            timer.put_i64("startmillis", next);
-            ts.put_object(&id, timer);
-          }
-        });
+        if exists(db.to_owned(), cmdid.to_owned()) {
+          timers.remove_property(&id);
+          let params = timer.get_object("params");
+          let repeat = timer.get_bool("repeat");
+          let mut ts = timers.duplicate();
+          thread::spawn(move || {
+            let cmd = Command::new(&db, &cmdid);
+            let _x = cmd.execute(params).unwrap();
+              
+            if repeat {
+              let next = now + timer.get_i64("intervalmillis");
+              timer.put_i64("startmillis", next);
+              ts.put_object(&id, timer);
+            }
+          });
+        }
+        else { println!("Event command {}:{} not found", &db, &cmdid); }
       }
     }
     
