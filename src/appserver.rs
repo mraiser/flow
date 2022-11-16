@@ -188,7 +188,10 @@ fn timer_loop() {
             }
           });
         }
-        else { println!("Event command {}:{} not found", &db, &cmdid); }
+        else { 
+          println!("Event command {}:{} not found, removing", &db, &cmdid); 
+          timers.remove_property(&id);
+        }
       }
     }
     
