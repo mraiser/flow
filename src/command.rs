@@ -40,6 +40,39 @@ pub struct Command {
 }
 
 impl Command {
+  pub fn exists(lib:&str, id:&str) -> bool {
+    let store = DataStore::new();
+    let src = store.get_data(lib, id);
+    let data = src.get_object("data");
+    let typ = &data.get_string("type");
+    let codename = &data.get_string(typ);
+    let code = store.get_data(lib, codename).get_object("data");
+    match typ.as_ref() {
+      "flow" => {
+        return code.has("flow");
+      },
+      "rust" => {
+        return RustCmd::exists(codename);
+      },
+      #[cfg(feature="java_runtime")]
+      "java" => {
+        // FIXME
+        return true;
+      },
+      #[cfg(feature="javascript_runtime")]
+      "js" => {
+        // FIXME
+        return true;
+      },
+      #[cfg(feature="python_runtime")]
+      "python" => {
+        // FIXME
+        return true;
+      },
+      _ => panic!("Unknown command type {}", typ),
+    };
+  }
+
   pub fn new(lib:&str, id:&str) -> Command {
     let store = DataStore::new();
     let src = store.get_data(lib, id);

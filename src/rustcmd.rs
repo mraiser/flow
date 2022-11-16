@@ -40,6 +40,13 @@ impl RustCmd{
     }
   }
   
+  pub fn exists(id:&str) -> bool{
+    let map = &mut COMMANDS.get().write().unwrap();
+    let t = map.get(id);
+    if t.is_none() { return false; }
+    true
+  }
+  
   pub fn execute(&self, args:DataObject) -> Result<DataObject, CodeException> {
     Ok((self.func)(args))
   }
