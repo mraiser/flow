@@ -1,1 +1,1 @@
-{"data":{"import":"use crate::datastore::*;\n","lib":"flowlang","returntype":"String","ctl":"data","cmd":"root","type":"rust","params":[],"attachmentkeynames":["rs"],"desc":""},"id":"psnvun182883c2b36y7e5","time":1660143436141,"addr":"/0:0:0:0:0:0:0:1:37796","username":"admin"}
+{"data":{"attachmentkeynames":["rs"],"cmd":"root","ctl":"data","desc":"","import":"use crate::datastore::*;\n","lib":"flowlang","params":[],"returntype":"String","type":"rust"},"id":"psnvun182883c2b36y7e5","readers":[],"time":1669046813873,"username":"system","writers":[]}

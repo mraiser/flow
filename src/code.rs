@@ -216,7 +216,7 @@ impl Code {
       }
       else { loop {
         let mut in3 = DataObject::new();
-        let list = in1.duplicate().keys();
+        let list = in1.clone().keys();
         for key in list {
           if !list_in.contains(&key) { 
             let dp = in1.get_property(&key);
@@ -257,7 +257,7 @@ impl Code {
         }
       }}
       
-      cmd.result = Some(out3.duplicate());
+      cmd.result = Some(out3.clone());
       return Ok(out3);
     }
   }
@@ -279,18 +279,18 @@ impl Code {
         let mut holder = DataObject::new();
         let panic_result = panic::catch_unwind(|| {
           let mut holder = DataObject::get(holder.data_ref);
-          let mut code = Code::new(src.duplicate());
+          let mut code = Code::new(src.clone());
           let local_res = code.execute(in1);
           if let Err(e) = local_res {
-            if e == CodeException::NextCase { holder.put_str("error", "next"); }
-            else if e == CodeException::Terminate { holder.put_str("error", "terminate"); }
-            else { holder.put_str("error", "fail"); }
+            if e == CodeException::NextCase { holder.put_string("error", "next"); }
+            else if e == CodeException::Terminate { holder.put_string("error", "terminate"); }
+            else { holder.put_string("error", "fail"); }
           }
           else {
             let x = local_res.unwrap();
             holder.put_object("result", x);
           }
-          holder.put_bool("finish", code.finishflag);
+          holder.put_boolean("finish", code.finishflag);
         });
         
         match panic_result {
@@ -330,15 +330,15 @@ impl Code {
       else if cmd_type == "constant" {
         for (key,_x) in &mut cmd.output {
           let ctype = cmd.ctype.as_ref().unwrap();
-          if ctype == "int" { out.put_i64(&key, v.parse::<i64>().unwrap()); }
+          if ctype == "int" { out.put_int(&key, v.parse::<i64>().unwrap()); }
           else if ctype == "decimal" { out.put_float(&key, v.parse::<f64>().unwrap()); }
-          else if ctype == "boolean" { out.put_bool(&key, v.parse::<bool>().unwrap()); }
+          else if ctype == "boolean" { out.put_boolean(&key, v.parse::<bool>().unwrap()); }
           
           else if ctype == "string" { 
             #[cfg(not(feature="serde_support"))]
-            out.put_str(&key, &unescape(&v)); 
+            out.put_string(&key, &unescape(&v)); 
             #[cfg(feature="serde_support")]
-            out.put_str(&key, serde_json::from_str(&format!("\"{}\"", &v)).unwrap());
+            out.put_string(&key, serde_json::from_str(&format!("\"{}\"", &v)).unwrap());
           }
           
           else if ctype == "object" { 
@@ -373,10 +373,10 @@ impl Code {
         
         let mut keys = DataArray::new();
         if let Source::Flow(src) = subcmd.src { 
-          for k in src.output.keys() { keys.push_str(k); }
+          for k in src.output.keys() { keys.push_string(k); }
         }
         else {
-          keys.push_str("a");
+          keys.push_string("a");
         }
 //          let src = subcmd.src();
 //          for k in src.output.keys() { keys.push(k); }
@@ -390,7 +390,7 @@ impl Code {
       }
       else if cmd_type == "persistent" {
         let mut g = DataStore::globals();
-        let keys = &in1.duplicate().keys();
+        let keys = &in1.clone().keys();
         if keys.len() > 0 {
           let key = &keys[0];
           let dp1 = &in1.get_property(key);
@@ -409,7 +409,7 @@ impl Code {
         }
       }
       else if cmd_type == "match" {
-        let key = &in1.duplicate().keys()[0];
+        let key = &in1.clone().keys()[0];
         let ctype = cmd.ctype.as_ref().unwrap();
         let dp1 = &in1.get_property(key);
         
@@ -478,7 +478,7 @@ impl Code {
       self.evaluate_conditional(&condition.rule, condition.value, b)?;
     }
 
-    cmd.result = Some(out.duplicate());
+    cmd.result = Some(out.clone());
     cmd.done = true;
     
     //println!("OP DONE {} {:?}", cmd_type, out.to_json());

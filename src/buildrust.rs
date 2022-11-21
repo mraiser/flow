@@ -159,9 +159,9 @@ pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) -> bool {
       let src = store.read_file(path);
       let path = root.join("src").join(lib).join(ctl);
       
-      meta.put_str("lib", lib);
-      meta.put_str("ctl", ctl);
-      meta.put_str("cmd", cmd);
+      meta.put_string("lib", lib);
+      meta.put_string("ctl", ctl);
+      meta.put_string("cmd", cmd);
       
       // FIXME - Don't rebuild if current
       
@@ -185,10 +185,10 @@ pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) -> bool {
                                     .join("published")
                                     .join(lib);
       
-      meta.put_str("ctlid", id);
-      meta.put_str("lib", lib);
-      meta.put_str("ctl", ctl);
-      meta.put_str("cmd", cmd);
+      meta.put_string("ctlid", id);
+      meta.put_string("lib", lib);
+      meta.put_string("ctl", ctl);
+      meta.put_string("cmd", cmd);
       
       // FIXME - Don't rebuild if current
       
@@ -280,6 +280,9 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
     else if typ == "DataArray" { typ2 = "array".to_string(); }
     else if typ == "DataBytes" { typ2 = "bytes".to_string(); }
     else if typ == "Data" { typ2 = "property".to_string(); }
+    else if typ == "bool" { typ2 = "boolean".to_string(); }
+    else if typ == "i64" { typ2 = "int".to_string(); }
+    else if typ == "f64" { typ2 = "float".to_string(); }
     else { typ2 = typ.to_lowercase(); }
     let line = "let a".to_string() + &index.to_string() + " = o.get_" + &typ2 + "(\"" + name + "\");\n";
     let _x = file.write_all(line.as_bytes());
@@ -302,11 +305,19 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
   else {
     let _x = file.write_all(b"o.put_");
     if returntype == "String" {
-      let _x = file.write_all(b"str");
+      let _x = file.write_all(b"string");
       let _x = file.write_all(b"(\"a\", &ax);\n");
     }
     else if returntype == "f64" {
       let _x = file.write_all(b"float");
+      let _x = file.write_all(b"(\"a\", ax);\n");
+    }
+    else if returntype == "i64" {
+      let _x = file.write_all(b"int");
+      let _x = file.write_all(b"(\"a\", ax);\n");
+    }
+    else if returntype == "bool" {
+      let _x = file.write_all(b"boolean");
       let _x = file.write_all(b"(\"a\", ax);\n");
     }
     else if returntype == "DataObject" {

@@ -8,7 +8,7 @@ use ndata::heap::Heap;
 
 use crate::flowlang::tcp::listen::TCPHEAP;
 pub fn execute(o: DataObject) -> DataObject {
-let a0 = o.get_i64("listener");
+let a0 = o.get_int("listener");
 let ax = accept(a0);
 let mut o = DataObject::new();
 o.put_object("a", ax);
@@ -27,13 +27,13 @@ let heap = &mut TCPHEAP.get().write().unwrap();
 let l = heap.get(listener as usize);
 let stream = l.accept();
 if stream.is_err() {
-  o.put_str("error", &format!("{:?}", stream));
+  o.put_string("error", &format!("{:?}", stream));
 }
 else {
   let (s, a) = stream.unwrap();
   let data_ref = &mut STREAMHEAP.get().write().unwrap().push(s);
-  o.put_i64("stream", *data_ref as i64);
-  o.put_str("address", &a.to_string());
+  o.put_int("stream", *data_ref as i64);
+  o.put_string("address", &a.to_string());
 }
 o
 }

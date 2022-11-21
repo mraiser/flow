@@ -93,12 +93,12 @@ impl Connection {
   pub fn from_data(data:DataObject) -> Connection {
     let s = data.get_array("src");
     let src =  Dest{
-      index: s.get_i64(0),
+      index: s.get_int(0),
       name: s.get_string(1),
     };
     let s = data.get_array("dest");
     let dest =  Dest{
-      index: s.get_i64(0),
+      index: s.get_int(0),
       name: s.get_string(1),
     };
     let done = false;
@@ -131,7 +131,7 @@ impl Connection {
 impl Condition {
   pub fn from_data(data:DataObject) -> Condition {
     Condition {
-      value: data.get_bool("value"),
+      value: data.get_boolean("value"),
       rule: data.get_string("rule"),
     }
   }
@@ -150,12 +150,12 @@ impl Operation {
     let mut output = HashMap::<String, Node>::new();
     let p = data.get_object("pos");
     let pos = Pos{
-      x: p.get_f64("x"),
-      y: p.get_f64("y"),
-      z: p.get_f64("z"),
+      x: p.get_float("x"),
+      y: p.get_float("y"),
+      z: p.get_float("z"),
     };
     let name = data.get_string("name");
-    let width = data.get_f64("width");
+    let width = data.get_float("width");
     let cmd_type = data.get_string("type");
     let mut ctype: Option<String> = None;
     let mut cmd: Option<String> = None;
@@ -249,7 +249,7 @@ impl Node {
   pub fn from_data(data:DataObject) -> Node {
     let mode = data.get_string("mode");
     let cmd_type = data.get_string("type");
-    let x = data.get_f64("x") as f32;
+    let x = data.get_float("x") as f32;
     let val = Data::DNull;
     let done = false;
     let mut list: Option<String> = None;

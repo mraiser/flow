@@ -1,2 +1,2 @@
-a.duplicate().join(b);
+a.clone().join(b);
 a

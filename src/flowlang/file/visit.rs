@@ -5,7 +5,7 @@ use std::fs;
 use crate::flowlang::system::execute_command::*;
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("path");
-let a1 = o.get_bool("recursive");
+let a1 = o.get_boolean("recursive");
 let a2 = o.get_string("lib");
 let a3 = o.get_string("ctl");
 let a4 = o.get_string("cmd");
@@ -22,7 +22,7 @@ for file in fs::read_dir(&path).unwrap() {
   let path = file.unwrap().path();
   let name = &path.display().to_string();
   let mut args = DataObject::new();
-  args.put_str("path", &name);
+  args.put_string("path", &name);
   let o = execute_command(lib.to_owned(), ctl.to_owned(), cmd.to_owned(), args);
   if o.has("a") {
     a.push_property(o.get_property("a"));

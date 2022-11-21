@@ -6,7 +6,7 @@ let a0 = o.get_property("a");
 let a1 = o.get_property("b");
 let ax = greater_than(a0, a1);
 let mut o = DataObject::new();
-o.put_bool("a", ax);
+o.put_boolean("a", ax);
 o
 }
 

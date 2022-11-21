@@ -5,11 +5,11 @@ use crate::base64::*;
 use std::io::Write;
 
 pub fn execute(o: DataObject) -> DataObject {
-let a0 = o.get_i64("stream_id");
+let a0 = o.get_int("stream_id");
 let a1 = o.get_string("key");
 let ax = websocket(a0, a1);
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

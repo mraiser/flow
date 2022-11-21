@@ -9,7 +9,7 @@ let a1 = o.get_string("id");
 let a2 = o.get_object("params");
 let ax = thread_id(a0, a1, a2);
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

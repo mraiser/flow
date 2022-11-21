@@ -14,7 +14,7 @@ pub fn split(a:String, b:String) -> DataArray {
 let sa = a.split(&b);
 let mut ja = DataArray::new();
 for i in sa {
-  ja.push_str(&i);
+  ja.push_string(&i);
 }
 ja
 }

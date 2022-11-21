@@ -116,8 +116,8 @@ impl Primitive {
     for key in map.keys() {
       let value = map.get(key).unwrap();
       let mut d = DataObject::new();
-      d.put_str("name", key);
-      d.put_str("io", &value.1);
+      d.put_string("name", key);
+      d.put_string("io", &value.1);
       array.push_object(d);
     }
     array

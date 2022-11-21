@@ -1,2 +1,2 @@
-a.duplicate().push_property(b);
+a.clone().push_property(b);
 a

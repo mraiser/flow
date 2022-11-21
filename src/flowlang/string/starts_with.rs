@@ -5,7 +5,7 @@ let a0 = o.get_string("a");
 let a1 = o.get_string("b");
 let ax = starts_with(a0, a1);
 let mut o = DataObject::new();
-o.put_bool("a", ax);
+o.put_boolean("a", ax);
 o
 }
 

@@ -23,7 +23,7 @@ if o.has("data") { key = "data".to_string(); }
 else if o.has("msg") { key = "msg".to_string(); }
 else if o.has("a") { key = "a".to_string(); }
 else {
-  let params = o.duplicate().keys();
+  let params = o.clone().keys();
   if params.len() == 0 { 
     return o; 
   }
@@ -33,7 +33,7 @@ let val = o.get_property(&key);
 let mut o = DataObject::new();
 if ret == "String" { o.set_property("msg", val); }
 else { o.set_property("data", val); }
-o.put_str("status", "ok");
+o.put_string("status", "ok");
 o
 
 }

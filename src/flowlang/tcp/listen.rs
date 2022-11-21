@@ -8,10 +8,10 @@ use ndata::heap::Heap;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("address");
-let a1 = o.get_i64("port");
+let a1 = o.get_int("port");
 let ax = listen(a0, a1);
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

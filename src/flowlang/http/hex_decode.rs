@@ -5,7 +5,7 @@ pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("input");
 let ax = hex_decode(a0);
 let mut o = DataObject::new();
-o.put_str("a", &ax);
+o.put_string("a", &ax);
 o
 }
 

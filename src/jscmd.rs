@@ -77,7 +77,7 @@ impl JSCmd{
     let mut param_names = DataArray::new();
     for param in params.objects() {
       let param_name = param.object().get_string("name");
-      param_names.push_str(&param_name);
+      param_names.push_string(&param_name);
     }
 //    println!("{:?}", param_names.objects());
     
@@ -116,10 +116,10 @@ impl JSCmd{
 //      println!("{}", newjs);
       
       let mut o = DataObject::new();
-      o.put_str("lib", &self.lib);
-      o.put_str("ctl", &ctl);
-      o.put_str("cmd", &name);
-      o.put_str("js", &newjs);
+      o.put_string("lib", &self.lib);
+      o.put_string("ctl", &ctl);
+      o.put_string("cmd", &name);
+      o.put_string("js", &newjs);
 //      println!("{}", o.to_json());
       let _ = runtime.execute_script("<usage>", &("register(".to_string()+&o.to_json().to_string()+");")).unwrap();
     }
@@ -127,7 +127,7 @@ impl JSCmd{
     let var = "x".to_string()+&h1.to_string();
     let mut newjs = "var ".to_string()+&var;
     newjs += " = ";
-    newjs += &(args.duplicate().to_json().to_string());
+    newjs += &(args.clone().to_json().to_string());
     newjs += "; ";
     newjs += &cmdname;
     newjs += "(";
@@ -149,24 +149,24 @@ impl JSCmd{
     let result = runtime.execute_script("<usage>", &newjs);
         
     if result.is_err() {
-      jo.put_str("status", "err");
+      jo.put_string("status", "err");
       let msg = format!("{:?}", result);
-      jo.put_str("msg", &msg);
+      jo.put_string("msg", &msg);
     }
     else {
       let mut scope = runtime.handle_scope();
       let local = deno_core::v8::Local::new(&mut scope, result.unwrap());
       let result = serde_v8::from_v8::<serde_json::Value>(&mut scope, local);
-      jo.put_str("status", "ok");
+      jo.put_string("status", "ok");
       let val = result.unwrap();
       if val.is_string() {
-        jo.put_str("msg", &val.as_str().unwrap());
+        jo.put_string("msg", &val.as_str().unwrap());
       }
       else if val.is_boolean() {
-        jo.put_bool("data", val.as_bool().unwrap());
+        jo.put_boolean("data", val.as_bool().unwrap());
       }
       else if val.is_i64() {
-        jo.put_i64("data", val.as_i64().unwrap());
+        jo.put_int("data", val.as_i64().unwrap());
       }
       else if val.is_f64() {
         jo.put_float("data", val.as_f64().unwrap());

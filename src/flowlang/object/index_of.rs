@@ -6,7 +6,7 @@ let a0 = o.get_property("a");
 let a1 = o.get_property("b");
 let ax = index_of(a0, a1);
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

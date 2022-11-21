@@ -1,1 +1,1 @@
-{"data":{"import":"","lib":"flowlang","returntype":"String","ctl":"string","cmd":"trim","type":"rust","params":[{"name":"a","type":"String"}],"attachmentkeynames":["rs"],"desc":""},"id":"xmiqjx18152d5009ei1a","time":1654952122880,"addr":"/0:0:0:0:0:0:0:1:46830","username":"admin"}
+{"data":{"attachmentkeynames":["rs"],"cmd":"trim","ctl":"string","desc":"","import":"","lib":"flowlang","params":[{"name":"a","type":"String"}],"returntype":"String","type":"rust"},"id":"xmiqjx18152d5009ei1a","readers":[],"time":1669046366869,"username":"system","writers":[]}

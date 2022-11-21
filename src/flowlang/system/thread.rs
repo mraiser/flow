@@ -10,7 +10,7 @@ let a2 = o.get_string("cmd");
 let a3 = o.get_object("params");
 let ax = thread(a0, a1, a2, a3);
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

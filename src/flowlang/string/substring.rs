@@ -2,11 +2,11 @@ use ndata::dataobject::*;
 
 pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_string("a");
-let a1 = o.get_i64("b");
-let a2 = o.get_i64("c");
+let a1 = o.get_int("b");
+let a2 = o.get_int("c");
 let ax = substring(a0, a1, a2);
 let mut o = DataObject::new();
-o.put_str("a", &ax);
+o.put_string("a", &ax);
 o
 }
 

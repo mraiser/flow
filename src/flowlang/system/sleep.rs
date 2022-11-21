@@ -2,10 +2,10 @@ use ndata::dataobject::*;
 use std::thread;
 use std::time::Duration;
 pub fn execute(o: DataObject) -> DataObject {
-let a0 = o.get_i64("millis");
+let a0 = o.get_int("millis");
 let ax = sleep(a0);
 let mut o = DataObject::new();
-o.put_str("a", &ax);
+o.put_string("a", &ax);
 o
 }
 

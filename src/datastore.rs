@@ -189,7 +189,7 @@ impl DataStore {
           if astr.len() > 0 && astr[0..1].to_string() == "{" { // FIXME - Legacy hack
             d.put_object(b, DataObject::from_string(&astr)); 
           } else {
-            d.put_str(b, &astr); 
+            d.put_string(b, &astr); 
           }
         }
       }

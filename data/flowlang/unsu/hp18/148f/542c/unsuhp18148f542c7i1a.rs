@@ -7,7 +7,7 @@ for line in lines {
       let oneline = str::replace(&oneline, "\\!", "!");
       let pair: Vec<_> = oneline.splitn(2, "=").collect();
       if pair.len() > 1 {
-        o.put_str(&pair[0], &pair[1]);
+        o.put_string(&pair[0], &pair[1]);
       }
     }
   }

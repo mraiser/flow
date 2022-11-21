@@ -4,7 +4,7 @@ for file in fs::read_dir(&path).unwrap() {
   let path = file.unwrap().path();
   let name = &path.display().to_string();
   let mut args = DataObject::new();
-  args.put_str("path", &name);
+  args.put_string("path", &name);
   let o = execute_command(lib.to_owned(), ctl.to_owned(), cmd.to_owned(), args);
   if o.has("a") {
     a.push_property(o.get_property("a"));

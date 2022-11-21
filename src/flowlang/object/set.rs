@@ -12,7 +12,7 @@ o
 }
 
 pub fn set(object:DataObject, key:String, value:Data) -> DataObject {
-object.duplicate().set_property(&key, value);
+object.clone().set_property(&key, value);
 object
 }
 

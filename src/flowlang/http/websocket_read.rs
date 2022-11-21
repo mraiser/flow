@@ -3,10 +3,10 @@ use crate::flowlang::http::listen::*;
 use std::io::Read;
 
 pub fn execute(o: DataObject) -> DataObject {
-let a0 = o.get_i64("stream_id");
+let a0 = o.get_int("stream_id");
 let ax = websocket_read(a0);
 let mut o = DataObject::new();
-o.put_str("a", &ax);
+o.put_string("a", &ax);
 o
 }
 

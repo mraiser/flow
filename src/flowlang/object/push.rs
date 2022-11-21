@@ -12,7 +12,7 @@ o
 }
 
 pub fn push(a:DataArray, b:Data) -> DataArray {
-a.duplicate().push_property(b);
+a.clone().push_property(b);
 a
 }
 

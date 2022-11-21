@@ -11,7 +11,7 @@ o
 }
 
 pub fn push_all(a:DataArray, b:DataArray) -> DataArray {
-a.duplicate().join(b);
+a.clone().join(b);
 a
 }
 

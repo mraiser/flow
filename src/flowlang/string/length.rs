@@ -5,7 +5,7 @@ pub fn execute(o: DataObject) -> DataObject {
 let a0 = o.get_property("a");
 let ax = length(a0);
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

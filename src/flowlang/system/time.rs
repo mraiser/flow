@@ -5,7 +5,7 @@ use std::time::SystemTime;
 pub fn execute(_o: DataObject) -> DataObject {
 let ax = time();
 let mut o = DataObject::new();
-o.put_i64("a", ax);
+o.put_int("a", ax);
 o
 }
 

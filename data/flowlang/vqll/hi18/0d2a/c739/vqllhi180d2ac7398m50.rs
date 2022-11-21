@@ -35,18 +35,18 @@ for stream in listener.incoming() {
           let mut val = (&line[count+1..]).to_string();
           val = val.trim().to_string();
           if !headers.has(&key) {
-            headers.put_str(&key, &val);
+            headers.put_string(&key, &val);
           }
           else {
             let d = headers.get_property(&key);
             if d.is_array() {
-              d.array().push_str(&val);
+              d.array().push_string(&val);
             }
             else {
               let old = d.string();
               let mut v = DataArray::new();
-              v.push_str(&old);
-              v.push_str(&val);
+              v.push_string(&old);
+              v.push_string(&val);
               headers.put_array(&key, v);
             }
           }
@@ -60,12 +60,12 @@ for stream in listener.incoming() {
             let mut old = v.get_string(n);
             v.remove_property(n);
             old = old + "\r\n" + line.trim_end();
-            v.push_str(&old);
+            v.push_string(&old);
           }
           else {
             let mut old = d.string();
             old = old + "\r\n" + line.trim_end();
-            headers.put_str(&last, &old);
+            headers.put_string(&last, &old);
           }
         }
       }
@@ -112,7 +112,7 @@ for stream in listener.incoming() {
             key = hex_decode(key);
             value = hex_decode(value);
 
-            params.put_str(&key, &value);
+            params.put_string(&key, &value);
             
             if b { break; }
           }
@@ -143,7 +143,7 @@ for stream in listener.incoming() {
             let i = oneparam.find("=").unwrap();
             let key = oneparam[0..i].to_string();
             let value = oneparam[i+1..].to_string();
-            params.put_str(&key, &value);
+            params.put_string(&key, &value);
           }
         }
       }
@@ -151,39 +151,39 @@ for stream in listener.incoming() {
         cmd = path;
       }
       let loc = remote_addr.to_string();
-      headers.put_str("nn-userlocation", &loc);
+      headers.put_string("nn-userlocation", &loc);
       let mut request = DataObject::new();
 
       // FIXME - Is this necessary?
       if headers.has("ACCEPT-LANGUAGE"){ 
         let lang = headers.get_string("ACCEPT-LANGUAGE");
-        request.put_str("language", &lang);
+        request.put_string("language", &lang);
       }
       else {
-        request.put_str("language", "*");
+        request.put_string("language", "*");
       }
 
       // FIXME - Is this necessary?
       if headers.has("HOST"){ 
         let h = headers.get_string("HOST");
-        request.put_str("host", &h);
+        request.put_string("host", &h);
       }
 
       // FIXME - Is this necessary?
       if headers.has("REFERER"){ 
         let h = headers.get_string("REFERER");
-        request.put_str("referer", &h);
+        request.put_string("referer", &h);
       }
 
-      request.put_str("protocol", &protocol);
-      request.put_str("path", &cmd);
-      request.put_str("loc", &loc);
-      request.put_str("method", &method);
-      request.put_str("querystring", &querystring);
-      request.put_object("headers", headers.duplicate());
+      request.put_string("protocol", &protocol);
+      request.put_string("path", &cmd);
+      request.put_string("loc", &loc);
+      request.put_string("method", &method);
+      request.put_string("querystring", &querystring);
+      request.put_object("headers", headers.clone());
       request.put_object("params", params);
-      request.put_i64("timestamp", time());
-      request.put_i64("stream_id", *stream_id as i64);
+      request.put_int("timestamp", time());
+      request.put_int("stream_id", *stream_id as i64);
 
       // FIXME
   //		CONTAINER.getDefault().fireEvent("HTTP_BEGIN", log);
@@ -229,9 +229,9 @@ for stream in listener.incoming() {
           
           let mut o = DataObject::new();
           let s = format!("<html><head><title>500 - Server Error</title></head><body><h2>500</h2>Server Error: {}</body></html>", s);
-          o.put_str("body", &s);
-          o.put_i64("code", 500);
-          o.put_str("mimetype", "text/html");
+          o.put_string("body", &s);
+          o.put_int("code", 500);
+          o.put_string("mimetype", "text/html");
           response.put_object("a", o);
         }
       }
@@ -239,7 +239,7 @@ for stream in listener.incoming() {
       WEBSOCKS.get().write().unwrap().decr(*stream_id);
         
       if !headers.has("SEC-WEBSOCKET-KEY") {
-        let response = response.get_object("a").duplicate();
+        let response = response.get_object("a").clone();
 
         let body:String;
         let mimetype:String;
@@ -254,7 +254,7 @@ for stream in listener.incoming() {
         else if response.has("body") && response.get_property("body").is_string() { body = response.get_string("body"); }
         else { body = "".to_owned(); }
 
-        if response.has("code") && response.get_property("code").is_int() { code = response.get_i64("code") as u16; }
+        if response.has("code") && response.get_property("code").is_int() { code = response.get_int("code") as u16; }
         else { code = 200; }
 
         if response.has("msg") && response.get_property("msg").is_string() { msg = response.get_string("msg"); }
@@ -274,8 +274,8 @@ for stream in listener.incoming() {
         else if isfile { mimetype = mime_type(cmd); }
         else { mimetype = "text/plain".to_string(); }
 
-        if response.has("len") && response.get_property("len").is_int() { len = response.get_i64("len"); }
-        else if headers.has("Content-Length") { len = headers.get_i64("Content-Length"); }
+        if response.has("len") && response.get_property("len").is_int() { len = response.get_int("len"); }
+        else if headers.has("Content-Length") { len = headers.get_int("Content-Length"); }
         else if isfile { len = fs::metadata(&body).unwrap().len() as i64; }
         else { len = body.len() as i64; }
 
@@ -286,9 +286,9 @@ for stream in listener.incoming() {
 
         let date = RFC2822Date::now().to_string();
 
-        headers.put_str("Date", &date);
-        headers.put_str("Content-Type", &mimetype);
-        if len != -1 { headers.put_str("Content-Length", &len.to_string()); }
+        headers.put_string("Date", &date);
+        headers.put_string("Content-Type", &mimetype);
+        if len != -1 { headers.put_string("Content-Length", &len.to_string()); }
         // FIXME
   //      if (acceptRanges != null) h.put("Accept-Ranges", acceptRanges);
   //      if (range != null && range[0] != -1) h.put("Content-Range","bytes "+range[0]+"-"+range[1]+"/"+range[2]);
@@ -296,7 +296,7 @@ for stream in listener.incoming() {
 
   //      let later = now.add(Duration::weeks(52));
   //      let cookie = "sessionid=".to_string()+&sid+"; Path=/; Expires="+&later.to_rfc2822();
-  //      headers.put_str("Set-Cookie", &cookie);
+  //      headers.put_string("Set-Cookie", &cookie);
 
         // FIXME
   //		if (origin != null)
