@@ -13,14 +13,16 @@ let cmd = Command::new(&a)
   .args(args)
   .stderr(Stdio::piped())
   .stdout(Stdio::piped())
-  .spawn()
-  .expect("failed to execute process");
+  .spawn();
 
-let output = cmd.wait_with_output().unwrap();
-if output.is_err() {
-  out.put("err", "Unable to execute system call "+&a+"["+&command.to_string()+"]");
+if cmd.is_err() {
+  let msg = "Unable to execute system call ".to_string()+&a+" "+&command.to_string();
+  println!("{}", msg);
+  out.put_string("err", &msg);
 }
 else {
+  let cmd = cmd.unwrap();
+  let output = cmd.wait_with_output().unwrap();
   let result = std::str::from_utf8(&output.stdout).unwrap();
   let error = std::str::from_utf8(&output.stderr).unwrap();
 
