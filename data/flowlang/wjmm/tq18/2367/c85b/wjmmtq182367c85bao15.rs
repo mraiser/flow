@@ -17,10 +17,15 @@ let cmd = Command::new(&a)
   .expect("failed to execute process");
 
 let output = cmd.wait_with_output().unwrap();
-let result = std::str::from_utf8(&output.stdout).unwrap();
-let error = std::str::from_utf8(&output.stderr).unwrap();
+if output.is_err() {
+  out.put("err", "Unable to execute system call "+&a+"["+&command.to_string()+"]");
+}
+else {
+  let result = std::str::from_utf8(&output.stdout).unwrap();
+  let error = std::str::from_utf8(&output.stderr).unwrap();
 
-out.put_string("out", result);
-out.put_string("err", error);
+  out.put_string("out", result);
+  out.put_string("err", error);
+}
 
 out
