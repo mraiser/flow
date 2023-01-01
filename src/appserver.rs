@@ -251,7 +251,7 @@ pub fn load_config() -> DataObject {
     if !b { println!("Warning! Security is OFF!"); }
   }
   
-  if !config.has("http_address") { config.put_string("http_address", "127.0.0.1"); b = true; }
+  if !config.has("http_address") { config.put_string("http_address", "0.0.0.0"); b = true; }
   if !config.has("http_port") { config.put_string("http_port", "0"); }
   
   if config.has("sessiontimeoutmillis") { 
