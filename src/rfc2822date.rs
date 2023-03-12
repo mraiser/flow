@@ -7,14 +7,14 @@ static MONTH_NAMES:[&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"
 
 #[derive(Debug)]
 pub struct RFC2822Date {
-  year: i16,
-  month: i8,
-  day: i8,
-  hour: i8,
-  minute: i8,
-  second: i8,
-  millis: i16,
-  weekday: String,
+  pub year: i16,
+  pub month: i8,
+  pub day: i8,
+  pub hour: i8,
+  pub minute: i8,
+  pub second: i8,
+  pub millis: i16,
+  pub weekday: String,
 }
 
 impl RFC2822Date {
