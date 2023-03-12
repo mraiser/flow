@@ -123,6 +123,16 @@ pub fn build_lib(lib:String) -> bool {
           }
           else if dependencies.get(&k).unwrap() != &v {
             println!("WARNING: Dependency does not match existing: {}", newv);
+            println!("OLD VALUE: {}", dependencies.get(&k).unwrap());
+            let mut vi = indices[1];
+            while vi < vec.len() {
+              if vec[vi].starts_with(&k) {
+                vec[vi] = newv;
+                rewrite = true;
+                break;
+              }
+              vi += 1;
+            }
           }
         }
       }
