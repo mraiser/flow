@@ -93,7 +93,7 @@ def execute(lib, ctl, cmd, args):
     Python::with_gil(|py| {
       let a = (lib, ctl, cmd, args);
       let res = self.exec.call1(py, a);
-      if res.is_err() { panic!("{:?} - {:?}", res, a); }
+      if res.is_err() { return format!("{:?} - {:?}", res, a); }
       let res:String = res.unwrap().extract(py).unwrap();
       res 
     })
