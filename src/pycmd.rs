@@ -169,6 +169,12 @@ impl PyCmd{
       wrap.register(&self.lib, &ctl, &name, &self.id, f.to_str().unwrap());
     }
     let res = wrap.execute(&self.lib, &ctl, &name, &a.to_string());
+    if !res.starts_with("{"){
+      let mut jo = DataObject::new();
+      jo.put_string("status", "err");
+      jo.put_string("msg", &res);
+      return Ok(jo);
+    }
     Ok(DataObject::from_string(&res))
   }
 }
