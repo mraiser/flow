@@ -2,8 +2,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::collections::HashMap;
 use ndata::dataobject::*;
+#[cfg(not(feature="python_no_singleton"))]
 use std::sync::RwLock;
+#[cfg(not(feature="python_no_singleton"))]
 use state::Storage;
+#[cfg(not(feature="python_no_singleton"))]
 use std::sync::Once;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -11,7 +14,9 @@ use std::hash::{Hash, Hasher};
 use crate::code::*;
 use crate::datastore::*;
 
+#[cfg(not(feature="python_no_singleton"))]
 static START: Once = Once::new();
+#[cfg(not(feature="python_no_singleton"))]
 static PYENV:Storage<RwLock<PyEnv>> = Storage::new();
 
 struct PyEnv {
@@ -115,9 +120,12 @@ impl PyCmd{
   }
   
   pub fn execute(&self, args:DataObject) -> Result<DataObject, CodeException> {
-    START.call_once(|| {
-      PYENV.set(RwLock::new(PyEnv::new()));
-    });
+    #[cfg(not(feature="python_no_singleton"))]
+    {
+        START.call_once(|| {
+          PYENV.set(RwLock::new(PyEnv::new()));
+        });
+    }
     
     let store = DataStore::new();
     let f = store.root.to_owned();
@@ -153,7 +161,10 @@ impl PyCmd{
     
     // FIXME - Use timestamp instead
     let h1 = calculate_hash(&code);
+    #[cfg(not(feature="python_no_singleton"))]
     let wrap = &mut PYENV.get().write().unwrap();
+    #[cfg(feature="python_no_singleton")]
+    let mut wrap = PyEnv::new();
     let hasfunc;
     let mut h2 = 0;
     {
