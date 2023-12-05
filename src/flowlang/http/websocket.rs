@@ -14,7 +14,8 @@ o
 }
 
 pub fn websocket(stream_id:i64, key:String) -> i64 {
-let heap = &mut WEBSOCKS.get().write().unwrap();
+let heap = &mut WEBSOCKS.write().unwrap();
+let heap = heap.as_mut().unwrap();
 let sock = &mut heap.get(stream_id as usize);
 let stream = &mut sock.0;
 let key = key.trim();

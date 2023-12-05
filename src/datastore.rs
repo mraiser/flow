@@ -36,7 +36,6 @@ impl DataStore {
     (dir, q)
   }
   
-  #[cfg(feature="mirror")]
   #[allow(dead_code)]
   pub fn mirror(q:(&str, NDataConfig)) {
     let d = Path::new(q.0);
@@ -225,6 +224,7 @@ impl DataStore {
     path
   }
   
+  // FIXME - Replace with fs::read_to_string
   pub fn read_file(&self, path: PathBuf) -> String {
     if !path.exists() { println!("Missing file {:?}", path); }
     let mut f = File::open(path).unwrap();

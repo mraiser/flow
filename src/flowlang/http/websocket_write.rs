@@ -41,7 +41,8 @@ else {
 
 reply.extend_from_slice(msg);
 
-let heap = &mut WEBSOCKS.get().write().unwrap();
+let heap = &mut WEBSOCKS.write().unwrap();
+let heap = heap.as_mut().unwrap();
 let sock = &mut heap.get(stream_id as usize);
 let _ = sock.0.write(&reply).unwrap();
 

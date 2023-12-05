@@ -1,20 +1,24 @@
-use std::io;
-use std::io::BufRead;
-use std::fs;
-use std::fs::File;
-use std::io::Write;
-use std::path::*;
-use std::fs::create_dir_all;
-use std::fs::OpenOptions;
+use std::path::Path;
+use std::path::PathBuf;
+use std::fs::read_dir;
+use std::fs::read_to_string;
+use ndata::dataobject::DataObject;
+use crate::DataStore;
+use ndata::dataarray::DataArray;
 use std::io::BufReader;
+use std::io::BufRead;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::collections::HashMap;
-use ndata::dataobject::*;
+use std::fs::create_dir_all;
 
-use crate::datastore::*;
+const CMD_MOD_LINE:&str = "pub fn cmdinit(cmds: &mut Vec<(String, Transform, String)>) {";
+//const MYCRATE:&str = env!("CARGO_CRATE_NAME");
 
 pub fn build_all() -> bool {
   let mut b = false;
-  let libs = fs::read_dir("data").unwrap();
+  let libs = read_dir("data").unwrap();
   for db in libs {
     let lib = db.unwrap().file_name().into_string().unwrap();
     b = b || build_lib(lib);
@@ -66,7 +70,7 @@ pub fn build_lib(lib:String) -> bool {
       let mut vec = Vec::new();
       let mut features = HashMap::new();
       let mut dependencies = HashMap::new();
-      let lines = io::BufReader::new(file).lines();
+      let lines = BufReader::new(file).lines();
       for line in lines {
         let line = line.unwrap();
         vec.push(line.to_owned());
@@ -152,33 +156,38 @@ pub fn build_lib(lib:String) -> bool {
 }
 
 pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) -> bool {
+  //println!("BUILDING lib:{} ctl:{} root:{}", lib, cmd, root.display());
   let mut b = false;
   let store = DataStore::new();
   let id = &store.lookup_cmd_id(lib, ctl, cmd);
+  //println!("ID {}", id);
   
   if store.exists(lib, id) {
     let meta = store.get_data(lib, id);
     let data = meta.get_object("data");
     let typ = data.get_string("type");
+    //println!("TYPE {}", typ);
     
+    let path = root.join("src").join(lib).join(ctl);
+    if !path.exists() { let _x = std::fs::create_dir_all(path.clone()); }
+      
     if typ == "rust" {
       let id = &data.get_string("rust");
       let mut meta = store.get_data(lib, id);
       
-      let path = store.get_data_file(lib, &(id.to_owned()+".rs"));
-      let src = store.read_file(path);
-      let path = root.join("src").join(lib).join(ctl);
+      let pathx = store.get_data_file(lib, &(id.to_owned()+".rs"));
+      let src = store.read_file(pathx);
       
       meta.put_string("lib", lib);
       meta.put_string("ctl", ctl);
       meta.put_string("cmd", cmd);
       
-      // FIXME - Don't rebuild if current
-      
-      println!("Building Rust: {}:{}:{}", lib, ctl, cmd);
-      build_rust(path, meta, &src);
-      b = true;
+      //println!("Building Rust: {}:{}:{}", lib, ctl, cmd);
+      b |= build_rust(path.clone(), meta, &src);
+    
+      build_mod(path.clone(), &lib, &ctl, &cmd, &id);
     }
+    
     else if typ == "python" {
       let cid = &data.get_string("python");
       let mut meta = store.get_data(lib, cid);
@@ -205,8 +214,176 @@ pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) -> bool {
       println!("Building Python: {}:{}:{}", lib, ctl, cmd);
       build_python(pypath, path, meta, &src);
     }
-  }
+    
+    
+    
+    
+    
+    
+  }  
+  // FIXME - ELSE WHAT?
+  
   b
+}
+
+fn file_index_of(path2:&PathBuf, m:&str) -> i64 {
+  let file = File::open(&path2).unwrap();
+  let lines = BufReader::new(file).lines();
+  let mut i = 0;
+  for line in lines {
+    if let Ok(ip) = line {
+      if ip == m {
+        return i;
+      }
+    }
+    i += 1;
+  }
+  -1
+}
+
+fn file_insert(path2:&PathBuf, m:&str, n:i64) {
+  let mut news = "".to_string();
+  let file = File::open(&path2).unwrap();
+  let lines = BufReader::new(file).lines();
+  let mut i = 0;
+  for line in lines {
+    if let Ok(ip) = line {
+      news += &ip;
+      news += "\n";
+    }
+    if i == n {
+      news += m;
+    }
+    i += 1;
+  }
+  std::fs::write(path2.clone(), news).expect("Unable to write file");
+}
+
+fn file_remove(path2:&PathBuf, n:i64) {
+  //println!("xxx");
+  let mut news = "".to_string();
+  let file = File::open(&path2).unwrap();
+  let lines = BufReader::new(file).lines();
+  let mut i = 0;
+  for line in lines {
+    if i != n {
+        if let Ok(ip) = line {
+          news += &ip;
+          news += "\n";
+        }
+    }
+    i += 1;
+  }
+  std::fs::write(path2.clone(), news).expect("Unable to write file");
+}
+
+fn build_mod(path:PathBuf, lib:&str, ctl:&str, cmd:&str, id:&str) {
+    let m1 = "pub mod ".to_string()+cmd+";";
+    let m2 = "    cmds.push((\"".to_string()+&id+"\".to_string(), "+(&cmd)+"::execute, \"\".to_string()));";
+//    let m2 = "    ".to_string()+cratename+"::rustcmd::RustCmd::add(\""+&id+"\".to_string(), "+(&cmd)+"::execute, \"\".to_string());";
+    let modfile = path.join("mod.rs");
+    build_mod_file(modfile, m1, m2);
+
+    let path = path.parent().unwrap().to_path_buf();
+    let m1 = "pub mod ".to_string()+ctl+";";
+    let m2 = "    ".to_string()+&ctl+"::cmdinit(cmds);";
+    let modfile = path.join("mod.rs");
+    build_mod_file(modfile, m1, m2.clone());
+
+    let path = path.parent().unwrap().to_path_buf();
+    let y = path.join("cmdinit.rs");
+    if y.exists(){
+        let m2 = "    cmds.push((\"".to_string()+&id+"\".to_string(), "+(&lib)+"::"+(&ctl)+"::"+(&cmd)+"::execute, \"\".to_string()));";
+        let x = file_index_of(&y, &m2);
+        if x != -1 {
+            file_remove(&y, x);
+        }
+        
+        let m2 = "    cmds.clear();";
+        let x = file_index_of(&y, &m2);
+        if x != -1 {
+            file_remove(&y, x);
+        }
+    }
+    
+    let m1 = "use crate::".to_string()+lib+";";
+    let m2 = "    ".to_string()+&lib+"::cmdinit(cmds);";
+    build_mod_file(y, m1, m2);
+}
+
+fn build_mod_file(modfile:PathBuf, m1:String, m2:String) {
+    let cratename;
+//    if MYCRATE == "flow" || MYCRATE == "flowlang" { cratename = "crate"; }
+//    else { 
+      cratename = "flowlang"; 
+//    }
+    
+    
+    // Step 1 - make sure the file exists
+    if !modfile.exists() {
+        let s = "\n".to_string()+CMD_MOD_LINE+"\n}";
+        std::fs::write(modfile.clone(), s).expect("Unable to write file");
+    }
+    
+    // step 2 - make sure the modline exists (add it)
+    let y = file_index_of(&modfile, &m1);
+    if y == -1 {
+        let s = m1+"\n"+&read_to_string(&modfile).unwrap();
+        std::fs::write(modfile.clone(), s).expect("Unable to write file");
+    }
+    
+    // step 3 - make sure the cmdinit exists (add it)
+    let mut x = file_index_of(&modfile, CMD_MOD_LINE);
+    if x == -1 { 
+    
+        // use crate::RustCmd;
+    
+    
+        let s = "\nuse ".to_string()+cratename+"::rustcmd::*;\n"+CMD_MOD_LINE+"\n}";
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&modfile)
+            .unwrap();
+        if let Err(e) = writeln!(file, "{}", s) { eprintln!("Couldn't write to file: {}", e); }    
+        x = file_index_of(&modfile, CMD_MOD_LINE); // FIXME - sloppy
+    }
+    
+    // Step 4 - make sure the cmds.push or RustCmd::add exists (add it)
+    let z = file_index_of(&modfile, &m2);
+    if z == -1 {
+        let s = m2 + "\n";
+        file_insert(&modfile, &s, x);
+    }
+    
+    
+    
+    //println!("{}", path.display());
+}
+
+fn build_rust(path:PathBuf, meta:DataObject, src:&str) -> bool {
+    let mut b = false;
+
+    let new_src = build_rust_source(meta.clone(), src);
+
+    let cmd = meta.get_string("cmd");
+    let rustfile = path.join(cmd.to_string()+".rs");
+    let old_src;
+    if rustfile.exists(){
+        old_src = read_to_string(&rustfile).unwrap();
+    }
+    else {
+        old_src = "-99 not valid".to_string();
+    }
+    
+    if old_src != new_src { // FIXME - what if compile files and we try again?
+        b = true;
+    }
+    
+    if b {
+      std::fs::write(rustfile, new_src).expect("Unable to write file");
+    }
+    
+    b
 }
 
 fn lookup_type(t:&str) -> String {
@@ -224,210 +401,115 @@ fn lookup_type(t:&str) -> String {
   typ.to_string()
 }
 
-fn file_contains(path2:&PathBuf, m:&str) -> bool{
-  let file = File::open(&path2).unwrap();
-  let lines = io::BufReader::new(file).lines();
-  for line in lines {
-    if let Ok(ip) = line {
-      if ip == m {
-        return true;
-      }
-    }
-  }
-  false
+fn build_rust_source(meta:DataObject, code:&str) -> String {
+    let data = meta.get_object("data");
+    let cmd = meta.get_string("cmd");
+    
+    let import = &data.get_string("import");
+    let returntype = &lookup_type(&data.get_string("returntype"));
+    let params = &data.get_array("params");
+    
+    let mut src = "use ndata::dataobject::*;\n".to_string();
+    src += import;
+  
+    let n = params.len();
+    src += "\npub fn execute(";
+    if n == 0 { src += "_"; }
+    src += "o: DataObject) -> DataObject {\n";
+    
+    let (invoke0, invoke1, invoke2) = build_rust_invoke(&cmd, params.clone(), &returntype);
+    let retstr = build_rust_return(&returntype);
+    
+    src += &invoke0;
+    src += &invoke1;
+    src += "let mut o = DataObject::new();\n";
+    src += &retstr;
+    
+    src += "o\n";
+    src += "}\n\n";
+    src += &invoke2;
+    src += &code;
+    src += "\n}\n\n";
+    
+    src
 }
 
-fn build_mod(path2:&PathBuf, m:&str) {
-  if path2.exists() {
-    if !file_contains(path2, m) {
-      let mut file = OpenOptions::new()
-        .write(true)
-        .append(true)
-        .open(&path2)
-        .unwrap();
-      let _x = file.write_all(b"\n");
-      let _x = file.write_all(m.as_bytes());
-    }
-  }
-  else {
-    let mut file = File::create(&path2).unwrap();
-    let _x = file.write_all(m.as_bytes());
-  }
-}
-
-fn build_rust(path:PathBuf, meta:DataObject, src:&str) {
-  let _x = create_dir_all(&path);
-  let id = &meta.get_string("id");
-  let lib = &meta.get_string("lib");
-  let ctl = &meta.get_string("ctl");
-  let cmd = &meta.get_string("cmd");
-  let data = meta.get_object("data");
-  let import = &data.get_string("import");
-  let returntype = &lookup_type(&data.get_string("returntype"));
-  let params = &data.get_array("params");
-  
-  let path2 = &path.join(cmd.to_string()+".rs");
-  let mut file = File::create(&path2).unwrap();
-
-  let _x = file.write_all(b"use ndata::dataobject::*;\n");
-  let _x = file.write_all(import.as_bytes());
-  
-  let n = params.len();
-  let _x = file.write_all(b"\npub fn execute(");
-  if n == 0 { let _x = file.write_all(b"_"); }
-  let _x = file.write_all(b"o: DataObject) -> DataObject {\n");
-  
-  let mut index = 0;
-  let mut invoke1 = "let ax = ".to_string()+cmd+"(";
-  let mut invoke2 = "pub fn ".to_string()+cmd+"(";
-  for v in params.objects() {
-    let v = v.object();
-    let name = &v.get_string("name");
-    let t = &v.get_string("type");
-    let typ = &lookup_type(t);
-    let typ2;
-    if typ == "DataObject" { typ2 = "object".to_string(); }
-    else if typ == "DataArray" { typ2 = "array".to_string(); }
-    else if typ == "DataBytes" { typ2 = "bytes".to_string(); }
-    else if typ == "Data" { typ2 = "property".to_string(); }
-    else if typ == "bool" { typ2 = "boolean".to_string(); }
-    else if typ == "i64" { typ2 = "int".to_string(); }
-    else if typ == "f64" { typ2 = "float".to_string(); }
-    else { typ2 = typ.to_lowercase(); }
-    let line = "let a".to_string() + &index.to_string() + " = o.get_" + &typ2 + "(\"" + name + "\");\n";
-    let _x = file.write_all(line.as_bytes());
-    if index > 0 {
-      invoke1 = invoke1 + ", ";
-      invoke2 = invoke2 + ", ";
-    }
-    invoke1 = invoke1 + "a" + &index.to_string();
-    invoke2 = invoke2 + name + ":" + typ;
-    index += 1;
-  }
-  invoke1 = invoke1 + ");\n";
-  invoke2 = invoke2 + ") -> " + returntype + " {\n";
-
-  let _x = file.write_all(invoke1.as_bytes());
-  let _x = file.write_all(b"let mut o = DataObject::new();\n");
+fn build_rust_return(returntype:&str) -> String {
+  let mut s = "".to_string();
   if returntype == "Data" {
-    let _x = file.write_all(b"o.set_property(\"a\", ax);\n");
+    s += "o.set_property(\"a\", ax);\n";
   }
   else {
-    let _x = file.write_all(b"o.put_");
+    s += "o.put_";
     if returntype == "String" {
-      let _x = file.write_all(b"string");
-      let _x = file.write_all(b"(\"a\", &ax);\n");
+      s += "string";
+      s += "(\"a\", &ax);\n";
     }
     else if returntype == "f64" {
-      let _x = file.write_all(b"float");
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += "float";
+      s += "(\"a\", ax);\n";
     }
     else if returntype == "i64" {
-      let _x = file.write_all(b"int");
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += "int";
+      s += "(\"a\", ax);\n";
     }
     else if returntype == "bool" {
-      let _x = file.write_all(b"boolean");
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += "boolean";
+      s += "(\"a\", ax);\n";
     }
     else if returntype == "DataObject" {
-      let _x = file.write_all(b"object");
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += "object";
+      s += "(\"a\", ax);\n";
     }
     else if returntype == "DataArray" {
-      let _x = file.write_all(b"array");
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += "array";
+      s += "(\"a\", ax);\n";
     }
     else if returntype == "DataBytes" {
-      let _x = file.write_all(b"bytes");
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += "bytes";
+      s += "(\"a\", ax);\n";
     }
     else {
-      let _x = file.write_all(returntype.as_bytes());
-      let _x = file.write_all(b"(\"a\", ax);\n");
+      s += &returntype;
+      s += "(\"a\", ax);\n";
     }
   }
-  let _x = file.write_all(b"o\n");
-  let _x = file.write_all(b"}\n\n");
-  let _x = file.write_all(invoke2.as_bytes());
-  let _x = file.write_all(src.as_bytes());
-  let _x = file.write_all(b"\n}\n\n");
-  
-  let m = "pub mod ".to_string()+cmd+";";
-  let path2 = &path.join("mod.rs");
-  build_mod(path2, &m);  
-  
-  let m = "pub mod ".to_string()+ctl+";";
-  let path2 = &path2.parent().unwrap().parent().unwrap().join("mod.rs");
-  build_mod(path2, &m);  
-  
-  let m = "pub mod ".to_string()+lib+";";
-  let path2 = &path2.parent().unwrap().parent().unwrap().join("lib.rs");
-  if path2.exists() { build_mod(path2, &m); }
-  
-  let path2 = &path2.parent().unwrap().join("main.rs");
-  if path2.exists() { build_mod(path2, &m); }
+  s
+}
+
+fn build_rust_invoke(cmd: &str, params: DataArray, returntype: &str) -> (String, String, String) {
+    let mut index = 0;
+    let mut invoke0 = "".to_string();
+    let mut invoke1 = "let ax = ".to_string()+cmd+"(";
+    let mut invoke2 = "pub fn ".to_string()+cmd+"(";
+    for v in params.objects() {
+        let v = v.object();
+        let name = &v.get_string("name");
+        let t = &v.get_string("type");
+        let typ = &lookup_type(t);
+        let typ2;
+        if typ == "DataObject" { typ2 = "object".to_string(); }
+        else if typ == "DataArray" { typ2 = "array".to_string(); }
+        else if typ == "DataBytes" { typ2 = "bytes".to_string(); }
+        else if typ == "Data" { typ2 = "property".to_string(); }
+        else if typ == "bool" { typ2 = "boolean".to_string(); }
+        else if typ == "i64" { typ2 = "int".to_string(); }
+        else if typ == "f64" { typ2 = "float".to_string(); }
+        else { typ2 = typ.to_lowercase(); }
+        let line = "let a".to_string() + &index.to_string() + " = o.get_" + &typ2 + "(\"" + name + "\");\n";
+        invoke0 += &line;
+        if index > 0 {
+          invoke1 = invoke1 + ", ";
+          invoke2 = invoke2 + ", ";
+        }
+        invoke1 = invoke1 + "a" + &index.to_string();
+        invoke2 = invoke2 + name + ":" + typ;
+        index += 1;
+    }
+    invoke1 = invoke1 + ");\n";
+    invoke2 = invoke2 + ") -> " + returntype + " {\n";
     
-  let m = "    cmds.push((\"".to_string()+id+"\".to_string(), "+lib+"::"+ctl+"::"+cmd+"::execute, \"\".to_string()));";
-  let mm = "use crate::".to_string()+lib+";";
-  let path2 = &path2.parent().unwrap().join("cmdinit.rs");
-  if path2.exists() {
-    let file = File::open(&path2).unwrap();
-    let lines = io::BufReader::new(file).lines();
-    let mut part1 = Vec::<String>::new();
-    let mut part2 = Vec::<String>::new();
-    let mut a = true;
-    let mut b = true;
-    let mut c = true;
-    let begin = "    cmds.clear();";
-    for line in lines {
-      if let Ok(ip) = line {
-        if ip == m {
-          b = false;
-          break;
-        }
-        
-        if ip == mm {
-          a = false;
-        }
-        
-        if c {
-          part1.push(ip.to_string());
-        }
-        else {
-          part2.push(ip.to_string());
-        }
-        
-        if ip == begin {
-          c = false;
-        }
-      }
-    }
-    if b {
-      let mut file = File::create(&path2).unwrap();
-      if a {
-        let _x = file.write_all(mm.as_bytes());
-        let _x = file.write_all(b"\n");
-      }
-      for line in part1 {
-        let _x = file.write_all(line.as_bytes());
-        let _x = file.write_all(b"\n");
-      }
-      let _x = file.write_all(m.as_bytes());
-      let _x = file.write_all(b"\n");
-      for line in part2 {
-        let _x = file.write_all(line.as_bytes());
-        let _x = file.write_all(b"\n");
-      }
-    }
-  }
-  else {
-      let mut file = File::create(&path2).unwrap();
-      let _x = file.write_all(mm.as_bytes());
-      let _x = file.write_all(b"\nuse flowlang::rustcmd::*;\n\n#[derive(Debug)]\npub struct Initializer {\n    pub data_ref: (&'static str, ((usize,usize),(usize,usize),(usize,usize))),\n    pub cmds: Vec<(String, Transform, String)>,\n}\n\n#[no_mangle]\npub fn mirror(state: &mut Initializer) {\n    flowlang::mirror(state.data_ref);\n    state.cmds.clear();\n");
-      let _x = file.write_all(m.as_bytes());
-      let _x = file.write_all(b"\n    for q in &state.cmds { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }\n}\n");
-  }
+    (invoke0, invoke1, invoke2)
 }
 
 fn build_python(pypath:PathBuf, path:PathBuf, meta:DataObject, src:&str) {

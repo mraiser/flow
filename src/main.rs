@@ -32,6 +32,7 @@ use command::Command as Command;
 use datastore::DataStore;
 use crate::rustcmd::RustCmd;
 use crate::cmdinit::*;
+//use crate::altbuild::*;
 
 pub fn init(dir:&str) -> (&str, NDataConfig) {
   let cfg = DataStore::init(dir);
@@ -41,7 +42,6 @@ pub fn init(dir:&str) -> (&str, NDataConfig) {
   cfg
 }
 
-#[cfg(feature="mirror")]
 pub fn mirror(q:(&str, NDataConfig)) {
   DataStore::mirror(q);
   let mut v = Vec::new();

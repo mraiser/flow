@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use ndata::dataobject::*;
 #[cfg(not(feature="python_no_singleton"))]
 use std::sync::RwLock;
-#[cfg(not(feature="python_no_singleton"))]
-use state::Storage;
+//#[cfg(not(feature="python_no_singleton"))]
+//use state::Storage;
 #[cfg(not(feature="python_no_singleton"))]
 use std::sync::Once;
 use std::collections::hash_map::DefaultHasher;
@@ -17,7 +17,7 @@ use crate::datastore::*;
 #[cfg(not(feature="python_no_singleton"))]
 static START: Once = Once::new();
 #[cfg(not(feature="python_no_singleton"))]
-static PYENV:Storage<RwLock<PyEnv>> = Storage::new();
+static PYENV:RwLock<Option<PyEnv>> = RwLock::new(None);
 
 struct PyEnv {
   register: Py<PyAny>,
@@ -64,13 +64,13 @@ def execute(lib, ctl, cmd, args):
     else:
       d = {
         'status': 'ok',
-        'data': res
+        'data': str(res)
       }
     return json.dumps(d)
-  except BaseException as err:
+  except Exception as err:
     d = {
       'status': 'err',
-      'data': type(err)
+      'data': str(err)
     }
     return json.dumps(d)",
             "",
@@ -123,7 +123,7 @@ impl PyCmd{
     #[cfg(not(feature="python_no_singleton"))]
     {
         START.call_once(|| {
-          PYENV.set(RwLock::new(PyEnv::new()));
+          *PYENV.write().unwrap() = Some(PyEnv::new());
         });
     }
     
@@ -162,7 +162,9 @@ impl PyCmd{
     // FIXME - Use timestamp instead
     let h1 = calculate_hash(&code);
     #[cfg(not(feature="python_no_singleton"))]
-    let wrap = &mut PYENV.get().write().unwrap();
+    let wrap = &mut PYENV.write().unwrap();
+    #[cfg(not(feature="python_no_singleton"))]
+    let wrap = wrap.as_mut().unwrap();
     #[cfg(feature="python_no_singleton")]
     let mut wrap = PyEnv::new();
     let hasfunc;

@@ -1,5 +1,6 @@
 use std::sync::RwLock;
-use state::Storage;
+//use state::Storage;
+//use ndata::sharedmutex::SharedMutex;
 use std::sync::Once;
 use std::collections::HashMap;
 
@@ -10,7 +11,8 @@ use crate::code::*;
 pub type Transform = fn(DataObject) -> DataObject;
 
 static START: Once = Once::new();
-static COMMANDS:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
+//static COMMANDS:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
+static mut COMMANDS:RwLock<Option<HashMap<String, (Transform, String)>>> = RwLock::new(None);
 
 #[derive(Debug)]
 pub struct RustCmd {
@@ -21,29 +23,38 @@ impl RustCmd{
   pub fn init(){
     START.call_once(|| {
       let map = HashMap::<String, (Transform, String)>::new();
-      COMMANDS.set(RwLock::new(map));
+      unsafe { *COMMANDS.write().unwrap() = Some(map); }
     });
   }
   
   pub fn add(id: String, t: Transform, io: String) {
-    let map = &mut COMMANDS.get().write().unwrap();
-    map.insert(id, (t, io));
+    unsafe {
+      let map = &mut COMMANDS.write().unwrap();
+      let map = map.as_mut().unwrap();
+      map.insert(id, (t, io));
+    }
   }
   
   pub fn new(id:&str) -> RustCmd{
-    let map = &mut COMMANDS.get().write().unwrap();
-    let t = map.get(id);
-    if t.is_none() { panic!("No such command {}", id); }
-    let t = t.unwrap();
-    RustCmd{
-      func:t.0,
+    unsafe {
+      let map = &mut COMMANDS.read().unwrap();
+      let map = map.as_ref().unwrap();
+      let t = map.get(id);
+      if t.is_none() { panic!("No such command {}", id); }
+      let t = t.unwrap();
+      RustCmd{
+        func:t.0,
+      }
     }
   }
   
   pub fn exists(id:&str) -> bool{
-    let map = &mut COMMANDS.get().write().unwrap();
-    let t = map.get(id);
-    if t.is_none() { return false; }
+    unsafe {
+      let map = &mut COMMANDS.read().unwrap();
+      let map = map.as_ref().unwrap();
+      let t = map.get(id);
+      if t.is_none() { return false; }
+    }
     true
   }
   

@@ -1,4 +1,5 @@
-let heap = &mut WEBSOCKS.get().write().unwrap();
+let heap = &mut WEBSOCKS.write().unwrap();
+let heap = heap.as_mut().unwrap();
 let sock = &mut heap.get(stream_id as usize);
 let stream = &mut sock.0;
 let key = key.trim();
@@ -17,4 +18,3 @@ response += "Sec-WebSocket-Protocol: newbound\r\n\r\n";
 stream.write(response.as_bytes()).unwrap();
 
 stream_id
-

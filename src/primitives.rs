@@ -1,16 +1,18 @@
 use std::sync::RwLock;
-use state::Storage;
+//use state::Storage;
 use std::sync::Once;
 use std::collections::HashMap;
 
 use ndata::dataobject::*;
 use ndata::dataarray::*;
+//use ndata::sharedmutex::SharedMutex;
 
 use crate::flowlang::*;
 use crate::rustcmd::*;
 
 static START: Once = Once::new();
-pub static PRIMITIVES:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
+//pub static PRIMITIVES:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
+pub static mut PRIMITIVES:RwLock<Option<HashMap<String, (Transform, String)>>> = RwLock::new(None);
 
 pub struct Primitive {
   pub name: String,
@@ -88,20 +90,23 @@ impl Primitive {
       map.insert("to_string".to_string(), (types::to_string::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("is_string".to_string(), (types::is_string::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
       map.insert("is_object".to_string(), (types::is_object::execute, "{ in: { a: {} }, out: { a: {} } }".to_string()));
-      PRIMITIVES.set(RwLock::new(map));
+      unsafe { *PRIMITIVES.write().unwrap() = Some(map); }
     });
   }
   
   pub fn new(name: &str) -> Primitive {
     Primitive::init();
-    let map = &mut PRIMITIVES.get().write().unwrap();
-    let t = map.get(name);
-    if t.is_none() { panic!("No such primitive {}", name); }
-    let t = t.unwrap();
-    Primitive { 
-      name: name.to_string(),
-      func: t.0,
-      io: t.1.to_owned(),
+    unsafe {
+      let map = &mut PRIMITIVES.read().unwrap();
+      let map = map.as_ref().unwrap();
+      let t = map.get(name);
+      if t.is_none() { panic!("No such primitive {}", name); }
+      let t = t.unwrap();
+      Primitive { 
+        name: name.to_string(),
+        func: t.0,
+        io: t.1.to_owned(),
+      }
     }
   }
   
@@ -111,16 +116,19 @@ impl Primitive {
   
   pub fn list() -> DataArray {
     Primitive::init();
-    let map = &mut PRIMITIVES.get().write().unwrap();
-    let mut array = DataArray::new();
-    for key in map.keys() {
-      let value = map.get(key).unwrap();
-      let mut d = DataObject::new();
-      d.put_string("name", key);
-      d.put_string("io", &value.1);
-      array.push_object(d);
+    unsafe {
+      let map = &mut PRIMITIVES.read().unwrap();
+      let map = map.as_ref().unwrap();
+      let mut array = DataArray::new();
+      for key in map.keys() {
+        let value = map.get(key).unwrap();
+        let mut d = DataObject::new();
+        d.put_string("name", key);
+        d.put_string("io", &value.1);
+        array.push_object(d);
+      }
+      array
     }
-    array
   }
 }
 

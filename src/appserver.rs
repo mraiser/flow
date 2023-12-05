@@ -5,10 +5,11 @@ use std::fs;
 use std::path::Path;
 use std::fs::File;
 use ndata::dataarray::*;
+//use ndata::sharedmutex::SharedMutex;
 use std::time::Duration;
-use state::Storage;
+//use state::Storage;
 use std::sync::RwLock;
-use std::sync::Once;
+//use std::sync::Once;
 
 use crate::command::*;
 use crate::datastore::*;
@@ -21,12 +22,11 @@ use crate::flowlang::file::write_properties::write_properties;
 
 pub type EventHook = fn(&str,&str,DataObject);
 
-static START: Once = Once::new();
-pub static EVENTHOOKS:Storage<RwLock<Vec<EventHook>>> = Storage::new();
+//static START: Once = Once::new();
+//pub static EVENTHOOKS:Storage<RwLock<Vec<EventHook>>> = Storage::new();
+pub static mut EVENTHOOKS:RwLock<Option<Vec<EventHook>>> = RwLock::new(Some(Vec::new()));
 
 pub fn run() {
-  START.call_once(|| { EVENTHOOKS.set(RwLock::new(Vec::new())); });  
-
   let system = init_globals();
   
   // Start Timers
@@ -64,7 +64,11 @@ pub fn add_timer(tid:&str, mut tdata:DataObject) {
 }
 
 pub fn add_event_hook(hook:EventHook) {
-  EVENTHOOKS.get().write().unwrap().push(hook);
+  unsafe { 
+    let map = &mut EVENTHOOKS.write().unwrap();
+    let map = map.as_mut().unwrap();
+    map.push(hook);    
+  }
 }
 
 pub fn remove_event_listener(id:&str) -> bool {
@@ -150,9 +154,10 @@ pub fn event_loop() {
           });
         }
       }
-      
-      for hook in EVENTHOOKS.get().write().unwrap().iter() {
-        hook(&app, &event, o.clone());
+      unsafe {
+        for hook in EVENTHOOKS.read().unwrap().as_ref().unwrap().iter() {
+          hook(&app, &event, o.clone());
+        }
       }
     }
         

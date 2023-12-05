@@ -1,5 +1,6 @@
 START.call_once(|| {
-  WEBSOCKS.set(RwLock::new(Heap::new()));
+  //WEBSOCKS.set(RwLock::new(Heap::new()));
+  *WEBSOCKS.write().unwrap() = Some(Heap::new());
 });
 
 let listener = TcpListener::bind(socket_address).unwrap();
@@ -119,8 +120,13 @@ for stream in listener.incoming() {
         }
       }
     
-      let stream_id = &mut WEBSOCKS.get().write().unwrap().push((stream.try_clone().unwrap(), reader));
-
+      let stream_id;
+      //unsafe {
+        let x = &mut WEBSOCKS.write().unwrap();
+        let x = x.as_mut().unwrap();
+        stream_id = x.push((stream.try_clone().unwrap(), reader));
+      //}
+      
       let cmd:String;
       if path.contains("?"){
         let i = path.find("?").unwrap();
@@ -183,7 +189,7 @@ for stream in listener.incoming() {
       request.put_object("headers", headers.clone());
       request.put_object("params", params);
       request.put_int("timestamp", time());
-      request.put_int("stream_id", *stream_id as i64);
+      request.put_int("stream_id", stream_id as i64);
 
       // FIXME
   //		CONTAINER.getDefault().fireEvent("HTTP_BEGIN", log);
@@ -236,7 +242,12 @@ for stream in listener.incoming() {
         }
       }
 
-      WEBSOCKS.get().write().unwrap().decr(*stream_id);
+      //unsafe 
+      {
+        let mut x = WEBSOCKS.write().unwrap();
+        let x = x.as_mut().unwrap();
+        x.decr(stream_id);
+      }
         
       if !headers.has("SEC-WEBSOCKET-KEY") {
         let response = response.get_object("a").clone();
@@ -349,7 +360,7 @@ for stream in listener.incoming() {
 }
 
 static START: Once = Once::new();
-pub static WEBSOCKS:Storage<RwLock<Heap<(TcpStream, TcpStream)>>> = Storage::new();
+pub static WEBSOCKS:RwLock<Option<Heap<(TcpStream, TcpStream)>>> = RwLock::new(None);
 
 fn read_line(reader: &mut TcpStream) -> String {
   let mut buf = [0];

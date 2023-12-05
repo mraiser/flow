@@ -458,7 +458,8 @@ START.call_once(|| {
   map.insert(".wmv","video/x-ms-wmv");
   map.insert(".264","video/mp4");
   map.insert(".vdi","application/x-virtualbox-vdi");
-  MIMETYPES.set(RwLock::new(map));
+  //MIMETYPES.set(RwLock::new(map));
+  *MIMETYPES.write().unwrap() = Some(map);
   
   xxx();
 });
@@ -469,13 +470,15 @@ if i.is_some() {
   let i = i.unwrap();
   a = a[i..].to_string(); 
 }
-let map = &mut MIMETYPES.get().write().unwrap();
+let map = &mut MIMETYPES.write().unwrap();
+let map = map.as_ref().unwrap();
 let a = map.get(&a as &str);
 if a.is_none() { return "text/plain".to_string(); }
 a.unwrap().to_string()
 }
 
 static START: Once = Once::new();
-pub static MIMETYPES:Storage<RwLock<HashMap<&str, &str>>> = Storage::new();
+//pub static MIMETYPES:Storage<RwLock<HashMap<&str, &str>>> = Storage::new();
+pub static MIMETYPES:RwLock<Option<HashMap<&str, &str>>> = RwLock::new(None);
 
 fn xxx() {

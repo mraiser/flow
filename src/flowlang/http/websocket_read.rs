@@ -12,8 +12,10 @@ o
 
 pub fn websocket_read(stream_id:i64) -> String {
 let mut reader;
+//unsafe 
 {
-  let heap = &mut WEBSOCKS.get().write().unwrap();
+  let heap = &mut WEBSOCKS.write().unwrap();
+  let heap = heap.as_mut().unwrap();
   let sock = &mut heap.get(stream_id as usize);
   reader = sock.0.try_clone().unwrap();
 }
