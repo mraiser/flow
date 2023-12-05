@@ -315,7 +315,8 @@ fn build_mod(path:PathBuf, lib:&str, ctl:&str, cmd:&str, id:&str) {
     if path2.exists() { 
         let x = file_index_of(&path2, &m1);
         if x == -1 {
-          file_insert(&path2, &m1, 0);
+            let s = m1.clone() + "\n";
+            file_insert(&path2, &s, 0);
         }
     } // FIXME - else what?
 
@@ -323,7 +324,8 @@ fn build_mod(path:PathBuf, lib:&str, ctl:&str, cmd:&str, id:&str) {
     if path2.exists() { 
         let x = file_index_of(&path2, &m1);
         if x == -1 {
-          file_insert(&path2, &m1, 0);
+            let s = m1.clone() + "\n";
+            file_insert(&path2, &s, 0);
         }
     } // FIXME - else what?
 }
