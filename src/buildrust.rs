@@ -309,6 +309,23 @@ fn build_mod(path:PathBuf, lib:&str, ctl:&str, cmd:&str, id:&str) {
     let m1 = "use crate::".to_string()+lib+";";
     let m2 = "    ".to_string()+&lib+"::cmdinit(cmds);";
     build_mod_file(y, m1, m2);
+    
+    let m1 = "pub mod ".to_string()+lib+";";
+    let path2 = path.join("lib.rs");
+    if path2.exists() { 
+        let x = file_index_of(&path2, &m1);
+        if x == -1 {
+          file_insert(&path2, &m1, 0);
+        }
+    } // FIXME - else what?
+
+    let path2 = path.join("main.rs");
+    if path2.exists() { 
+        let x = file_index_of(&path2, &m1);
+        if x == -1 {
+          file_insert(&path2, &m1, 0);
+        }
+    } // FIXME - else what?
 }
 
 fn build_mod_file(modfile:PathBuf, m1:String, m2:String) {
@@ -354,10 +371,6 @@ fn build_mod_file(modfile:PathBuf, m1:String, m2:String) {
         let s = m2 + "\n";
         file_insert(&modfile, &s, x);
     }
-    
-    
-    
-    //println!("{}", path.display());
 }
 
 fn build_rust(path:PathBuf, meta:DataObject, src:&str) -> bool {
@@ -382,7 +395,7 @@ fn build_rust(path:PathBuf, meta:DataObject, src:&str) -> bool {
     if b {
       std::fs::write(rustfile, new_src).expect("Unable to write file");
     }
-    
+
     b
 }
 
