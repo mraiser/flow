@@ -1,199 +1,71 @@
-use pyo3::prelude::*;
-use pyo3::types::PyModule;
-use std::collections::HashMap;
-use ndata::dataobject::*;
-#[cfg(not(feature="python_no_singleton"))]
-use std::sync::RwLock;
-//#[cfg(not(feature="python_no_singleton"))]
-//use state::Storage;
-#[cfg(not(feature="python_no_singleton"))]
-use std::sync::Once;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use ndata::dataobject::DataObject;
+use ndata::dataarray::DataArray;
+use crate::code::CodeException;
+use crate::DataStore;
+use crate::flowlang::system::system_call::system_call;
 
-use crate::code::*;
-use crate::datastore::*;
-
-#[cfg(not(feature="python_no_singleton"))]
-static START: Once = Once::new();
-#[cfg(not(feature="python_no_singleton"))]
-static PYENV:RwLock<Option<PyEnv>> = RwLock::new(None);
-
-struct PyEnv {
-  register: Py<PyAny>,
-  exec: Py<PyAny>,
-  map: HashMap<String, u64>,
-}
-
-impl PyEnv {
-  fn new() -> PyEnv {
-    Python::with_gil(|py| {
-      let code = PyModule::from_code(
-          py,
-          "import json
-NNAPI = {}
-try:
-  import importlib.util
-  def loadpython(module, path):
-    spec = importlib.util.spec_from_file_location(module, path)
-    foo = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(foo)
-    return foo
-except:
-  import imp
-  def loadpython(module, path):
-    return imp.load_source(module, path)
-
-def register(lib, ctl, cmd, id, path):
-  if not lib in NNAPI:
-    NNAPI[lib] = {}
-  if not ctl in NNAPI[lib]:
-    NNAPI[lib][ctl] = {}
-  module = 'robot.'+lib+'.'+id
-  claz = loadpython(module, path)
-  NNAPI[lib][ctl][cmd] = claz.execute
-
-def execute(lib, ctl, cmd, args):
-  try:
-    res = NNAPI[lib][ctl][cmd](json.loads(args));
-    if (type(res) is str):
-      d = {
-        'status': 'ok',
-        'msg': res
-      }
-    else:
-      d = {
-        'status': 'ok',
-        'data': str(res)
-      }
-    return json.dumps(d)
-  except Exception as err:
-    d = {
-      'status': 'err',
-      'data': str(err)
-    }
-    return json.dumps(d)",
-            "",
-            "",
-      ).unwrap();
-      let register: Py<PyAny> = code.getattr("register").unwrap().into();
-      let exec: Py<PyAny> = code.getattr("execute").unwrap().into();
-      PyEnv { 
-        register: register,
-        exec: exec,
-        map: HashMap::new(),
-      }
-    })
-  }
-  
-  fn register(&self, lib:&str, ctl:&str, cmd:&str, id:&str, path:&str) {
-    Python::with_gil(|py| {
-      let args = (lib, ctl, cmd, id, path);
-      let res = self.register.call1(py, args);
-      if res.is_err() { panic!("{:?} - {}", res, path); }
-    });
-  }
-  
-  fn execute(&self, lib:&str, ctl:&str, cmd:&str, args:&str) -> String {
-    Python::with_gil(|py| {
-      let a = (lib, ctl, cmd, args);
-      let res = self.exec.call1(py, a);
-      if res.is_err() { return format!("{:?} - {:?}", res, a); }
-      let res:String = res.unwrap().extract(py).unwrap();
-      res 
-    })
-  }
-}
+#[cfg(feature="python_runtime")]
+use crate::pyenv::*;
 
 #[derive(Debug)]
 pub struct PyCmd {
+  #[cfg(not(feature="python_runtime"))]
+  path:String,
+  #[cfg(feature="python_runtime")]
   lib:String,
+  #[cfg(feature="python_runtime")]
   id:String,
 }
 
 impl PyCmd{
   pub fn new(lib:&str, id:&str) -> PyCmd{
     PyCmd{
+      #[cfg(not(feature="python_runtime"))]
+      path: PyCmd::get_path(lib,id),
+      #[cfg(feature="python_runtime")]
       lib:lib.to_string(),
+      #[cfg(feature="python_runtime")]
       id:id.to_string(),
     }
   }
-  
   pub fn execute(&self, args:DataObject) -> Result<DataObject, CodeException> {
-    #[cfg(not(feature="python_no_singleton"))]
+    #[cfg(not(feature="python_runtime"))]
     {
-        START.call_once(|| {
-          *PYENV.write().unwrap() = Some(PyEnv::new());
-        });
+        let mut a = DataArray::new();
+        a.push_string("python");
+        a.push_string(&self.path);
+        a.push_string(&args.to_string());
+        let o = system_call(a);
+        let err = o.get_string("err");
+        if &err == "" {
+            let out = o.get_string("out");
+            let mut jo = DataObject::new();
+            jo.put_string("msg", &out);
+            return Ok(jo);
+        }
+        else {
+            let mut jo = DataObject::new();
+            jo.put_string("status", "err");
+            jo.put_string("msg", &err);
+            return Ok(jo);
+        }
     }
-    
-    let store = DataStore::new();
-    let f = store.root.to_owned();
-    let f = f.canonicalize().unwrap();
-    let f = f.parent().unwrap();
-    let f = f.join("generated");
-    let f = f.join("com");
-    let f = f.join("newbound");
-    let f = f.join("robot");
-    let f = f.join("published");
-    let f = f.join(self.lib.to_owned());
-    let f = f.join(self.id.to_owned()+"-f.py");
-    
-    let store = DataStore::new();
-    let cmd = store.get_data(&self.lib, &self.id);
-    let cmd = cmd.get_object("data");
-    let jsid = cmd.get_string("python");
-    let name = cmd.get_string("name");
-    let cmd = store.get_data(&self.lib, &jsid);    
-    let cmd = cmd.get_object("data");
-//    println!("{}", cmd.to_json());
-    let code = cmd.get_string("python");
-    let ctl = cmd.get_string("ctl");
-//    let returntype = cmd.get_string("returntype");
-    let params = cmd.get_array("params");
-    
-    let mut a = DataObject::new();
-    for o in params.objects(){
-      let key = o.object().get_string("name");
-      let val = args.get_property(&key);
-      a.set_property(&key, val);
-    }
-    
-    // FIXME - Use timestamp instead
-    let h1 = calculate_hash(&code);
-    #[cfg(not(feature="python_no_singleton"))]
-    let wrap = &mut PYENV.write().unwrap();
-    #[cfg(not(feature="python_no_singleton"))]
-    let wrap = wrap.as_mut().unwrap();
-    #[cfg(feature="python_no_singleton")]
-    let mut wrap = PyEnv::new();
-    let hasfunc;
-    let mut h2 = 0;
-    {
-      let cmdname = "NNAPI.".to_string()+(&self.lib)+"."+(&ctl)+"."+&name;
-      let functions = &mut wrap.map;
-      let h3 = functions.get(&cmdname);
-      hasfunc = h3.is_some();
-      if hasfunc { h2 = *h3.unwrap(); }
-      functions.insert(cmdname.to_owned(), h1);
-    }
-
-    if !hasfunc || h2 != h1 {
-      wrap.register(&self.lib, &ctl, &name, &self.id, f.to_str().unwrap());
-    }
-    let res = wrap.execute(&self.lib, &ctl, &name, &a.to_string());
-    if !res.starts_with("{"){
-      let mut jo = DataObject::new();
-      jo.put_string("status", "err");
-      jo.put_string("msg", &res);
-      return Ok(jo);
-    }
-    Ok(DataObject::from_string(&res))
+    #[cfg(feature="python_runtime")]
+    Ok(dopy(&self.lib, &self.id, args))
   }
-}
-
-fn calculate_hash<T: Hash>(t: &T) -> u64 {
-  let mut s = DefaultHasher::new();
-  t.hash(&mut s);
-  s.finish()
+  
+  pub fn get_path(lib:&str, id:&str) -> String {
+    let store = DataStore::new();
+    let data = store.get_data(lib, id);
+    let data = data.get_object("data");
+    let data = data.get_string("python");
+    let data = store.get_data(lib, &data);
+    let data = data.get_object("data");
+    let ctl = data.get_string("ctl");
+    let cmd = data.get_string("cmd");
+    let root = store.get_lib_root(&lib);
+    let filename = cmd.clone()+".py";
+    let path = root.join("src").join(&lib).join(&ctl).join(&filename);    
+    path.display().to_string()
+  }
 }

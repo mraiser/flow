@@ -13,7 +13,7 @@ use std::io::Write;
 use std::collections::HashMap;
 use std::fs::create_dir_all;
 
-const CMD_MOD_LINE:&str = "pub fn cmdinit(cmds: &mut Vec<(String, Transform, String)>) {";
+const CMD_MOD_LINE:&str = "pub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {";
 //const MYCRATE:&str = env!("CARGO_CRATE_NAME");
 
 pub fn build_all() -> bool {
@@ -184,44 +184,24 @@ pub fn build(lib:&str, ctl:&str, cmd:&str, root:&Path) -> bool {
       
       //println!("Building Rust: {}:{}:{}", lib, ctl, cmd);
       b |= build_rust(path.clone(), meta, &src);
-    
       build_mod(path.clone(), &lib, &ctl, &cmd, &id);
     }
-    
     else if typ == "python" {
       let cid = &data.get_string("python");
       let mut meta = store.get_data(lib, cid);
       
-      let path = store.get_data_file(lib, &(cid.to_owned()+".python"));
+      let pathx = store.get_data_file(lib, &(cid.to_owned()+".python"));
+      let src = store.read_file(pathx);
       
-      let src = store.read_file(path);
-      let pypath = store.root.parent().unwrap().join("lib_python");
-      let path = store.root.parent().unwrap()
-                                    .join("generated")
-                                    .join("com")
-                                    .join("newbound")
-                                    .join("robot")
-                                    .join("published")
-                                    .join(lib);
-      
-      meta.put_string("ctlid", id);
       meta.put_string("lib", lib);
       meta.put_string("ctl", ctl);
       meta.put_string("cmd", cmd);
       
-      // FIXME - Don't rebuild if current
-      
-      println!("Building Python: {}:{}:{}", lib, ctl, cmd);
-      build_python(pypath, path, meta, &src);
+      //println!("Building Python: {}:{}:{}", lib, ctl, cmd);
+      build_python(path, meta, &src);
     }
-    
-    
-    
-    
-    
-    
   }  
-  // FIXME - ELSE WHAT?
+  // FIXME - JS/Java/Flow
   
   b
 }
@@ -527,55 +507,46 @@ fn build_rust_invoke(cmd: &str, params: DataArray, returntype: &str) -> (String,
     (invoke0, invoke1, invoke2)
 }
 
-fn build_python(pypath:PathBuf, path:PathBuf, meta:DataObject, src:&str) {
-  let _x = create_dir_all(&pypath);
-  let _x = create_dir_all(&path);
-//  let id = meta["id"].as_str().unwrap();
-//  let lib = meta["lib"].as_str().unwrap();
-//  let ctl = meta["ctl"].as_str().unwrap();
-  let ctlid = &meta.get_string("ctlid");
-//  let cmd = meta["cmd"].as_str().unwrap();
-  let data = meta.get_object("data");
-  let import = data.get_string("import");
-  let import = import.replace("\r", "\n");
-//  let returntype = &lookup_type(data["returntype"].as_str().unwrap());
-  let params = data.get_array("params");
-  
-  let path2 = &path.join(ctlid.to_string()+"-f.py");
-  let mut file = File::create(&path2).unwrap();
-
-  let _x = file.write_all(b"import sys\nsys.path.append(\"");
-  let _x = file.write_all(pypath.canonicalize().unwrap().to_str().unwrap().as_bytes());
-  let _x = file.write_all(b"\")\n\n");
-  let _x = file.write_all(import.as_bytes());
-  let _x = file.write_all(b"\ndef execute(args):\n  return ");
-  let _x = file.write_all(ctlid.as_bytes());
-  let _x = file.write_all(b"(**args)\n");
-  let _x = file.write_all(b"\ndef ");
-  let _x = file.write_all(ctlid.as_bytes());
-  let _x = file.write_all(b"(");
-  
-  let mut invoke = "".to_string();
-  for param in params.objects() {
-    let param = param.object();
-    if invoke != "" { invoke += ", "; }
-    invoke += &param.get_string("name");
-  }
-  let _x = file.write_all(invoke.as_bytes());
-  let _x = file.write_all(b"):\n");
-  
-  let src = indent(src.to_string());
-  let _x = file.write_all(src.as_bytes());
-  let _x = file.write_all(b"\n");
-}
-
-fn indent(src:String) -> String {
-  let mut s = "".to_string();
-  let mut lines = BufReader::new(src.as_bytes()).lines();
-  while let Some(line) = lines.next() {
-    s += "  ";
-    s += &line.unwrap();
-    s += "\n";
-  }
-  s
+fn build_python(path:PathBuf, meta:DataObject, src:&str) {
+    let cmd = meta.get_string("cmd");
+    let pyfile = path.join(cmd.to_string()+".py");
+    
+    let data = meta.get_object("data");
+    let params = data.get_array("params");
+    let import = data.get_string("import");
+    let import = import.replace("\r", "\n");
+    
+    let mut invoke = "".to_string();
+    let mut invoke2 = "".to_string();
+    for param in params.objects() {
+        let param = param.object();
+        if invoke != "" { invoke += ", "; }
+        invoke += &param.get_string("name");
+        if invoke2 != "" { invoke2 += ", "; }
+        invoke2 += "args['";
+        invoke2 += &param.get_string("name");
+        invoke2 += "']";
+    }
+    
+    let mut new_src = import;
+    new_src += "def execute(args):\n  return ";
+    new_src += &cmd;
+    new_src += "(";
+    new_src += &invoke2;
+    new_src += ")\n\ndef ";
+    new_src += &cmd;
+    new_src += "(";
+    new_src += &invoke;
+    new_src += "):\n";
+    
+    let mut lines = BufReader::new(src.as_bytes()).lines();
+    while let Some(line) = lines.next() {
+        new_src += "  ";
+        new_src += &line.unwrap();
+        new_src += "\n";
+    }
+    
+    new_src += "\nif __name__ == \"__main__\":\n    print(json.dumps(execute(json.loads(sys.argv[1]))))";
+    
+    std::fs::write(pyfile, new_src).expect("Unable to write file");
 }

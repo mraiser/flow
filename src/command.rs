@@ -11,7 +11,6 @@ use crate::rustcmd::*;
 use crate::javacmd::*;
 #[cfg(feature="javascript_runtime")]
 use crate::jscmd::*;
-#[cfg(feature="python_runtime")]
 use crate::pycmd::*;
 
 #[derive(Debug)]
@@ -22,7 +21,6 @@ pub enum Source {
   Java(JavaCmd),
   #[cfg(feature="javascript_runtime")]
   JavaScript(JSCmd),
-  #[cfg(feature="python_runtime")]
   Python(PyCmd),
 }
 
@@ -64,7 +62,6 @@ impl Command {
         // FIXME
         return true;
       },
-      #[cfg(feature="python_runtime")]
       "python" => {
         // FIXME
         return true;
@@ -119,7 +116,6 @@ impl Command {
       "js" => {
         Source::JavaScript(JSCmd::new(lib, id))
       },
-      #[cfg(feature="python_runtime")]
       "python" => {
         Source::Python(PyCmd::new(lib, id))
       },
@@ -208,7 +204,6 @@ impl Command {
         return r.execute(args);
       }
     }
-    #[cfg(feature="python_runtime")]
     {
       if let Source::Python(r) = &self.src {
         return r.execute(args);
