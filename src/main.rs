@@ -20,6 +20,7 @@ pub mod javacmd;
 #[cfg(feature="javascript_runtime")]
 pub mod jscmd;
 #[cfg(feature="python_runtime")]
+pub mod pyenv;
 pub mod pycmd;
 
 use std::env;
