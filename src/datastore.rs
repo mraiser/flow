@@ -74,7 +74,10 @@ impl DataStore {
   
   pub fn lib_info(&self, lib:&str) -> DataObject {
     let path = self.root.join(lib).join("meta.json");
-    let s = self.read_file(path);
+    let s = match path.exists() {
+      true => self.read_file(path),
+      false => "{}".to_string()
+    };
     DataObject::from_string(&s)
   }
   

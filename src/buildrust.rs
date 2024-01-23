@@ -550,3 +550,143 @@ fn build_python(path:PathBuf, meta:DataObject, src:&str) {
     
     std::fs::write(pyfile, new_src).expect("Unable to write file");
 }
+
+pub fn rebuild_rust_api() {
+    let store = DataStore::new();
+    let mut apistr = "pub const fn new() -> api {\n  api {\n".to_string();
+    let mut libstr = "pub struct api {\n".to_string();
+    let mut ctlstr = "".to_string();
+    let mut cmdstr = "".to_string();
+    let mut impstr = "".to_string();
+
+    fn lookup_dtype(ptype:&str) -> &str {
+      match ptype.as_ref() {
+        "JSONObject" => "DataObject",
+        "JSONArray" => "DataArray",
+        "Stream" => "DataBytes",
+        "float" => "f64",
+        "Integer" => "i64",
+        "Boolean" => "bool",
+        "Any" => "Data",
+        "NULL" => "DNull",
+        _ => "String"
+      }
+    }
+
+    fn lookup_ntype(ptype:&str) -> &str {
+      match ptype.as_ref() {
+        "JSONObject" => "object",
+        "JSONArray" => "array",
+        "Stream" => "bytes",
+        "float" => "float",
+        "Integer" => "int",
+        "Boolean" => "boolean",
+        "Any" => "property",
+        "NULL" => "null",
+        _ => "string"
+      }
+    }
+
+    let libs = read_dir("data").unwrap();
+    for db in libs {
+      let lib = db.unwrap().file_name().into_string().unwrap();
+      let root = store.get_lib_root(&lib);
+      if store.exists(&lib, "controls") {
+        apistr = apistr + "    "+(&lib) + ": " + (&lib) + " {\n";
+        libstr = libstr + "  pub " + (&lib) + ": " + (&lib) + ",\n";
+        ctlstr = ctlstr + "pub struct " + (&lib) + " {\n";
+        let controls = store.get_data(&lib, "controls");
+        let list = controls.get_object("data").get_array("list");
+        for control in list.objects() {
+          let control = control.object();
+          let ctl = control.get_string("name");
+          let id = control.get_string("id");
+          if store.exists(&lib, &id) {
+            apistr = apistr + "      "+(&ctl) + ": " + (&lib) + "_" + (&ctl) + " {},\n";
+            ctlstr = ctlstr + "  pub " + (&ctl) + ": " + (&lib) + "_" + (&ctl) + ",\n";
+            cmdstr = cmdstr + "pub struct " + (&lib) + "_" + (&ctl) + " {}\n";
+            let ctldata = store.get_data(&lib, &id);
+            let d = ctldata.get_object("data");
+            if d.has("cmd") {
+              let cmdlist = d.get_array("cmd");
+              if cmdlist.len() > 0 {
+                impstr = impstr + "impl " + (&lib) + "_" + (&ctl) + " {\n";
+                for command in cmdlist.objects() {
+                  let command = command.object();
+                  let cmd = command.get_string("name");
+                  let id = command.get_string("id");
+                  if store.exists(&lib, &id) {
+                    let meta = store.get_data(&lib, &id);
+                    let data = meta.get_object("data");
+                    let typ = data.get_string("type");
+                    if typ == "rust" {
+                      impstr = impstr + "  pub fn " + (&cmd) + "(&self";
+                      let mut pstr = "".to_string();
+                      let id = &data.get_string("rust");
+                      let meta = store.get_data(&lib, &id).get_object("data");
+                      let params = meta.get_array("params");
+                      for param in params.objects(){
+                        let param = param.object();
+                        let pname = param.get_string("name");
+                        let ptype = param.get_string("type");
+                        let dtype = lookup_dtype(&ptype);
+                        let ntype = lookup_ntype(&ptype);
+                        impstr = impstr + ", " + (&pname) + ":" + dtype;
+                        let q = match(ntype.as_ref()) {
+                          "string" => "&",
+                          _ => ""
+                        };
+                        let x = match(ntype.as_ref()) {
+                          "property" => "set",
+                          _ => "put"
+                        };
+                        pstr = pstr + "    d." + x + "_" + (&ntype) + "(\"" + (&pname) + "\", " + q + (&pname) + ");\n";
+                      }
+                      
+                      
+                      
+                      
+                      let rtype = meta.get_string("returntype");
+                      let ntype = lookup_ntype(&rtype);
+                      let rtype = lookup_dtype(&rtype);
+                      impstr = impstr + ") -> " + rtype + " {\n    let mut d = DataObject::new();\n" + &pstr;
+                      impstr = impstr + "    RustCmd::new(\"" + (&id) + "\").execute(d).unwrap().get_" + (&ntype) + "(\"a\")\n  }\n";
+                    }
+                  }
+                }
+                impstr += "}\n";
+              }
+            }
+          }
+        }
+        apistr += "    },\n";
+        ctlstr += "}\n";
+      }
+    }
+    apistr += "  }\n}\n";
+    libstr += "}";
+
+    let usestr = r#"use ndata::dataobject::DataObject;
+use ndata::dataarray::DataArray;
+use ndata::databytes::DataBytes;
+use ndata::data::Data;
+use flowlang::rustcmd::RustCmd;
+"#;
+
+    //println!("{}", usestr);
+    //println!("{}", cmdstr);
+    //println!("{}", ctlstr);
+    //println!("{}", libstr);
+    //println!("{}", apistr);
+    //println!("{}", impstr);
+    
+    let s = usestr.to_string()
+        + &cmdstr
+        + &ctlstr
+        + &libstr
+        + &apistr
+        + &impstr;
+    
+    let path = store.root.parent().unwrap().join("cmd").join("src").join("api.rs");
+    let _x = std::fs::write(&path, &s);
+}
