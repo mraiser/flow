@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.3.5"
+version = "0.3.6"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -14,6 +14,7 @@ serde_support = ["serde","serde_json","ndata/serde_support"]
 java_runtime = ["jni"]
 python_runtime = ["pyo3"]
 javascript_runtime = ["deno_core","serde_v8","serde_support"]
+mirror = []
 
 [dependencies]
 ndata = { version = "^0.3" }
