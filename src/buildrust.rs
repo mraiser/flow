@@ -112,6 +112,16 @@ pub fn build_lib(lib:String) -> bool {
           }
           else if features.get(&k).unwrap() != &v {
             println!("WARNING: Feature does not match existing: {}", newv);
+            println!("OLD VALUE: {}", features.get(&k).unwrap());
+            let mut vi = indices[0];
+            while vi < vec.len() {
+              if vec[vi].starts_with(&k) {
+                vec[vi] = newv;
+                rewrite = true;
+                break;
+              }
+              vi += 1;
+            }
           }
         }
       }
