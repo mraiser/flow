@@ -586,7 +586,7 @@ pub fn rebuild_rust_api() {
 
     fn lookup_ntype(ptype:&str) -> &str {
       match ptype.as_ref() {
-        "FLAT" => "DataObject",
+        "FLAT" => "object",
         "JSONObject" => "object",
         "JSONArray" => "array",
         "InputStream" => "bytes",
