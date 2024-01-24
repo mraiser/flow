@@ -573,7 +573,7 @@ pub fn rebuild_rust_api() {
       match ptype.as_ref() {
         "JSONObject" => "DataObject",
         "JSONArray" => "DataArray",
-        "Stream" => "DataBytes",
+        "InputStream" => "DataBytes",
         "float" => "f64",
         "Integer" => "i64",
         "Boolean" => "bool",
@@ -587,7 +587,7 @@ pub fn rebuild_rust_api() {
       match ptype.as_ref() {
         "JSONObject" => "object",
         "JSONArray" => "array",
-        "Stream" => "bytes",
+        "InputStream" => "bytes",
         "float" => "float",
         "Integer" => "int",
         "Boolean" => "boolean",
