@@ -58,6 +58,9 @@ pub fn build_lib(lib:String) -> bool {
     }
   }
   
+  // FIXME
+  b = true;
+  
   if b {
     let meta = store.lib_info(&lib);
     if meta.has("cargo") {
