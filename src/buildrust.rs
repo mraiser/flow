@@ -21,7 +21,7 @@ pub fn build_all() -> bool {
   let libs = read_dir("data").unwrap();
   for db in libs {
     let lib = db.unwrap().file_name().into_string().unwrap();
-    b = b || build_lib(lib);
+    b = build_lib(lib) || b;
   }
   b
 }
