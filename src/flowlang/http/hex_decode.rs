@@ -33,8 +33,16 @@ while old.contains("%") {
     old = old[1..].to_string();
   }
   else {
-    out = out + std::str::from_utf8(&res.unwrap()).unwrap();
-    old = old[3..].to_string();
+    let res = res.unwrap();
+    let tmp = std::str::from_utf8(&res);
+    if tmp.is_err(){
+      out = out + &old[0..1];
+      old = old[1..].to_string();
+    }
+    else {
+      out = out + tmp.unwrap();
+      old = old[3..].to_string();
+    }
   }
 }
 
