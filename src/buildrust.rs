@@ -11,7 +11,6 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::collections::HashMap;
-use std::fs::create_dir_all;
 
 const CMD_MOD_LINE:&str = "pub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {";
 //const MYCRATE:&str = env!("CARGO_CRATE_NAME");
@@ -59,7 +58,7 @@ pub fn build_lib(lib:String) -> bool {
   }
   
   // FIXME
-  b = true;
+  if true { b = true; }
   
   if b {
     let meta = store.lib_info(&lib);
@@ -605,7 +604,7 @@ pub fn rebuild_rust_api() {
     let libs = read_dir("data").unwrap();
     for db in libs {
       let lib = db.unwrap().file_name().into_string().unwrap();
-      let root = store.get_lib_root(&lib);
+      //let root = store.get_lib_root(&lib);
       if store.exists(&lib, "controls") {
         apistr = apistr + "    "+(&lib) + ": " + (&lib) + " {\n";
         libstr = libstr + "  pub " + (&lib) + ": " + (&lib) + ",\n";
@@ -647,11 +646,11 @@ pub fn rebuild_rust_api() {
                         let dtype = lookup_dtype(&ptype);
                         let ntype = lookup_ntype(&ptype);
                         impstr = impstr + ", " + (&pname) + ":" + dtype;
-                        let q = match(ntype.as_ref()) {
+                        let q = match ntype.as_ref() {
                           "string" => "&",
                           _ => ""
                         };
-                        let x = match(ntype.as_ref()) {
+                        let x = match ntype.as_ref() {
                           "property" => "set",
                           _ => "put"
                         };

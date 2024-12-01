@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.3.15"
+version = "0.3.16"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -18,13 +18,13 @@ mirror = []
 python_no_singleton = []
 
 [dependencies]
-ndata = { version = "0.3.10" }
+ndata = { version = "0.3.11" }
 jni = { version = "^0.21.1", features = ["invocation"], optional = true }
 pyo3 = { version = "0.20.3", features = ["auto-initialize"], optional = true }
 deno_core = { version = "0.249.0", optional = true }
 serde_v8 = { version = "0.158.0", optional = true }
-serde = { version = "1.0.195", features = ["derive"], optional = true }
-serde_json = { version = "1.0.111", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [[bin]]
 name = "flow"

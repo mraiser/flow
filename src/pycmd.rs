@@ -1,7 +1,10 @@
 use ndata::dataobject::DataObject;
-use ndata::dataarray::DataArray;
 use crate::code::CodeException;
 use crate::DataStore;
+
+#[cfg(not(feature="python_runtime"))]
+use ndata::dataarray::DataArray;
+#[cfg(not(feature="python_runtime"))]
 use crate::flowlang::system::system_call::system_call;
 
 #[cfg(feature="python_runtime")]

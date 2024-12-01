@@ -3,20 +3,14 @@
 use ndata::dataobject::DataObject;
 use std::sync::{Once, RwLock};
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
 use std::path::Path;
 use crate::DataStore;
 use crate::pycmd::PyCmd;
 use ndata::data::Data;
-use pyo3::types::PyTuple;
 use pyo3::types::PyDict;
 use pyo3::types::PyList;
 use ndata::databytes::DataBytes;
 use ndata::dataarray::DataArray;
-use std::collections::HashMap;
-use serde_json::Value;
-use crate::base64::Base64;
-use ndata::data::Data::*;
 use pyo3::types::PyBytes;
 
 // Static variables for PyEnv singleton
@@ -150,9 +144,9 @@ pub fn data_to_py(data: Data, py: Python) -> PyResult<PyObject> {
         },
 
         // Handle other cases if needed, like streams, etc.
-        _ => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-            "Unsupported data type for conversion to Python.",
-        )),
+        //_ => Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+        //    "Unsupported data type for conversion to Python.",
+        //)),
     }
 }
 
@@ -170,7 +164,7 @@ fn py_any_to_data_object(py_any: &PyAny, py: Python) -> PyResult<DataObject> {
     } else if let Ok(f) = py_any.extract::<f64>() {
         data.put_float("data", f); // Use put_float for the data
     } else if let Ok(b) = py_any.extract::<bool>() {
-        data.put_bool("data", b); // Use put_bool for the data
+        data.put_boolean("data", b); // Use put_bool for the data
     } else if let Ok(bytes) = py_any.extract::<Vec<u8>>() {
         data.put_bytes("data", DataBytes::from_bytes(&bytes)); // Use put_bytes for the data
     } else if let Ok(py_dict) = py_any.extract::<&PyDict>() {
@@ -242,8 +236,8 @@ pub fn dopy(lib: &str, id: &str, args: DataObject) -> DataObject {
     let cmd = store.get_data(lib, &jsid);    
     let cmd = cmd.get_object("data");
 
-    let code = cmd.get_string("python");
-    let ctl = cmd.get_string("ctl");
+    //let code = cmd.get_string("python");
+    //let ctl = cmd.get_string("ctl");
     let params = cmd.get_array("params");
 
     // Prepare the arguments for the Python function
