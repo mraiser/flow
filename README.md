@@ -1,4 +1,4 @@
-# Flowlang Crate: In-Depth Technical Analysis
+# Flowlang
 
 ## Purpose and Core Functionality
 
