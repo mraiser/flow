@@ -50,6 +50,7 @@ impl DataStore {
     let _x = o.incr();
   }
   
+  #[allow(static_mut_refs)]
   pub fn new() -> DataStore {
     let path;
     unsafe {
@@ -81,6 +82,7 @@ impl DataStore {
     DataObject::from_string(&s)
   }
   
+  #[allow(static_mut_refs)]
   pub fn get_lib_root(&self, lib:&str) -> PathBuf {
     let meta = self.lib_info(&lib);
 

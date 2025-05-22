@@ -336,7 +336,7 @@ impl Code {
           
           else if ctype == "string" { 
             #[cfg(not(feature="serde_support"))]
-            out.put_string(&key, &unescape(&v)); 
+            out.put_string(&key, &unescape(&v).unwrap());
             #[cfg(feature="serde_support")]
             out.put_string(&key, serde_json::from_str(&format!("\"{}\"", &v)).unwrap());
           }

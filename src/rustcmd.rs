@@ -20,6 +20,7 @@ pub struct RustCmd {
 }
 
 impl RustCmd{
+  #[allow(static_mut_refs)]
   pub fn init(){
     START.call_once(|| {
       let map = HashMap::<String, (Transform, String)>::new();
@@ -27,6 +28,7 @@ impl RustCmd{
     });
   }
   
+  #[allow(static_mut_refs)]
   pub fn add(id: String, t: Transform, io: String) {
     unsafe {
       let map = &mut COMMANDS.write().unwrap();
@@ -35,6 +37,7 @@ impl RustCmd{
     }
   }
   
+  #[allow(static_mut_refs)]
   pub fn new(id:&str) -> RustCmd{
     unsafe {
       let map = &mut COMMANDS.read().unwrap();
@@ -48,6 +51,7 @@ impl RustCmd{
     }
   }
   
+  #[allow(static_mut_refs)]
   pub fn exists(id:&str) -> bool{
     unsafe {
       let map = &mut COMMANDS.read().unwrap();

@@ -24,7 +24,7 @@ pub type EventHook = fn(&str,&str,DataObject);
 
 //static START: Once = Once::new();
 //pub static EVENTHOOKS:Storage<RwLock<Vec<EventHook>>> = Storage::new();
-pub static mut EVENTHOOKS:RwLock<Option<Vec<EventHook>>> = RwLock::new(Some(Vec::new()));
+static mut EVENTHOOKS:RwLock<Option<Vec<EventHook>>> = RwLock::new(Some(Vec::new()));
 
 pub fn run() {
   let system = init_globals();
@@ -63,6 +63,7 @@ pub fn add_timer(tid:&str, mut tdata:DataObject) {
   timers.put_object(&tid, tdata);
 }
 
+#[allow(static_mut_refs)]
 pub fn add_event_hook(hook:EventHook) {
   unsafe { 
     let map = &mut EVENTHOOKS.write().unwrap();
@@ -122,6 +123,7 @@ pub fn fire_event(app:&str, event:&str, data:DataObject) {
   DataStore::globals().get_object("system").get_array("fire").push_object(o);
 }
 
+#[allow(static_mut_refs)]
 pub fn event_loop() {
   let system = DataStore::globals().get_object("system");
   let mut events = system.get_object("events");

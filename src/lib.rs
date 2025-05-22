@@ -12,6 +12,7 @@ pub mod rfc2822date;
 pub mod sha1;
 pub mod base64;
 pub mod appserver;
+pub mod x25519;
 
 mod cmdinit;
 

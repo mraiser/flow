@@ -12,7 +12,7 @@ use crate::rustcmd::*;
 
 static START: Once = Once::new();
 //pub static PRIMITIVES:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
-pub static mut PRIMITIVES:RwLock<Option<HashMap<String, (Transform, String)>>> = RwLock::new(None);
+static mut PRIMITIVES:RwLock<Option<HashMap<String, (Transform, String)>>> = RwLock::new(None);
 
 pub struct Primitive {
   pub name: String,
@@ -21,6 +21,7 @@ pub struct Primitive {
 }
 
 impl Primitive {
+  #[allow(static_mut_refs)]
   fn init(){
     START.call_once(|| {
       let mut map = HashMap::<String, (Transform, String)>::new();
@@ -94,6 +95,7 @@ impl Primitive {
     });
   }
   
+  #[allow(static_mut_refs)]
   pub fn new(name: &str) -> Primitive {
     Primitive::init();
     unsafe {
@@ -114,6 +116,7 @@ impl Primitive {
     (self.func)(args)
   }
   
+  #[allow(static_mut_refs)]
   pub fn list() -> DataArray {
     Primitive::init();
     unsafe {
