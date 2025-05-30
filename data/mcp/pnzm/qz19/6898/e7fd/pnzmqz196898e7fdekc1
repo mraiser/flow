@@ -1,0 +1,1 @@
+{"writers":[],"time":1748395766360,"data":{"ctl":"mcp","cmd":"list_resources","import":"use ndata::dataarray::DataArray;\n","attachmentkeynames":["rs"],"returntype":"JSONObject","params":[],"lib":"mcp","type":"rust","desc":""},"username":"system","id":"pnzmqz196898e7fdekc1","readers":[]}

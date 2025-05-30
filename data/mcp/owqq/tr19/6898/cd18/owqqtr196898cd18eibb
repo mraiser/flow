@@ -1,0 +1,1 @@
+{"data":{"attachmentkeynames":["rs"],"cmd":"list_prompts","ctl":"mcp","desc":"","import":"use ndata::dataarray::DataArray;\n","lib":"mcp","params":[],"returntype":"JSONObject","type":"rust"},"id":"owqqtr196898cd18eibb","readers":[],"time":1746064512523,"username":"system","writers":[]}

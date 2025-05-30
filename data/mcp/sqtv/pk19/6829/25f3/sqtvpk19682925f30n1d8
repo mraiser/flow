@@ -1,0 +1,1 @@
+{"data":{"attachmentkeynames":["rs"],"cmd":"initialize","ctl":"mcp","desc":"","import":"use flowlang::appserver;\n","lib":"mcp","params":[],"returntype":"JSONObject","type":"rust"},"id":"sqtvpk19682925f30n1d8","readers":[],"time":1746044564438,"username":"system","writers":[]}

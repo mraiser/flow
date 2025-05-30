@@ -13,6 +13,7 @@ pub mod sha1;
 pub mod base64;
 pub mod appserver;
 pub mod x25519;
+pub mod mcp;
 
 mod cmdinit;
 

@@ -3,7 +3,7 @@ use std::thread;
 use std::panic;
 use std::fs;
 use std::path::Path;
-use std::fs::File;
+//use std::fs::File;
 use ndata::dataarray::*;
 //use ndata::sharedmutex::SharedMutex;
 use std::time::Duration;
@@ -243,7 +243,7 @@ pub fn save_config(config: DataObject) {
 }
 
 pub fn load_config() -> DataObject {
-  println!("Loading appserver configuration");
+  //println!("Loading appserver configuration");
   let mut b = false;
   let mut config;
   if Path::new("config.properties").exists() {
@@ -338,7 +338,7 @@ pub fn init_globals() -> DataObject {
     let ppath = Path::new(&path);
     if ppath.exists(){ p = read_properties(path); } 
     else { 
-      let _x = File::create(ppath).unwrap();
+      //let _x = File::create(ppath).unwrap();
       p = DataObject::new(); 
     }
     o.put_object("runtime", p);
@@ -347,16 +347,18 @@ pub fn init_globals() -> DataObject {
     let ppath = Path::new(&path);
     if ppath.exists(){ p = read_properties(path); } 
     else {
-      let _x = File::create(ppath).unwrap();
+      //let _x = File::create(ppath).unwrap();
       p = DataObject::new(); 
     }
     o.put_object("app", p.clone());
     apps.put_object(i, o);
     
-    let s = p.get_string("libraries");
-    let sa2 = s.split(",");
-    for j in sa2 {
-      if !libraries.has(j) { load_library(j); }
+    if p.has("libraries"){
+      let s = p.get_string("libraries");
+      let sa2 = s.split(",");
+      for j in sa2 {
+        if !libraries.has(j) { load_library(j); }
+      }
     }
   }
   
