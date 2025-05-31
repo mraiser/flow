@@ -39,11 +39,11 @@ pub fn invoke(data: DataObject) -> DataObject {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn wrap_value(v: DataObject) -> DataObject {
-    // You may return richer content arrays (images, file-links …) later.
-    // For now we stringify whatever the flowlang command returned.
+    let v = v.get_property("a");
+
     let mut text = DataObject::new();
     text.put_string("type", "text");
-    text.put_string("text", &v.to_string());
+    text.put_string("text", &ndata::Data::as_string(v));
 
     let mut content_arr = DataArray::new();
     content_arr.push_object(text);
