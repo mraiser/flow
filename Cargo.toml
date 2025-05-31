@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.3.18"
+version = "0.3.19"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -20,7 +20,7 @@ gag = ["dep:gag"]
 
 [dependencies]
 gag = { version = "1.0", optional = true }
-ndata = { version = "0.3.13" }
+ndata = "0.3.13"
 jni = { version = "^0.21.1", features = ["invocation"], optional = true }
 pyo3 = { version = "0.20.3", features = ["auto-initialize"], optional = true }
 deno_core = { version = "0.249.0", optional = true }
