@@ -127,7 +127,7 @@ pub fn fire_event(app:&str, event:&str, data:DataObject) {
 pub fn event_loop() {
   let system = DataStore::globals().get_object("system");
   let mut events = system.get_object("events");
-  let fire = system.get_array("fire");
+  let mut fire = system.get_array("fire");
   let dur = Duration::from_millis(100);
   while system.get_boolean("running") {
     let mut b = true;

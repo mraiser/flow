@@ -1,7 +1,9 @@
+use ::flowlang::*;
+
 use std::env;
-use flowlang::init;
-use flowlang::appserver::init_globals;
-use flowlang::mcp::mcp::mcp::run;
+use init;
+use appserver::init_globals;
+use mcp::mcp::mcp::run;
 
 #[cfg(feature = "gag")]
 use gag::Gag;

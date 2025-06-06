@@ -15,7 +15,7 @@ pub mod appserver;
 pub mod x25519;
 pub mod mcp;
 
-mod cmdinit;
+pub mod cmdinit;
 
 #[cfg(feature="java_runtime")]
 pub mod javacmd;
@@ -23,6 +23,8 @@ pub mod javacmd;
 pub mod jscmd;
 #[cfg(feature="python_runtime")]
 pub mod pyenv;
+#[cfg(feature="python_runtime")]
+pub mod pywrapper;
 pub mod pycmd;
 
 use datastore::DataStore;
