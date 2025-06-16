@@ -1,69 +1,56 @@
-use std::sync::RwLock;
-//use state::Storage;
-//use ndata::sharedmutex::SharedMutex;
-use std::sync::Once;
-use std::collections::HashMap;
+// In flowlang/src/rustcmd.rs
 
 use ndata::dataobject::*;
 
 use crate::code::*;
+use crate::DataStore;
+
 
 pub type Transform = fn(DataObject) -> DataObject;
 
-static START: Once = Once::new();
-//static COMMANDS:Storage<RwLock<HashMap<String, (Transform, String)>>> = Storage::new();
-static mut COMMANDS:RwLock<Option<HashMap<String, (Transform, String)>>> = RwLock::new(None);
-
 #[derive(Debug)]
 pub struct RustCmd {
-  func:Transform,
+    func: Transform,
 }
 
-impl RustCmd{
-  #[allow(static_mut_refs)]
-  pub fn init(){
-    START.call_once(|| {
-      let map = HashMap::<String, (Transform, String)>::new();
-      unsafe { *COMMANDS.write().unwrap() = Some(map); }
-    });
-  }
-  
-  #[allow(static_mut_refs)]
-  pub fn add(id: String, t: Transform, io: String) {
-    unsafe {
-      let map = &mut COMMANDS.write().unwrap();
-      let map = map.as_mut().unwrap();
-      map.insert(id, (t, io));
+impl RustCmd {
+    pub fn detail(_id: String, t: Transform, io: String) -> DataObject {
+        // Create a new object to hold the command's details.
+        let mut cmd_details = DataObject::new();
+
+        // Store the function pointer by casting it to an integer.
+        cmd_details.put_int("transform_ptr", t as i64);
+        cmd_details.put_string("io", &io);
+
+        cmd_details
     }
-  }
-  
-  #[allow(static_mut_refs)]
-  pub fn new(id:&str) -> RustCmd{
-    unsafe {
-      let map = &mut COMMANDS.read().unwrap();
-      let map = map.as_ref().unwrap();
-      let t = map.get(id);
-      if t.is_none() { panic!("No such command {}", id); }
-      let t = t.unwrap();
-      RustCmd{
-        func:t.0,
+
+    pub fn new(id: &str) -> RustCmd {
+      let cmd_map = DataStore::globals().get_object("RUST_COMMANDS");
+
+      if !cmd_map.has(id) {
+          panic!("No such command {}", id);
+      }
+
+      let cmd_details = cmd_map.get_object(id);
+      let ptr_val = cmd_details.get_int("transform_ptr");
+
+      // Unsafely cast the integer back into a function pointer.
+      unsafe {
+        let func_ptr: Transform = std::mem::transmute(ptr_val);
+
+        RustCmd {
+            func: func_ptr,
+        }
       }
     }
-  }
-  
-  #[allow(static_mut_refs)]
-  pub fn exists(id:&str) -> bool{
-    unsafe {
-      let map = &mut COMMANDS.read().unwrap();
-      let map = map.as_ref().unwrap();
-      let t = map.get(id);
-      if t.is_none() { return false; }
-    }
-    true
-  }
-  
-  pub fn execute(&self, args:DataObject) -> Result<DataObject, CodeException> {
-    Ok((self.func)(args))
-  }
-}
 
+    pub fn exists(id: &str) -> bool {
+      let cmd_map = DataStore::globals().get_object("RUST_COMMANDS");
+      cmd_map.has(id)
+    }
+
+    pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
+        Ok((self.func)(args))
+    }
+}

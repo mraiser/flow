@@ -11,7 +11,6 @@ use ndata::dataarray::*;
 use ndata::databytes::*;
 use ndata::NDataConfig;
 
-use crate::rustcmd::RustCmd;
 use crate::rand::*;
 
 static mut STORE_PATH:Option<PathBuf> = None;
@@ -29,10 +28,11 @@ impl DataStore {
     Rand::init();
     let q = ndata::init();
     
-    RustCmd::init();
-    
     let o = DataObject::new();
     let _x = o.incr();
+
+    //RustCmd::init();
+
     (dir, q)
   }
   
@@ -43,11 +43,8 @@ impl DataStore {
     
     Rand::init();
     ndata::mirror(q.1);
-    
-    RustCmd::init();
-    
-    let o = DataObject::new();
-    let _x = o.incr();
+
+    //RustCmd::mirror();
   }
   
   #[allow(static_mut_refs)]

@@ -5,15 +5,8 @@ use std::path::{Path, PathBuf};
 
 use ndata::dataarray::DataArray;
 use ndata::dataobject::DataObject;
-// For robust relative path calculation, the 'pathdiff' crate would be ideal.
-// Since it's not specified as available, we'll do simpler relative path construction
-// for the specific case needed, assuming a known structure.
-// use pathdiff; // Example if it were available
 
 use crate::DataStore;
-
-const CMD_MOD_LINE: &str =
-    "pub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {";
 
 // Helper to get the assumed project top-level directory.
 fn get_project_top_level_path() -> PathBuf {
@@ -25,8 +18,11 @@ fn get_project_top_level_path() -> PathBuf {
 
 pub fn build_all() -> bool {
     let mut overall_build_occurred = false;
+    let store = DataStore::new();
     let lib_entries = read_dir("data")
         .expect("Failed to read 'data' directory. This directory is essential for the build process.");
+
+    let mut crates_to_wire: HashMap<String, bool> = HashMap::new();
 
     for dir_entry_result in lib_entries {
         let dir_entry = dir_entry_result
@@ -36,46 +32,50 @@ pub fn build_all() -> bool {
             .into_string()
             .expect("Library name is not valid UTF-8. All library names in 'data' must be valid UTF-8 strings.");
 
+        let lib_metadata = store.lib_info(&lib_name);
+        let (root_name, is_ffi) = get_crate_info(&lib_metadata);
+
+        // Don't register the main project itself for wiring, it's the host.
+        if root_name != "." {
+             crates_to_wire.insert(root_name, is_ffi);
+        }
+
         if build_lib(lib_name) {
             overall_build_occurred = true;
         }
     }
+
+    // After all libraries are built, generate the single initializer for the main binary.
+    generate_main_initializer(&crates_to_wire);
+
     overall_build_occurred
 }
 
 pub fn build_lib(lib_name: String) -> bool {
     let mut build_actions_performed = false;
-    let store = DataStore::new(); // Create store once for the library build
-
-    let project_top_level_path = get_project_top_level_path();
+    let store = DataStore::new();
 
     let lib_metadata = store.lib_info(&lib_name);
-
-    let lib_config_root_field: String;
-    if lib_metadata.has("root") {
-        let value_from_meta = lib_metadata.get_string("root"); // Safe now
-        if value_from_meta.is_empty() { // Handles case where "root": ""
-            lib_config_root_field = "cmd".to_string();
-        } else {
-            lib_config_root_field = value_from_meta;
-        }
-    } else { // "root" key does not exist
-        lib_config_root_field = "cmd".to_string();
-    }
-
+    let (lib_config_root_field, is_ffi) = get_crate_info(&lib_metadata);
 
     let library_build_base_path = if lib_config_root_field == "." {
-        project_top_level_path.clone()
+        get_project_top_level_path()
     } else {
-        project_top_level_path.join(&lib_config_root_field)
+        get_project_top_level_path().join(&lib_config_root_field)
     };
 
-    let library_data_path_for_build_fn = store.get_lib_root(&lib_name);
+    let crate_src_path = library_build_base_path.join("src");
 
+    // Unconditionally create the module structure for every library.
+    ensure_crate_files_exist(&crate_src_path, is_ffi);
+    let lib_src_path = crate_src_path.join(&lib_name);
+    create_dir_all(&lib_src_path).expect("Failed to create library module directory");
+    ensure_mod_file_has_cmdinit(&lib_src_path.join("mod.rs"));
 
-    if !store.exists(&lib_name, "controls") {
-        println!("No controls definition found in library: {}", &lib_name);
-    } else {
+    update_mod_file_content(&crate_src_path.join("lib.rs"), &format!("pub mod {};", lib_name), None);
+    update_mod_file_content(&crate_src_path.join("cmdinit.rs"), &format!("{}::cmdinit(cmds);", lib_name), Some(&format!("use crate::{};", lib_name)));
+
+    if store.exists(&lib_name, "controls") {
         let controls_data = store.get_data(&lib_name, "controls");
         let controls_list = controls_data.get_object("data").get_array("list");
 
@@ -90,7 +90,6 @@ pub fn build_lib(lib_name: String) -> bool {
                     &control_id, &lib_name
                 );
             } else {
-                // Process commands for this control
                 let control_file_data = store.get_data(&lib_name, &control_id);
                 let data_section_for_control = control_file_data.get_object("data");
 
@@ -103,7 +102,7 @@ pub fn build_lib(lib_name: String) -> bool {
                             &lib_name,
                             &control_name,
                             &command_name_from_control,
-                            &library_data_path_for_build_fn,
+                            &PathBuf::new()
                         ) {
                             build_actions_performed = true;
                         }
@@ -113,77 +112,58 @@ pub fn build_lib(lib_name: String) -> bool {
         }
     }
 
-    // FIXME: This line was `if true { b = true; }` in the original code.
-    if true {
-        build_actions_performed = true;
-    }
+    let cargo_toml_path = library_build_base_path.join("Cargo.toml");
+    let package_name_for_default_cargo = if lib_config_root_field == "." {
+        "main_project".to_string()
+    } else {
+        lib_config_root_field.clone()
+    };
 
-    if build_actions_performed {
-        let cargo_toml_path = library_build_base_path.join("Cargo.toml");
-        let package_name_for_default_cargo = if lib_config_root_field == "." {
-            "main_project".to_string()
-        } else {
-            lib_config_root_field.clone()
-        };
+    let cargo_config_updates = if lib_metadata.has("cargo") {
+        lib_metadata.get_object("cargo")
+    } else {
+        DataObject::new()
+    };
 
-        // cargo_config_updates will be used both for creating a default Cargo.toml (for crate_types)
-        // and for updating an existing one.
-        let cargo_config_updates = if lib_metadata.has("cargo") {
-            lib_metadata.get_object("cargo")
-        } else {
-            DataObject::new() // Empty config if "cargo" section is missing
-        };
-
-        if update_cargo_toml(&cargo_toml_path, &cargo_config_updates, &lib_name, &package_name_for_default_cargo) {
-            // build_actions_performed is already true if file was created or modified
-        }
+    if update_cargo_toml(&cargo_toml_path, &cargo_config_updates, &lib_name, &package_name_for_default_cargo, is_ffi) {
+         build_actions_performed = true;
     }
 
     build_actions_performed
 }
 
-// REVERTED SIGNATURE to match original public API
 pub fn build(
     lib_name: &str,
     control_name: &str,
     command_name: &str,
-    _library_data_path_arg: &Path, // Prefixed with underscore to silence unused warning
+    _library_data_path_arg: &Path, // Ignored.
 ) -> bool {
     let mut artifact_changed = false;
     let store = DataStore::new();
 
-    // --- Derive necessary paths and configurations internally ---
-    let project_top_level_path = get_project_top_level_path();
-    let top_level_project_src_path = project_top_level_path.join("src");
-
     let lib_metadata = store.lib_info(lib_name);
-
-    let lib_config_root_field: String;
-    if lib_metadata.has("root") {
-        let value_from_meta = lib_metadata.get_string("root"); // Safe now
-        if value_from_meta.is_empty() { // Handles case where "root": ""
-            lib_config_root_field = "cmd".to_string();
-        } else {
-            lib_config_root_field = value_from_meta;
-        }
-    } else { // "root" key does not exist
-        lib_config_root_field = "cmd".to_string();
-    }
-
+    let (lib_config_root_field, _) = get_crate_info(&lib_metadata);
 
     let library_build_base_path = if lib_config_root_field == "." {
-        project_top_level_path.clone()
+        get_project_top_level_path()
     } else {
-        project_top_level_path.join(&lib_config_root_field)
+        get_project_top_level_path().join(&lib_config_root_field)
     };
     let actual_library_build_src_path = library_build_base_path.join("src");
-    // --- End of internal derivation ---
 
     let command_id = store.lookup_cmd_id(lib_name, control_name, command_name);
 
     if store.exists(lib_name, &command_id) {
         let command_metadata = store.get_data(lib_name, &command_id);
         let data_section = command_metadata.get_object("data");
+
+        if !data_section.has("type") {
+            println!(
+                "WARNING: Command definition for '{}:{}:{}' (ID: {}) is missing the 'type' field. Skipping.",
+                lib_name, control_name, command_name, command_id
+            );
+            return false;
+        }
         let command_type = data_section.get_string("type");
 
         let command_and_control_output_path = actual_library_build_src_path.join(lib_name).join(control_name);
@@ -208,13 +188,10 @@ pub fn build(
                 }
                 build_mod_files_for_rust_command(
                     &command_and_control_output_path,
-                    &actual_library_build_src_path,
-                    &top_level_project_src_path,
-                    &lib_config_root_field,
-                    lib_name,
-                    control_name,
-                    command_name,
-                    &rust_file_id,
+                    &lib_name,
+                    &control_name,
+                    &command_name,
+                    &rust_file_id
                 );
             }
             "python" => {
@@ -230,7 +207,6 @@ pub fn build(
                 build_python_command_source(&command_and_control_output_path, python_meta, &source_code);
             }
             _ => {
-                // FIXME - JS/Java/Flow
                 println!("Unsupported command type '{}' for {}:{}:{}", command_type, lib_name, control_name, command_name);
             }
         }
@@ -243,12 +219,241 @@ pub fn build(
     artifact_changed
 }
 
+// --- Build Logic Refactoring ---
+
+fn generate_main_initializer(crates: &HashMap<String, bool>) {
+    let top_level_path = get_project_top_level_path();
+    let generated_file_path = top_level_path.join("src").join("generated_initializer.rs");
+
+    let mut main_init_lines: Vec<String> = vec![
+        "// This file is auto-generated by the flowlang build script. Do not edit.".to_string(),
+        "use flowlang::rustcmd::{RustCmd, Transform};".to_string(),
+        "use ndata::NDataConfig;".to_string(),
+        "use flowlang::datastore::DataStore;".to_string(),
+    ];
+
+    for (crate_name, &is_ffi) in crates.iter() {
+        let safe_crate_name = crate_name.replace("-", "_");
+        if is_ffi {
+            // FFI crates need a unique mirror function. The Initializer struct is also defined here
+            // because only FFI crates use it.
+            main_init_lines.push(format!("\n// FFI Linker module for library: {}", crate_name));
+            main_init_lines.push("#[derive(Debug, Clone)]".to_string());
+            main_init_lines.push("pub struct Initializer {".to_string());
+            main_init_lines.push("    pub data_ref: (&'static str, NDataConfig),".to_string());
+            main_init_lines.push("    pub cmds: Vec<(String, Transform, String)>,".to_string());
+            main_init_lines.push("}".to_string());
+            main_init_lines.push(format!("mod {}_ffi {{", safe_crate_name));
+            main_init_lines.push("    use super::Initializer;".to_string());
+            main_init_lines.push(format!("    #[link(name = \"{}\", kind = \"dylib\")]", crate_name));
+            main_init_lines.push("    extern \"C\" {".to_string());
+            main_init_lines.push(format!("        pub fn mirror_{}(state: *mut Initializer);", safe_crate_name));
+            main_init_lines.push("    }".to_string());
+            main_init_lines.push("}".to_string());
+        } else {
+            main_init_lines.push(format!("use {};", safe_crate_name));
+        }
+    }
+
+    main_init_lines.push("\npub fn initialize_all_commands(magic:(&'static str, NDataConfig)) {".to_string());
+    main_init_lines.push("    let mut globals = DataStore::globals();".to_string());
+    main_init_lines.push("    if !globals.has(\"RUST_COMMANDS\") {".to_string());
+    main_init_lines.push("        globals.put_object(\"RUST_COMMANDS\", ndata::dataobject::DataObject::new());".to_string());
+    main_init_lines.push("    }".to_string());
+    main_init_lines.push("    let mut cmd_map = globals.get_object(\"RUST_COMMANDS\");".to_string());
+
+
+    for (crate_name, &is_ffi) in crates.iter() {
+        let safe_crate_name = crate_name.replace("-", "_");
+        main_init_lines.push(format!("\n    // Initialize crate: {}", crate_name));
+        main_init_lines.push("    {".to_string());
+        main_init_lines.push("        let mut cmds = Vec::new();".to_string());
+
+        if is_ffi {
+            main_init_lines.push("        let mut initializer = Initializer {".to_string());
+            main_init_lines.push("            data_ref: magic,".to_string());
+            main_init_lines.push("            cmds: Vec::new(),".to_string());
+            main_init_lines.push("        };".to_string());
+            main_init_lines.push("        unsafe {".to_string());
+            main_init_lines.push(format!("            {}_ffi::mirror_{}(&mut initializer as *mut _);", safe_crate_name, safe_crate_name));
+            main_init_lines.push("        }".to_string());
+            main_init_lines.push("        cmds.extend(initializer.cmds);".to_string());
+        } else {
+            main_init_lines.push(format!("        {}::cmdinit(&mut cmds);", safe_crate_name));
+        }
+
+        main_init_lines.push("        for q in cmds {".to_string());
+        main_init_lines.push("            let cmd_details = RustCmd::detail(q.0.to_owned(), q.1, q.2.to_owned());".to_string());
+        main_init_lines.push("            cmd_map.put_object(&q.0, cmd_details);".to_string());
+        main_init_lines.push("        }".to_string());
+        main_init_lines.push("    }".to_string());
+    }
+
+    main_init_lines.push("}".to_string());
+
+    write_lines_to_file(&generated_file_path, &main_init_lines)
+        .expect("Failed to write generated initializer file.");
+
+    let main_cargo_path = top_level_path.join("Cargo.toml");
+    if main_cargo_path.exists() {
+        let mut lines = read_lines_from_file(&main_cargo_path).expect("Failed to read main Cargo.toml");
+        let mut dependencies_map = HashMap::new();
+        let dep_insertion_line = find_section_insertion_line(&lines, "[dependencies]", &mut dependencies_map);
+
+        let mut new_deps_config = DataObject::new();
+        for crate_name in crates.keys() {
+            if !dependencies_map.contains_key(crate_name) {
+                let dependency_value = format!("{{ path = \"./{}\" }}", crate_name);
+                new_deps_config.put_string(crate_name, &dependency_value);
+            }
+        }
+
+        if new_deps_config.clone().keys().len() > 0 {
+             let (modified, _) = update_cargo_section_lines(
+                &mut lines,
+                &new_deps_config,
+                &mut dependencies_map,
+                dep_insertion_line,
+                "Dependency",
+                "main project's Cargo.toml",
+            );
+
+            if modified {
+                write_lines_to_file(&main_cargo_path, &lines)
+                    .expect("Failed to write updated main Cargo.toml with FFI dependency");
+            }
+        }
+    }
+}
+
+fn build_mod_files_for_rust_command(
+    command_output_path: &Path,
+    #[allow(unused_variables)]
+    lib_name: &str,
+    control_name: &str,
+    command_name: &str,
+    rust_cmd_meta_id: &str,
+) {
+    let ctl_mod_file = command_output_path.join("mod.rs");
+    ensure_mod_file_has_cmdinit(&ctl_mod_file);
+    update_mod_file_content(&ctl_mod_file, &format!("pub mod {};", command_name), None);
+    update_mod_file_content(&ctl_mod_file, &format!("cmds.push((\"{}\".to_string(), {}::execute, \"\".to_string()));", rust_cmd_meta_id, command_name), None);
+
+    let lib_mod_path = command_output_path.parent()
+        .expect("Command output path should have a parent (library module level)");
+    let lib_mod_file = lib_mod_path.join("mod.rs");
+    ensure_mod_file_has_cmdinit(&lib_mod_file);
+    update_mod_file_content(&lib_mod_file, &format!("pub mod {};", control_name), None);
+    update_mod_file_content(&lib_mod_file, &format!("{}::cmdinit(cmds);", control_name), None);
+}
+
+fn get_crate_info(lib_metadata: &DataObject) -> (String, bool) {
+    let root = if lib_metadata.has("root") {
+        let value = lib_metadata.get_string("root");
+        if value.is_empty() { "cmd".to_string() } else { value }
+    } else {
+        "cmd".to_string()
+    };
+
+    let is_ffi = if lib_metadata.has("cargo") {
+        let cargo_obj = lib_metadata.get_object("cargo");
+        if cargo_obj.has("ffi") {
+            cargo_obj.get_boolean("ffi")
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    (root, is_ffi)
+}
+
+// COMPILE FIX: The `is_ffi` parameter is used to conditionally generate the `mirror` function.
+fn ensure_crate_files_exist(crate_src_path: &Path, is_ffi: bool) {
+    if !crate_src_path.exists() {
+        create_dir_all(crate_src_path).expect("Failed to create src directory for crate.");
+    }
+
+    let lib_rs_path = crate_src_path.join("lib.rs");
+    if !lib_rs_path.exists() {
+        let mut content = String::from(r#"// This file is auto-generated and managed by the flowlang build script.
+use flowlang::rustcmd::{Transform};
+
+// Each flowlang library within this crate will be added as a module here.
+
+mod cmdinit;
+pub use cmdinit::cmdinit;
+mod api;
+pub static API : crate::api::api = crate::api::new();
+"#);
+        // Only FFI crates need the Initializer struct and a `mirror` function.
+        if is_ffi {
+            let ffi_content = format!(r#"
+#[derive(Debug, Clone)]
+pub struct Initializer {{
+    pub cmds: Vec<(String, Transform, String)>,
+}}
+
+#[no_mangle]
+pub fn mirror_{}(state: &mut Initializer) {{
+    cmdinit(&mut state.cmds);
+}}
+"#, crate_src_path.parent().unwrap().file_name().unwrap().to_str().unwrap().replace("-", "_"));
+            content.push_str(&ffi_content);
+        }
+
+        std::fs::write(&lib_rs_path, content).expect("Failed to write default lib.rs for crate.");
+    }
+
+    let cmdinit_rs_path = crate_src_path.join("cmdinit.rs");
+    ensure_mod_file_has_cmdinit(&cmdinit_rs_path);
+}
+
+fn ensure_mod_file_has_cmdinit(path: &Path) {
+    if !path.exists() {
+        let content = r#"// This file is auto-generated and managed by the flowlang build script.
+use flowlang::rustcmd::Transform;
+pub fn cmdinit(cmds: &mut Vec<(String, Transform, String)>) {
+}
+"#;
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                create_dir_all(parent).expect("Failed to create parent directory for mod.rs");
+            }
+        }
+        std::fs::write(path, content).expect("Failed to write default mod.rs with cmdinit");
+    } else {
+        let content = read_to_string(path).unwrap_or_default();
+        if !content.contains("pub fn cmdinit") {
+            let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+            writeln!(file, "\npub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {{}}")
+                .expect("Failed to append cmdinit to existing mod file");
+        }
+    }
+}
+
+
+// --- Unchanged Helper Functions Below ---
+
 pub fn rebuild_rust_api() {
     let store = DataStore::new();
     let project_top_level_path = get_project_top_level_path();
-    let api_file_path = project_top_level_path.join("cmd").join("src").join("api.rs"); // Assuming api.rs is for "cmd" sub-project
 
-    let mut api_struct_init_str = "pub const fn new() -> api {\n  api {\n".to_string();
+    let mut crates = HashSet::new();
+    let lib_entries_for_crates = read_dir("data")
+        .expect("Failed to read 'data' directory for API rebuilding.");
+    for dir_entry_result in lib_entries_for_crates {
+        let dir_entry = dir_entry_result.expect("Error reading a directory entry in 'data'.");
+        let lib_name = dir_entry.file_name().into_string().expect("Library name is not valid UTF-8.");
+        let lib_metadata = store.lib_info(&lib_name);
+        let (root_name, _) = get_crate_info(&lib_metadata);
+        if root_name != "." {
+            crates.insert(root_name);
+        }
+    }
+
+    let mut api_struct_init_str = "pub const fn new() -> api {\n    api {\n".to_string();
     let mut api_struct_def_str = "pub struct api {\n".to_string();
     let mut control_struct_defs_str = String::new();
     let mut command_wrapper_struct_defs_str = String::new();
@@ -263,9 +468,10 @@ pub fn rebuild_rust_api() {
             .expect("Library name is not valid UTF-8 for API rebuilding.");
 
         if store.exists(&lib_name, "controls") {
-            api_struct_init_str.push_str(&format!("    {}: {} {{\n", lib_name, lib_name));
-            api_struct_def_str.push_str(&format!("  pub {}: {},\n", lib_name, lib_name));
-            control_struct_defs_str.push_str(&format!("pub struct {} {{\n", lib_name));
+            let safe_lib_name = lib_name.replace("-", "_");
+            api_struct_init_str.push_str(&format!("        {}: {} {{\n", safe_lib_name, safe_lib_name));
+            api_struct_def_str.push_str(&format!("    pub {}: {},\n", safe_lib_name, safe_lib_name));
+            control_struct_defs_str.push_str(&format!("pub struct {} {{\n", safe_lib_name));
 
             let controls_data = store.get_data(&lib_name, "controls");
             let list = controls_data.get_object("data").get_array("list");
@@ -273,12 +479,13 @@ pub fn rebuild_rust_api() {
             for control_val in list.objects() {
                 let control = control_val.object();
                 let ctl_name = control.get_string("name");
+                let safe_ctl_name = ctl_name.replace("-", "_");
                 let ctl_id = control.get_string("id");
 
                 if store.exists(&lib_name, &ctl_id) {
-                    let struct_name = format!("{}_{}", lib_name, ctl_name);
-                    api_struct_init_str.push_str(&format!("      {}: {} {{}},\n", ctl_name, struct_name));
-                    control_struct_defs_str.push_str(&format!("  pub {}: {},\n", ctl_name, struct_name));
+                    let struct_name = format!("{}_{}", safe_lib_name, safe_ctl_name);
+                    api_struct_init_str.push_str(&format!("            {}: {} {{}},\n", safe_ctl_name, struct_name));
+                    control_struct_defs_str.push_str(&format!("    pub {}: {},\n", safe_ctl_name, struct_name));
                     command_wrapper_struct_defs_str.push_str(&format!("pub struct {} {{}}\n", struct_name));
 
                     let ctldata = store.get_data(&lib_name, &ctl_id);
@@ -291,16 +498,17 @@ pub fn rebuild_rust_api() {
                             for command_val in cmdlist.objects() {
                                 let command = command_val.object();
                                 let cmd_name = command.get_string("name");
+                                let safe_cmd_name = cmd_name.replace("-", "_");
                                 let cmd_id_in_control = command.get_string("id");
 
                                 if store.exists(&lib_name, &cmd_id_in_control) {
                                     let meta_for_cmd_type = store.get_data(&lib_name, &cmd_id_in_control);
                                     let data_for_cmd_type = meta_for_cmd_type.get_object("data");
-                                    let typ = data_for_cmd_type.get_string("type");
+                                    let typ = if data_for_cmd_type.has("type") { data_for_cmd_type.get_string("type") } else { "java".to_string() };
 
                                     if typ == "rust" {
                                         let rust_meta_file_id = data_for_cmd_type.get_string("rust");
-                                        impl_blocks_str.push_str(&format!("  pub fn {} (&self", cmd_name));
+                                        impl_blocks_str.push_str(&format!("    pub fn {} (&self", safe_cmd_name));
                                         let mut params_str_for_fn_def = String::new();
                                         let mut params_setup_str_for_body = String::new();
                                         let rust_cmd_actual_meta = store.get_data(&lib_name, &rust_meta_file_id).get_object("data");
@@ -316,7 +524,7 @@ pub fn rebuild_rust_api() {
                                             let q = if dtype == "String" { "&" } else { "" };
                                             let method_prefix = if ntype == "property" { "set" } else { "put" };
                                             params_setup_str_for_body.push_str(&format!(
-                                                "    d.{}_{}(\"{}\", {}{});\n",
+                                                "        d.{}_{}(\"{}\", {}{});\n",
                                                 method_prefix, ntype, pname, q, pname
                                             ));
                                         }
@@ -327,13 +535,13 @@ pub fn rebuild_rust_api() {
                                         impl_blocks_str.push_str(&format!(") -> {} {{\n", rtype_rust));
 
                                         if params_array.len() > 0 {
-                                            impl_blocks_str.push_str("    let mut d = DataObject::new();\n");
+                                            impl_blocks_str.push_str("        let mut d = DataObject::new();\n");
                                         } else {
-                                            impl_blocks_str.push_str("    let d = DataObject::new();\n");
+                                            impl_blocks_str.push_str("        let d = DataObject::new();\n");
                                         }
                                         impl_blocks_str.push_str(&params_setup_str_for_body);
                                         impl_blocks_str.push_str(&format!(
-                                            "    RustCmd::new(\"{}\").execute(d).expect(\"Rust command execution failed\").get_{}(\"a\")\n  }}\n",
+                                            "        RustCmd::new(\"{}\").execute(d).expect(\"Rust command execution failed\").get_{}(\"a\")\n    }}\n",
                                             rust_meta_file_id,
                                             ntype_ret
                                         ));
@@ -345,11 +553,11 @@ pub fn rebuild_rust_api() {
                     }
                 }
             }
-            api_struct_init_str.push_str("    },\n");
+            api_struct_init_str.push_str("        },\n");
             control_struct_defs_str.push_str("}\n");
         }
     }
-    api_struct_init_str.push_str("  }\n}\n");
+    api_struct_init_str.push_str("    }\n}\n");
     api_struct_def_str.push_str("}");
 
     let use_statements = r#"use ndata::dataobject::DataObject;
@@ -369,25 +577,27 @@ use flowlang::rustcmd::RustCmd;
         impl_blocks_str
     );
 
-    if let Some(parent_dir) = api_file_path.parent() {
-        if !parent_dir.exists() {
-            create_dir_all(parent_dir).expect(&format!("Failed to create directory for api.rs: {:?}", parent_dir));
+    for crate_name in crates {
+        let api_file_path = project_top_level_path.join(crate_name).join("src").join("api.rs");
+        if let Some(parent_dir) = api_file_path.parent() {
+            if !parent_dir.exists() {
+                create_dir_all(parent_dir).expect(&format!("Failed to create directory for api.rs: {:?}", parent_dir));
+            }
         }
+        std::fs::write(&api_file_path, &final_api_code)
+            .expect(&format!("Unable to write API file to {:?}", api_file_path));
     }
-    std::fs::write(&api_file_path, final_api_code)
-        .expect(&format!("Unable to write API file to {:?}", api_file_path));
 }
 
-
-// --- Helper Functions for Cargo.toml manipulation ---
-// Added default_package_name parameter
-fn update_cargo_toml(cargo_toml_path: &PathBuf, cargo_config: &DataObject, lib_name: &str, default_package_name: &str) -> bool {
-    let mut file_created_or_modified = false;
+fn update_cargo_toml(cargo_toml_path: &PathBuf, cargo_config: &DataObject, lib_name: &str, default_package_name: &str, is_ffi: bool) -> bool {
+    let mut file_was_created = false;
     if !cargo_toml_path.exists() {
         if default_package_name != "main_project" {
             println!("Cargo.toml not found at {:?} for sub-project '{}' (library {}), creating default.", cargo_toml_path, default_package_name, lib_name);
 
-            let crate_types_str = if cargo_config.has("crate_types") {
+            let crate_types_str = if is_ffi {
+                "[\"cdylib\", \"rlib\"]".to_string()
+            } else if cargo_config.has("crate_types") {
                 let crate_types_da = cargo_config.get_array("crate_types");
                 let types: Vec<String> = crate_types_da.objects().iter()
                     .map(|val| val.string())
@@ -395,10 +605,10 @@ fn update_cargo_toml(cargo_toml_path: &PathBuf, cargo_config: &DataObject, lib_n
                 if !types.is_empty() {
                     format!("[{}]", types.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<String>>().join(", "))
                 } else {
-                    "[\"rlib\", \"dylib\"]".to_string() // Default if array is empty
+                    "[\"rlib\"]".to_string()
                 }
             } else {
-                "[\"rlib\", \"dylib\"]".to_string() // Default if field doesn't exist
+                "[\"rlib\"]".to_string()
             };
 
             let default_content = format!(
@@ -410,19 +620,17 @@ edition = "2021"
 [lib]
 crate-type = {}
 
-[lints.rust]
-non_camel_case_types = "allow"
+[dependencies]
+flowlang = {{ path = "/home/mraiser/Documents/rust/flow" }}
+ndata = {{ version = "0.3.14" }}
+serde = {{ version = "1.0", features = ["derive"], optional = true }}
+serde_json = {{ version = "1.0", optional = true }}
 
 [features]
-serde_support = ["serde","serde_json","flowlang/serde_support","ndata/serde_support"]
 reload = []
+default = []
+"# , default_package_name, crate_types_str);
 
-[dependencies]
-flowlang = "0.3.15"
-ndata = "0.3.10"
-serde = {{ version = "1.0.155", features = ["derive"], optional = true }}
-serde_json = {{ version = "1.0.94", optional = true }}
-"#, default_package_name, crate_types_str);
             if let Some(parent_dir) = cargo_toml_path.parent() {
                 if !parent_dir.exists() {
                     create_dir_all(parent_dir).expect("Failed to create parent directory for new Cargo.toml");
@@ -430,43 +638,20 @@ serde_json = {{ version = "1.0.94", optional = true }}
             }
             std::fs::write(&cargo_toml_path, default_content)
                 .expect(&format!("Failed to write default Cargo.toml to {:?}", cargo_toml_path));
-            file_created_or_modified = true;
+            file_was_created = true;
         } else {
-             println!("Cargo.toml not found at {:?} for main project (library {}), skipping creation of default.", cargo_toml_path, lib_name);
+            println!("WARNING: Main project Cargo.toml not found at {:?}, cannot perform updates.", cargo_toml_path);
             return false;
         }
     }
 
-    let file = File::open(&cargo_toml_path)
-        .expect(&format!("Failed to open Cargo.toml at {:?}", cargo_toml_path));
-    let mut lines: Vec<String> = BufReader::new(file).lines().map(|l| l.expect("Failed to read line from Cargo.toml")).collect();
-
-    let mut features_map = HashMap::new();
-    let mut dependencies_map = HashMap::new();
-
-    let features_insertion_line = find_section_insertion_line(&lines, "[features]", &mut features_map);
-    let dependencies_insertion_line = find_section_insertion_line(&lines, "[dependencies]", &mut dependencies_map);
-
     let mut config_caused_modification = false;
-
-    if cargo_config.has("features") {
-        let new_features = cargo_config.get_object("features");
-        if new_features.clone().keys().len() > 0 {
-            let (section_modified, _new_insertion_idx) = update_cargo_section_lines(
-                &mut lines,
-                &new_features,
-                &mut features_map,
-                features_insertion_line,
-                "Feature",
-                lib_name,
-            );
-            if section_modified {
-                config_caused_modification = true;
-            }
-        }
-    }
+    let mut lines = read_lines_from_file(&cargo_toml_path)
+        .expect(&format!("Failed to read Cargo.toml at {:?}", cargo_toml_path));
 
     if cargo_config.has("dependencies") {
+        let mut dependencies_map = HashMap::new();
+        let dependencies_insertion_line = find_section_insertion_line(&lines, "[dependencies]", &mut dependencies_map);
         let new_dependencies = cargo_config.get_object("dependencies");
         if new_dependencies.clone().keys().len() > 0 {
             if update_cargo_section_lines(
@@ -484,15 +669,11 @@ serde_json = {{ version = "1.0.94", optional = true }}
 
     if config_caused_modification {
         println!("Rewriting {}", cargo_toml_path.display());
-        let mut outfile = File::create(&cargo_toml_path)
-            .expect(&format!("Failed to create/truncate Cargo.toml at {:?}", cargo_toml_path));
-        for line in lines {
-            writeln!(outfile, "{}", line)
-                .expect(&format!("Failed to write to Cargo.toml at {:?}", cargo_toml_path));
-        }
-        file_created_or_modified = true;
+        write_lines_to_file(&cargo_toml_path, &lines)
+            .expect(&format!("Failed to write to Cargo.toml at {:?}", cargo_toml_path));
     }
-    file_created_or_modified
+
+    file_was_created || config_caused_modification
 }
 
 fn find_section_insertion_line(
@@ -533,14 +714,13 @@ fn find_section_insertion_line(
     section_start_idx.map_or(lines.len(), |idx| idx + 1)
 }
 
-// Added lib_name parameter
 fn update_cargo_section_lines(
     cargo_lines: &mut Vec<String>,
     new_items_config: &DataObject,
     section_items_map: &mut HashMap<String, String>,
     mut current_insertion_idx: usize,
     item_type_name: &str,
-    lib_name: &str, // New parameter
+    lib_name: &str,
 ) -> (bool, usize) {
     let mut section_modified = false;
 
@@ -561,7 +741,6 @@ fn update_cargo_section_lines(
         } else {
             new_line_content = format!("{} = \"{}\"", key, value_str);
         }
-
 
         if let Some(existing_file_value_raw) = section_items_map.get(&key) {
             let semantic_config_value = if trimmed_value_str.starts_with('"') && trimmed_value_str.ends_with('"') && trimmed_value_str.len() >=2 && !(trimmed_value_str.starts_with('{') && trimmed_value_str.ends_with('}')) {
@@ -593,8 +772,8 @@ fn update_cargo_section_lines(
                     }
                 }
                  if !updated {
-                    println!("WARNING: Could not find existing {} line for '{}' in Cargo.toml for library \"{}\" to update.", item_type_name, key, lib_name);
-                }
+                     println!("WARNING: Could not find existing {} line for '{}' in Cargo.toml for library \"{}\" to update.", item_type_name, key, lib_name);
+                 }
             }
         } else {
             println!("Adding new {} to Cargo.toml for library \"{}\": {}", item_type_name, lib_name, new_line_content);
@@ -612,8 +791,6 @@ fn update_cargo_section_lines(
     (section_modified, current_insertion_idx)
 }
 
-
-// --- Helper Functions for mod.rs and other file manipulations ---
 fn read_lines_from_file(path: &PathBuf) -> Result<Vec<String>, std::io::Error> {
     let file = File::open(path)?;
     BufReader::new(file).lines().collect()
@@ -638,92 +815,40 @@ fn find_line_index_in_slice(lines: &[String], marker: &str) -> Option<usize> {
 
 fn update_mod_file_content(
     mod_file_path: &PathBuf,
-    mod_line_to_add: &str,
-    cmd_init_item_to_add: Option<&str>,
-    _is_project_level_cmdinit: bool, // Prefixed with underscore
+    line_to_add: &str,
+    use_line_to_add: Option<&str>,
 ) {
-    let file_existed_initially = mod_file_path.exists();
-    let mut lines = if file_existed_initially {
+    let mut lines = if mod_file_path.exists() {
         read_lines_from_file(mod_file_path)
             .expect(&format!("Failed to read mod file: {:?}", mod_file_path))
     } else {
-        let mut initial_lines = Vec::new();
-        if cmd_init_item_to_add.is_some() {
-            initial_lines.push(String::new());
-            initial_lines.push(CMD_MOD_LINE.to_string());
-            initial_lines.push("}".to_string());
-        } else if !mod_line_to_add.trim().is_empty() {
-            initial_lines.push(mod_line_to_add.to_string());
-        }
-        initial_lines
+        return;
     };
 
+    let original_content = lines.join("\n");
     let mut modified = false;
-    if !file_existed_initially && !lines.is_empty() {
-        modified = true;
-    }
 
-
-    let mod_line_trimmed = mod_line_to_add.trim();
-    let main_decl_line = mod_line_to_add.lines().last().unwrap_or("").trim();
-
-    let mut declaration_exists = false;
-    if mod_line_trimmed.starts_with("#[path") {
-        if lines.join("\n").contains(mod_line_trimmed) {
-            declaration_exists = true;
-        }
-    } else {
-        if lines.iter().any(|l| l.trim() == mod_line_trimmed) {
-            declaration_exists = true;
+    if let Some(use_line) = use_line_to_add {
+        if !use_line.is_empty() && !original_content.contains(use_line) {
+             let insert_at = lines.iter().rposition(|l| l.trim().starts_with("use ")).map_or(0, |i| i + 1);
+             lines.insert(insert_at, use_line.to_string());
+             modified = true;
         }
     }
 
-    if !declaration_exists {
-        if mod_line_trimmed.starts_with("#[path") {
-            let simple_pub_mod_line = format!("pub mod {};", main_decl_line.split_whitespace().last().unwrap_or(""));
-            if let Some(idx) = find_line_index_in_slice(&lines, &simple_pub_mod_line) {
-                lines.remove(idx);
-                lines.insert(idx, mod_line_to_add.to_string());
-            } else {
-                let insert_at = lines.iter().rposition(|l| l.trim().starts_with("#[path") || l.trim().starts_with("pub mod ")).map_or(0, |i| i + 1);
-                lines.insert(insert_at, mod_line_to_add.to_string());
-            }
+    if !line_to_add.is_empty() && !original_content.contains(line_to_add) {
+        if line_to_add.starts_with("pub mod") {
+            let insert_at = lines.iter().rposition(|l| l.trim().starts_with("use ")).map_or(0, |i| i + 1);
+            lines.insert(insert_at, line_to_add.to_string());
+            modified = true;
         } else {
-            let insert_at = if mod_line_trimmed.starts_with("use ") {
-                lines.iter().rposition(|l| l.trim().starts_with("use ")).map_or(0, |i| i + 1)
+            if let Some(idx) = find_line_index_in_slice(&lines, "}") {
+                 lines.insert(idx, format!("    {}", line_to_add));
+                 modified = true;
             } else {
-                 lines.iter().rposition(|l| l.trim().starts_with("pub mod ")).map_or(0, |i| i + 1)
-            };
-            lines.insert(insert_at, mod_line_to_add.to_string());
-        }
-        modified = true;
-    }
-
-
-    if let Some(item_to_add) = cmd_init_item_to_add {
-        let item_to_add_trimmed = item_to_add.trim();
-        match find_line_index_in_slice(&lines, CMD_MOD_LINE) {
-            Some(cmd_init_header_idx) => {
-                let mut item_exists_in_cmdinit = false;
-                for i in cmd_init_header_idx + 1..lines.len() {
-                    let current_line_trimmed = lines[i].trim();
-                    if current_line_trimmed == "}" { break; }
-                    if current_line_trimmed == item_to_add_trimmed {
-                        item_exists_in_cmdinit = true;
-                        break;
-                    }
-                }
-                if !item_exists_in_cmdinit {
-                    lines.insert(cmd_init_header_idx + 1, item_to_add.to_string());
-                    modified = true;
-                }
-            }
-            None => {
-                lines.push(String::new());
-                lines.push(CMD_MOD_LINE.to_string());
-                lines.push(item_to_add.to_string());
-                lines.push("}".to_string());
-                modified = true;
+                 println!("WARNING: Could not find closing brace in {:?} to insert line: {}", mod_file_path, line_to_add);
+                 lines.push(line_to_add.to_string());
+                 modified = true;
             }
         }
     }
@@ -734,189 +859,6 @@ fn update_mod_file_content(
     }
 }
 
-fn build_mod_files_for_rust_command(
-    command_output_path: &Path,
-    library_actual_src_path: &Path,
-    top_level_project_src_path: &Path,
-    lib_config_root_field: &str,
-    lib_name: &str,
-    control_name: &str,
-    command_name: &str,
-    rust_cmd_meta_id: &str,
-) {
-    // 1. Update control's mod.rs
-    let ctl_mod_file = command_output_path.join("mod.rs");
-    let mod_line_for_cmd_in_ctl = format!("pub mod {};", command_name);
-    let cmd_push_line_for_cmd_in_ctl = format!(
-        "    cmds.push((\"{}\".to_string(), {}::execute, \"\".to_string()));",
-        rust_cmd_meta_id, command_name
-    );
-    update_mod_file_content(&ctl_mod_file, &mod_line_for_cmd_in_ctl, Some(&cmd_push_line_for_cmd_in_ctl), false);
-
-    // 2. Update library's mod.rs
-    let lib_mod_path = command_output_path.parent()
-        .expect("Command output path should have a parent (library module level)");
-    let lib_mod_file = lib_mod_path.join("mod.rs");
-    let mod_line_for_ctl_in_lib = format!("pub mod {};", control_name);
-    let cmd_init_call_for_ctl_in_lib = format!("    {}::cmdinit(cmds);", control_name);
-    update_mod_file_content(&lib_mod_file, &mod_line_for_ctl_in_lib, Some(&cmd_init_call_for_ctl_in_lib), false);
-
-    // 3. Update project-level cmdinit.rs
-    let project_cmd_init_rs_path = top_level_project_src_path.join("cmdinit.rs");
-    let use_line_for_main_cmdinit: String;
-    let call_line_for_main_cmdinit: String;
-
-    if lib_config_root_field == "." {
-        use_line_for_main_cmdinit = format!("use crate::{};", lib_name);
-        call_line_for_main_cmdinit = format!("    {}::cmdinit(cmds);", lib_name);
-    } else {
-        let sub_project_crate_name = lib_config_root_field;
-        use_line_for_main_cmdinit = format!("use {};", sub_project_crate_name);
-        call_line_for_main_cmdinit = format!("    {}::cmdinit(cmds);", sub_project_crate_name);
-    }
-
-    let line_to_remove_1 = format!("    cmds.push((\"{}\".to_string(), {}::{}::{}::execute, \"\".to_string()));", rust_cmd_meta_id, lib_name, control_name, command_name);
-    let line_to_remove_2 = "    cmds.clear();".to_string();
-    if project_cmd_init_rs_path.exists() {
-        let mut cmd_init_lines = read_lines_from_file(&project_cmd_init_rs_path).expect("Failed to read project cmdinit.rs");
-        let initial_len = cmd_init_lines.len();
-        cmd_init_lines.retain(|line| line.trim() != line_to_remove_1.trim());
-        cmd_init_lines.retain(|line| line.trim() != line_to_remove_2.trim());
-        if cmd_init_lines.len() != initial_len {
-            write_lines_to_file(&project_cmd_init_rs_path, &cmd_init_lines).expect("Failed to write project cmdinit.rs after removals");
-        }
-    }
-    update_mod_file_content(&project_cmd_init_rs_path, &use_line_for_main_cmdinit, Some(&call_line_for_main_cmdinit), true);
-
-    // 4. Update the sub-project's structure (lib.rs/main.rs and its own cmdinit.rs)
-    if lib_config_root_field != "." {
-        let sub_project_src_path = library_actual_src_path;
-
-        // 4a. Ensure and Populate sub-project's cmdinit.rs (e.g. /newbound/cmd/src/cmdinit.rs)
-        let sub_project_cmdinit_file_path = sub_project_src_path.join("cmdinit.rs");
-        if !sub_project_cmdinit_file_path.exists() {
-            println!("Creating default cmdinit.rs for sub-project at {:?}", sub_project_cmdinit_file_path);
-            let default_cmdinit_content = "pub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {\n\
-}\n";
-            if let Some(parent_dir) = sub_project_cmdinit_file_path.parent() {
-                if !parent_dir.exists() {
-                    create_dir_all(parent_dir).expect("Failed to create src dir for sub-project cmdinit.rs");
-                }
-            }
-            std::fs::write(&sub_project_cmdinit_file_path, default_cmdinit_content)
-                .expect("Failed to write default cmdinit.rs for sub-project");
-        }
-        // Populate sub-project's cmdinit.rs with: use crate::lib_name; lib_name::cmdinit(cmds);
-        // Note: `lib_name` is the specific library (e.g., "storage") being processed in the current iteration.
-        // The sub-project's cmdinit.rs should call the cmdinit of each library *within* that sub-project.
-        let use_line_for_sub_project_cmdinit = format!("use crate::{};", lib_name);
-        let call_line_for_sub_project_cmdinit = format!("    {}::cmdinit(cmds);", lib_name);
-        update_mod_file_content(&sub_project_cmdinit_file_path, &use_line_for_sub_project_cmdinit, Some(&call_line_for_sub_project_cmdinit), true);
-
-        // 4b. Update sub-project's lib.rs/main.rs
-        for entry_point_filename in ["lib.rs", "main.rs"] {
-            let sub_project_entry_point_path = sub_project_src_path.join(entry_point_filename);
-
-            if !sub_project_entry_point_path.exists() {
-                let default_content: Option<String> = if entry_point_filename == "lib.rs" {
-                    println!("Creating default lib.rs for sub-project at {:?}", sub_project_entry_point_path);
-                    Some(r#"// `pub mod library_name;` lines will be added by the build script.
-
-pub use cmdinit::cmdinit;
-mod cmdinit;
-
-use flowlang::rustcmd::*;
-use ndata::NDataConfig;
-
-mod api;
-pub static API : crate::api::api = crate::api::new();
-
-#[derive(Debug)]
-pub struct Initializer {
-  pub data_ref: (&'static str, NDataConfig),
-  pub cmds: Vec<(String, Transform, String)>,
-}
-
-#[no_mangle]
-pub fn mirror(state: &mut Initializer) {
-  #[cfg(feature = "reload")]
-  flowlang::mirror(state.data_ref);
-  cmdinit(&mut state.cmds);
-  #[cfg(feature = "reload")]
-  for q in &state.cmds { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }
-}"#.to_string())
-                } else if entry_point_filename == "main.rs" {
-                     println!("Creating default main.rs for sub-project at {:?}", sub_project_entry_point_path);
-                    Some(r#"// `pub mod library_name;` lines will be added by the build script.
-
-pub use cmdinit::cmdinit;
-mod cmdinit;
-
-use std::env;
-use flowlang::appserver::*;
-use flowlang::rustcmd::*;
-
-mod api;
-pub static API : crate::api::api = crate::api::new();
-
-fn main() {
-  flowlang::init("data");
-  init_cmds();
-
-  env::set_var("RUST_BACKTRACE", "1");
-  {
-    run();
-  }
-}
-
-fn init_cmds(){
-  let mut v = Vec::new();
-  cmdinit(&mut v);
-  for q in &v { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }
-}"#.to_string())
-                } else {
-                    None
-                };
-
-                if let Some(content) = default_content {
-                    if let Some(parent_dir) = sub_project_entry_point_path.parent(){
-                        if !parent_dir.exists(){
-                             create_dir_all(parent_dir).expect("Failed to create src dir for sub-project entry point");
-                        }
-                    }
-                    std::fs::write(&sub_project_entry_point_path, content)
-                        .expect(&format!("Failed to write default {} to {:?}", entry_point_filename, sub_project_entry_point_path));
-                }
-            }
-
-            if sub_project_entry_point_path.exists() {
-                let mod_decl_for_sub_project_lib = format!("pub mod {};", lib_name);
-                update_mod_file_content(&sub_project_entry_point_path, &mod_decl_for_sub_project_lib, None, false);
-
-                let cmdinit_mod_decl = "mod cmdinit;";
-                let cmdinit_pub_use = "pub use cmdinit::cmdinit;";
-                update_mod_file_content(&sub_project_entry_point_path, cmdinit_mod_decl, None, false);
-                update_mod_file_content(&sub_project_entry_point_path, cmdinit_pub_use, None, false);
-            }
-        }
-    }
-
-    // 5. Update the MAIN project's lib.rs/main.rs
-    if lib_config_root_field == "." {
-        let mod_decl_for_main_project_entry = format!("pub mod {};", lib_name);
-        for entry_point_filename in ["lib.rs", "main.rs"] {
-            let main_project_entry_point_path = top_level_project_src_path.join(entry_point_filename);
-            if main_project_entry_point_path.exists() {
-                update_mod_file_content(&main_project_entry_point_path, &mod_decl_for_main_project_entry, None, true);
-            } else {
-                // FIXME - else what? (If main project's lib.rs/main.rs doesn't exist)
-            }
-        }
-    }
-}
-
-
-// --- Helper Functions for Rust Command Source Generation ---
 fn build_rust_command_source(
     output_path: &Path,
     meta: DataObject,
@@ -928,11 +870,10 @@ fn build_rust_command_source(
 
     let mut needs_write = true;
     if rust_output_file.exists() {
-        let old_src = read_to_string(&rust_output_file)
-            .expect(&format!("Failed to read existing Rust file: {:?}", rust_output_file));
-        // FIXME - what if compile files and we try again?
-        if old_src == generated_src {
-            needs_write = false;
+        if let Ok(old_src) = read_to_string(&rust_output_file) {
+            if old_src == generated_src {
+                needs_write = false;
+            }
         }
     }
 
@@ -967,26 +908,28 @@ fn generate_rust_source_from_meta(meta: DataObject, user_code: &str) -> String {
 
     let mut src = String::new();
 
-    // Determine ndata types needed by the generated execute() wrapper
-    let mut wrapper_ndata_types_needed = HashSet::new();
-    wrapper_ndata_types_needed.insert("DataObject".to_string()); // Always for `o` and `result_obj`
+    let dataobject_import = "use ndata::dataobject::DataObject;";
+    if !user_provided_imports.contains(dataobject_import) {
+        src.push_str(dataobject_import);
+        src.push('\n');
+    }
 
+    let mut wrapper_ndata_types_needed = HashSet::new();
     for param_value in params_array.objects() {
         let param_obj = param_value.object();
         let meta_type = param_obj.get_string("type");
         let rust_type = map_meta_type_to_rust_type(&meta_type);
-        if ["DataObject", "DataArray", "DataBytes", "Data"].contains(&rust_type.as_str()) {
+        if ["DataArray", "DataBytes", "Data"].contains(&rust_type.as_str()) {
             wrapper_ndata_types_needed.insert(rust_type);
         }
     }
     let rust_return_type = map_meta_type_to_rust_type(&returntype_meta_str);
-    if ["DataObject", "DataArray", "DataBytes", "Data"].contains(&rust_return_type.as_str()) {
+    if ["DataArray", "DataBytes", "Data"].contains(&rust_return_type.as_str()) {
         wrapper_ndata_types_needed.insert(rust_return_type.clone());
     }
 
-    // Add specific ndata use statements only if needed by wrapper and not obviously covered by user
+    // COMPILE FIX: No longer conditionally add DataObject here.
     let ndata_types_to_import = [
-        ("DataObject", "ndata::dataobject"),
         ("DataArray", "ndata::dataarray"),
         ("DataBytes", "ndata::databytes"),
         ("Data", "ndata::data"),
@@ -994,16 +937,10 @@ fn generate_rust_source_from_meta(meta: DataObject, user_code: &str) -> String {
 
     for (type_name_str, module_path_str) in ndata_types_to_import.iter() {
         if wrapper_ndata_types_needed.contains(*type_name_str) {
-            let full_type_path = format!("{}::{}", module_path_str, type_name_str);
-            let module_wildcard = format!("{}::*", module_path_str);
-            let crate_wildcard = "use ndata::*;";
-
-            let is_likely_covered_by_user = user_provided_imports.contains(&full_type_path) ||
-                                            user_provided_imports.contains(&module_wildcard) ||
-                                            user_provided_imports.contains(crate_wildcard);
-
-            if !is_likely_covered_by_user {
-                src.push_str(&format!("use {};\n", full_type_path));
+            let use_line = format!("use {}::{};", module_path_str, type_name_str);
+            if !user_provided_imports.contains(&use_line) {
+                 src.push_str(&use_line);
+                 src.push('\n');
             }
         }
     }
@@ -1019,10 +956,10 @@ fn generate_rust_source_from_meta(meta: DataObject, user_code: &str) -> String {
     let return_packaging_code = generate_rust_return_packaging(&rust_return_type);
 
     src.push_str(&param_extraction_code);
-    src.push_str(&format!("  let ax = {}({});\n", command_name, function_call_args));
-    src.push_str("  let mut result_obj = DataObject::new();\n");
+    src.push_str(&format!("    let ax = {}({});\n", command_name, function_call_args));
+    src.push_str("    let mut result_obj = DataObject::new();\n");
     src.push_str(&return_packaging_code);
-    src.push_str("  result_obj\n"); src.push_str("}\n\n");
+    src.push_str("    result_obj\n"); src.push_str("}\n\n");
 
     src.push_str(&format!("pub fn {}({}) -> {} {{\n", command_name, user_fn_param_defs, rust_return_type));
     src.push_str(user_code); src.push_str("\n}\n");
@@ -1048,7 +985,7 @@ fn generate_rust_invoke_parts(_user_fn_name: &str, params: DataArray, _rust_retu
             "f64" => "float", "String" => "string", _ => "property",
         };
         param_extraction_code.push_str(&format!(
-            "  let {}: {} = o.get_{}(\"{}\");\n", arg_var_name, rust_type, getter_suffix, name));
+            "    let {}: {} = o.get_{}(\"{}\");\n", arg_var_name, rust_type, getter_suffix, name));
 
         if index > 0 { function_call_args.push_str(", "); user_fn_param_defs.push_str(", "); }
         function_call_args.push_str(&arg_var_name);
@@ -1060,7 +997,7 @@ fn generate_rust_invoke_parts(_user_fn_name: &str, params: DataArray, _rust_retu
 fn generate_rust_return_packaging(rust_return_type: &str) -> String {
     let mut s = String::new();
     if rust_return_type == "Data" {
-        s.push_str("  result_obj.set_property(\"a\", ax);\n");
+        s.push_str("    result_obj.set_property(\"a\", ax);\n");
     } else {
         let putter_suffix = match rust_return_type {
             "String" => "string(\"a\", &ax)", "f64" => "float(\"a\", ax)",
@@ -1070,12 +1007,11 @@ fn generate_rust_return_packaging(rust_return_type: &str) -> String {
             _ => { eprintln!("Warning: Unhandled Rust return type for packaging: {}", rust_return_type);
                    "property(\"a\", Data::from(ax))" }
         };
-        s.push_str(&format!("  result_obj.put_{};\n", putter_suffix));
+        s.push_str(&format!("    result_obj.put_{};\n", putter_suffix));
     }
     s
 }
 
-// --- Helper Functions for Python Command Source Generation ---
 fn build_python_command_source(output_path: &Path, meta: DataObject, user_code: &str) {
     let command_name = meta.get_string("cmd");
     let python_output_file = output_path.join(format!("{}.py", command_name));
@@ -1099,16 +1035,16 @@ fn build_python_command_source(output_path: &Path, meta: DataObject, user_code: 
 
     let mut generated_src = String::new();
     generated_src.push_str(&imports); generated_src.push_str("\n\n");
-    generated_src.push_str(&format!("def execute(args):\n  return {}({})\n\n", command_name, execute_args_str));
+    generated_src.push_str(&format!("def execute(args):\n    return {}({})\n\n", command_name, execute_args_str));
     generated_src.push_str(&format!("def {}({}):\n", command_name, user_fn_params_str));
 
     for line in BufReader::new(user_code.as_bytes()).lines() {
-        generated_src.push_str(&format!("  {}\n", line.expect("Failed to read line from Python user code")));
+        generated_src.push_str(&format!("    {}\n", line.expect("Failed to read line from Python user code")));
     }
 
     generated_src.push_str("\n\nif __name__ == \"__main__\":\n");
-    generated_src.push_str("  import sys\n  import json\n");
-    generated_src.push_str("  print(json.dumps(execute(json.loads(sys.argv[1]))))\n");
+    generated_src.push_str("    import sys\n    import json\n");
+    generated_src.push_str("    print(json.dumps(execute(json.loads(sys.argv[1]))))\n");
 
     if let Some(parent) = python_output_file.parent() {
         if !parent.exists() {
@@ -1119,7 +1055,6 @@ fn build_python_command_source(output_path: &Path, meta: DataObject, user_code: 
         .expect(&format!("Unable to write Python file: {:?}", python_output_file));
 }
 
-// --- Helper functions for rebuild_rust_api ---
 fn lookup_rust_api_data_type(meta_type: &str) -> &str {
     match meta_type {
         "FLAT" | "JSONObject" => "DataObject", "JSONArray" => "DataArray",

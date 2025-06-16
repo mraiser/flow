@@ -3,14 +3,11 @@ use ::flowlang::*;
 use std::env;
 use std::io;
 use std::io::BufRead;
-use ndata::NDataConfig;
 use ndata::dataobject::DataObject;
 
 use command::Command as Command;
-use datastore::DataStore;
-use rustcmd::RustCmd;
-use cmdinit::*;
 
+/*
 pub fn init(dir:&str) -> (&str, NDataConfig) {
   let cfg = DataStore::init(dir);
   let mut v = Vec::new();
@@ -25,6 +22,7 @@ pub fn mirror(q:(&str, NDataConfig)) {
   cmdinit(&mut v);
   for q in &v { RustCmd::add(q.0.to_owned(), q.1, q.2.to_owned()); }
 }
+*/
 
 pub fn main() {
   init("data");

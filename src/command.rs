@@ -50,6 +50,7 @@ impl Command {
         return code.has("flow");
       },
       "rust" => {
+        //println!("I HAVE FOUND {}", codename);
         return RustCmd::exists(codename);
       },
       #[cfg(feature="java_runtime")]
