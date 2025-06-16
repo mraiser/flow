@@ -1,9 +1,7 @@
 # **Flowlang**
 
-NOTE: Hot-Reload is broken as we continue to remove dependencies.
-
-Also NOTE: Support for back-end commands written in Java and Javascript 
-is probably broken, too.
+NOTE: Support for back-end commands written in Java and Javascript 
+is kind of broken for now. Contact me if you'd like to help fix it.
 
 ## **Purpose and Core Functionality**
 
