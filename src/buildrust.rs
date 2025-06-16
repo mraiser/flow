@@ -560,7 +560,9 @@ pub fn rebuild_rust_api() {
     api_struct_init_str.push_str("    }\n}\n");
     api_struct_def_str.push_str("}");
 
-    let use_statements = r#"use ndata::dataobject::DataObject;
+    let use_statements = r#"#![allow(non_camel_case_types)]
+
+use ndata::dataobject::DataObject;
 use ndata::dataarray::DataArray;
 use ndata::databytes::DataBytes;
 use ndata::data::Data;
@@ -621,7 +623,7 @@ edition = "2021"
 crate-type = {}
 
 [dependencies]
-flowlang = {{ path = "/home/mraiser/Documents/rust/flow" }}
+flowlang = {{ version = "0.3.25" }}
 ndata = {{ version = "0.3.14" }}
 serde = {{ version = "1.0", features = ["derive"], optional = true }}
 serde_json = {{ version = "1.0", optional = true }}
