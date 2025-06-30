@@ -7,6 +7,7 @@ pub mod datastore;
 pub mod primitives;
 pub mod rustcmd;
 pub mod rand;
+pub mod builder;
 pub mod buildrust;
 pub mod rfc2822date;
 pub mod sha1;
