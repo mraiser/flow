@@ -126,7 +126,7 @@ pub(crate) fn update_mod_file_content(
 pub(crate) fn lookup_rust_api_data_type(meta_type: &str) -> &str {
     match meta_type {
         "FLAT" | "JSONObject" => "DataObject", "JSONArray" => "DataArray",
-        "InputStream" => "DataBytes", "float" => "f64", "Integer" => "i64",
+        "InputStream" => "DataBytes", "Float" => "f64", "Integer" => "i64",
         "Boolean" => "bool", "Any" => "Data", "NULL" => "DNull",
         _ => "String",
     }
@@ -136,7 +136,7 @@ pub(crate) fn lookup_rust_api_data_type(meta_type: &str) -> &str {
 pub(crate) fn lookup_rust_api_ndata_method_suffix(meta_type: &str) -> &str {
     match meta_type {
         "FLAT" | "JSONObject" => "object", "JSONArray" => "array",
-        "InputStream" => "bytes", "float" => "float", "Integer" => "int",
+        "InputStream" => "bytes", "Float" => "float", "Integer" => "int",
         "Boolean" => "boolean", "Any" => "property", "NULL" => "null",
         _ => "string",
     }

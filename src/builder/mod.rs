@@ -5,6 +5,7 @@
 pub(crate) mod api;
 pub(crate) mod cargo;
 pub(crate) mod initializer;
+pub(crate) mod loader;
 pub(crate) mod python;
 pub(crate) mod rust;
 pub(crate) mod scaffolding;

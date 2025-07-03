@@ -77,46 +77,48 @@ pub(crate) fn rebuild_rust_api() {
                                 if store.exists(&lib_name, &cmd_id_in_control) {
                                     let meta_for_cmd_type = store.get_data(&lib_name, &cmd_id_in_control);
                                     let data_for_cmd_type = meta_for_cmd_type.get_object("data");
-                                    if data_for_cmd_type.get_string("type") == "rust" {
-                                        let rust_meta_file_id = data_for_cmd_type.get_string("rust");
-                                        let rust_cmd_actual_meta = store.get_data(&lib_name, &rust_meta_file_id).get_object("data");
-                                        let params_array = rust_cmd_actual_meta.get_array("params");
-                                        let rtype_str = rust_cmd_actual_meta.get_string("returntype");
-                                        let ntype_ret = lookup_rust_api_ndata_method_suffix(&rtype_str);
-                                        let rtype_rust = lookup_rust_api_data_type(&rtype_str);
+                                    
+                                    // Only proceed if the command metadata has a 'type' field.
+                                    if data_for_cmd_type.has("type") {
+                                        if data_for_cmd_type.get_string("type") == "rust" {
+                                            let rust_meta_file_id = data_for_cmd_type.get_string("rust");
+                                            let rust_cmd_actual_meta = store.get_data(&lib_name, &rust_meta_file_id).get_object("data");
+                                            let params_array = rust_cmd_actual_meta.get_array("params");
+                                            let rtype_str = rust_cmd_actual_meta.get_string("returntype");
+                                            let ntype_ret = lookup_rust_api_ndata_method_suffix(&rtype_str);
+                                            let rtype_rust = lookup_rust_api_data_type(&rtype_str);
+                                            
+                                            let mut params_str_for_fn_def = String::new();
+                                            let mut params_setup_str_for_body = String::new();
 
-                                        let mut params_str_for_fn_def = String::new();
-                                        let mut params_setup_str_for_body = String::new();
-
-                                        for param_val in params_array.objects() {
-                                            let param = param_val.object();
-                                            let pname = param.get_string("name");
-                                            let ptype = param.get_string("type");
-                                            let dtype = lookup_rust_api_data_type(&ptype);
-                                            let ntype = lookup_rust_api_ndata_method_suffix(&ptype);
-                                            params_str_for_fn_def.push_str(&format!(", {}: {}", pname, dtype));
-                                            let q = if dtype == "String" { "&" } else { "" };
-                                            let method_prefix = if ntype == "property" { "set" } else { "put" };
-                                            params_setup_str_for_body.push_str(&format!(
-                                                "        d.{}_{}(\"{}\", {}{});\n",
-                                                method_prefix, ntype, pname, q, pname
+                                            for param_val in params_array.objects() {
+                                                let param = param_val.object();
+                                                let pname = param.get_string("name");
+                                                let ptype = param.get_string("type");
+                                                let dtype = lookup_rust_api_data_type(&ptype);
+                                                let ntype = lookup_rust_api_ndata_method_suffix(&ptype);
+                                                params_str_for_fn_def.push_str(&format!(", {}: {}", pname, dtype));
+                                                let q = if dtype == "String" { "&" } else { "" };
+                                                let method_prefix = if ntype == "property" { "set" } else { "put" };
+                                                params_setup_str_for_body.push_str(&format!(
+                                                    "        d.{}_{}(\"{}\", {}{});\n",
+                                                    method_prefix, ntype, pname, q, pname
+                                                ));
+                                            }
+                                            
+                                            impl_blocks_str.push_str(&format!("    pub fn {} (&self{}", safe_cmd_name, params_str_for_fn_def));
+                                            impl_blocks_str.push_str(&format!(") -> {} {{\n", rtype_rust));
+                                            
+                                            let d_mut = if params_array.len() > 0 { "mut " } else { "" };
+                                            impl_blocks_str.push_str(&format!("        let {}d = ndata::dataobject::DataObject::new();\n", d_mut));
+                                            
+                                            impl_blocks_str.push_str(&params_setup_str_for_body);
+                                            impl_blocks_str.push_str(&format!(
+                                                "        flowlang::rustcmd::RustCmd::new(\"{}\").execute(d).expect(\"Rust command execution failed\").get_{}(\"a\")\n    }}\n",
+                                                rust_meta_file_id,
+                                                ntype_ret
                                             ));
                                         }
-
-                                        impl_blocks_str.push_str(&format!("    pub fn {} (&self{}", safe_cmd_name, params_str_for_fn_def));
-                                        impl_blocks_str.push_str(&format!(") -> {} {{\n", rtype_rust));
-
-                                        // --- FIX for unused_mut warning ---
-                                        let d_mut = if params_array.len() > 0 { "mut " } else { "" };
-                                        impl_blocks_str.push_str(&format!("        let {}d = ndata::dataobject::DataObject::new();\n", d_mut));
-                                        // --- End Fix ---
-
-                                        impl_blocks_str.push_str(&params_setup_str_for_body);
-                                        impl_blocks_str.push_str(&format!(
-                                            "        flowlang::rustcmd::RustCmd::new(\"{}\").execute(d).expect(\"Rust command execution failed\").get_{}(\"a\")\n    }}\n",
-                                            rust_meta_file_id,
-                                            ntype_ret
-                                        ));
                                     }
                                 }
                             }

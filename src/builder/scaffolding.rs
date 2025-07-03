@@ -6,7 +6,6 @@ use std::io::Write;
 use std::path::Path;
 
 /// Ensures that the core `src/lib.rs` and `src/cmdinit.rs` files exist for a crate.
-/// If they don't exist, they are created with default content.
 pub(crate) fn ensure_crate_files_exist(crate_src_path: &Path, is_ffi: bool) {
     if !crate_src_path.exists() {
         create_dir_all(crate_src_path).expect("Failed to create src directory for crate.");
@@ -27,18 +26,27 @@ pub static API : crate::api::api = crate::api::new();
 "#);
         if is_ffi {
             let crate_name = crate_src_path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).unwrap_or("unknown_crate").replace("-", "_");
+
+            // This is the FFI-safe definition that passes the entire NDataConfig.
             let ffi_content = format!(
 r#"
+// THIS IS THE FFI-SAFE INITIALIZER STRUCT.
+// ITS DEFINITION MUST EXACTLY MATCH THE ONE IN THE MAIN BINARY.
 #[repr(C)]
 #[derive(Debug)]
 pub struct Initializer {{
-    pub context_placeholder: usize,
+    pub ndata_config: ndata::NDataConfig,
     pub cmds: Vec<(String, Transform, String)>,
 }}
 
 #[no_mangle]
 pub unsafe extern "C" fn mirror_{}(initializer: *mut Initializer) {{
     if initializer.is_null() {{ return; }}
+
+    // First, mirror the ndata context from the main application.
+    ndata::mirror((*initializer).ndata_config);
+
+    // Then, call this library's internal cmdinit to populate the cmds vector.
     cmdinit(&mut (*initializer).cmds);
 }}
 "#, crate_name);
