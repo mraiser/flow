@@ -30,6 +30,8 @@ pub static API : crate::api::api = crate::api::new();
             // This is the FFI-safe definition that passes the entire NDataConfig.
             let ffi_content = format!(
 r#"
+use std::sync::Once;
+
 // THIS IS THE FFI-SAFE INITIALIZER STRUCT.
 // ITS DEFINITION MUST EXACTLY MATCH THE ONE IN THE MAIN BINARY.
 #[repr(C)]
@@ -39,14 +41,20 @@ pub struct Initializer {{
     pub cmds: Vec<(String, Transform, String)>,
 }}
 
+static START: Once = Once::new();
+
 #[no_mangle]
 pub unsafe extern "C" fn mirror_{}(initializer: *mut Initializer) {{
     if initializer.is_null() {{ return; }}
 
-    // First, mirror the ndata context from the main application.
-    ndata::mirror((*initializer).ndata_config);
+    // Use Once to ensure ndata::mirror is only ever called one time,
+    // even across multiple hot-reloads of this library.
+    START.call_once(|| {{
+        flowlang::mirror(("data", (*initializer).ndata_config));
+    }});
 
     // Then, call this library's internal cmdinit to populate the cmds vector.
+    // We want this to run on every reload to register any new commands.
     cmdinit(&mut (*initializer).cmds);
 }}
 "#, crate_name);

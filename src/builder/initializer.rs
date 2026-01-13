@@ -1,7 +1,9 @@
+// builder/initializer.rs
+
 //! This file is responsible for generating the main `generated_initializer.rs`
 //! file, which registers all commands with the flowlang runtime.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use ndata::dataobject::DataObject;
@@ -35,54 +37,242 @@ pub(crate) fn generate_main_initializer(crates: &HashMap<String, bool>) {
     let has_ffi_crates = crates.values().any(|&is_ffi| is_ffi);
 
     if has_ffi_crates {
-        main_init_lines.push("\n// FFI Linker module definition".to_string());
+        main_init_lines.push("\n// FFI Stuff\n".to_string());
+
+        main_init_lines.push("use libloading::{Library, Symbol};".to_string());
+        main_init_lines.push("use std::path::PathBuf;".to_string());
+        main_init_lines.push("use std::env;".to_string());
+        main_init_lines.push("use std::sync::Once;".to_string());
+        main_init_lines.push("use ndata::sharedmutex::GlobalSharedMutex;".to_string());
+        main_init_lines.push("use std::collections::HashMap;".to_string());
+        main_init_lines.push("".to_string());
+
         main_init_lines.push("#[repr(C)]".to_string());
         main_init_lines.push("#[derive(Debug)]".to_string());
         main_init_lines.push("pub struct Initializer {".to_string());
         main_init_lines.push("    pub ndata_config: NDataConfig,".to_string());
         main_init_lines.push("    pub cmds: Vec<(String, Transform, String)>,".to_string());
         main_init_lines.push("}".to_string());
+        main_init_lines.push("".to_string());
+
+        main_init_lines.push(r#"static START: Once = Once::new();
+pub static LIBRARYHEAP: GlobalSharedMutex<HashMap<String, FlowLangLibrary>> = GlobalSharedMutex::new();
+type MirrorFlowLangFunc = unsafe extern "C" fn(initializer: *mut Initializer);
+
+pub struct FlowLangLibrary {
+    lib: Library,
+    name: String,
+    ndata_config: NDataConfig,
+    temp_path: PathBuf,
+}
+
+impl Drop for FlowLangLibrary {
+    fn drop(&mut self) {
+        // The lib field's own Drop implementation will unload the library.
+        // We just need to clean up the temporary file we created.
+        let _ = std::fs::remove_file(&self.temp_path);
+    }
+}
+
+impl FlowLangLibrary {
+    pub fn load(name:String, config: NDataConfig) -> Result<Self, Box<dyn std::error::Error>> {
+        let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+
+        let (lib_prefix, lib_extension) = if cfg!(target_os = "windows") {
+            ("", "dll")
+        } else if cfg!(target_os = "macos") {
+            ("lib", "dylib")
+        } else {
+            ("lib", "so")
+        };
+
+        let original_lib_filename = format!("{}{}.{}", lib_prefix, name, lib_extension);
+        let original_path = PathBuf::from(name.clone()).join("target").join(profile).join(&original_lib_filename);
+
+        if !original_path.exists() {
+            return Err(format!("Library file not found at {:?}", original_path).into());
+        }
+
+        // Create a unique path for our copy to force the OS to reload it from disk.
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+        let temp_lib_filename = format!("{}{}_{}.{}", lib_prefix, name, timestamp, lib_extension);
+        let temp_path = env::temp_dir().join(&temp_lib_filename);
+        std::fs::copy(&original_path, &temp_path)?;
+
+        let lib_path_abs = temp_path.canonicalize()?;
+
+        unsafe {
+            let lib = Library::new(lib_path_abs)?;
+            Ok(FlowLangLibrary { lib, name, ndata_config: config, temp_path })
+        }
+    }
+
+    pub fn call_mirror(&self, initializer: *mut Initializer) -> Result<(), Box<dyn std::error::Error>> {
+        let fname = format!("mirror_{}", self.name);
+        unsafe {
+            let mirror_func: Symbol<MirrorFlowLangFunc> = self.lib.get(&fname.as_bytes())?;
+            mirror_func(initializer);
+        }
+        Ok(())
+    }
+
+    pub fn reload(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // This assignment implicitly calls `drop` on the old `self`'s contents,
+        // which will clean up the old temporary file thanks to our Drop impl.
+        *self = Self::load(self.name.clone(), self.ndata_config.clone())?;
+
+        let mut initializer = Initializer {
+            ndata_config: self.ndata_config.clone(),
+            cmds: Vec::new(),
+        };
+
+        self.call_mirror(&mut initializer as *mut _);
+
+        let cmds = initializer.cmds;
+        let globals = DataStore::globals();
+        let mut cmd_map = globals.get_object("RUST_COMMANDS");
+        for q in cmds {
+            let cmd_details = RustCmd::detail(q.0.to_owned(), q.1, q.2.to_owned());
+            cmd_map.put_object(&q.0, cmd_details);
+        }
+
+        Ok(())
+    }
+}
+
+pub fn reload_library(lib:&str){
+    let mut libheap = LIBRARYHEAP.lock();
+    if let Some(lib_instance) = libheap.get_mut(lib) {
+        if let Err(e) = lib_instance.reload() {
+            eprintln!("Failed to hot-reload library '{}': {}", lib, e);
+        }
+    }
+}
+"#.to_string());
+    }
+
+    let ffi_crate_names: Vec<String> = crates.iter()
+        .filter(|(_, &is_ffi)| is_ffi)
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    if !ffi_crate_names.is_empty() {
+        let ffi_crates_list_str = ffi_crate_names.iter()
+            .map(|name| format!("\"{}\".to_string()", name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        main_init_lines.push("mod hot_reloader {".to_string());
+        main_init_lines.push("    use std::time::Duration;".to_string());
+        main_init_lines.push("    use notify::{Watcher, RecursiveMode, Error};".to_string());
+        main_init_lines.push("    use notify_debouncer_full::{new_debouncer, DebouncedEvent};".to_string());
+        main_init_lines.push("    use super::reload_library;".to_string());
+        main_init_lines.push(r#"
+    pub fn start_watcher() {
+        let ffi_crate_names: Vec<String> = vec![
+"#.to_string() + &ffi_crates_list_str + r#"
+        ];
+
+        if ffi_crate_names.is_empty() { return; }
+
+        std::thread::spawn(move || {
+            println!("Hot Reloading Watcher started for: {:?}", ffi_crate_names);
+            let names_for_closure = ffi_crate_names.clone();
+            let mut debouncer = new_debouncer(Duration::from_secs(2), None, move |res: Result<Vec<DebouncedEvent>, Vec<Error>>| {
+                match res {
+                    Ok(events) => {
+                        for event in events {
+                            for path in &event.paths {
+                                if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
+                                    let lib_name = file_name.strip_prefix("lib").unwrap_or(file_name);
+                                    if names_for_closure.contains(&lib_name.to_string()) {
+                                        println!("Hot Reloading: Detected change in {:?}. Reloading...", path);
+                                        reload_library(lib_name);
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => eprintln!("Hot Reloading: Watch error: {:?}", e),
+                }
+            }).expect("Failed to create file system debouncer.");
+
+            let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+            let top_level = std::env::current_dir().expect("Failed to get current directory for watcher.");
+
+            for crate_name in &ffi_crate_names {
+                let watch_path = top_level.join(crate_name).join("target").join(profile);
+                if watch_path.exists() {
+                    debouncer.watcher().watch(&watch_path, RecursiveMode::NonRecursive)
+                        .expect(&format!("Failed to watch directory: {:?}", watch_path));
+                    println!("Hot Reloading: Watching for changes in {:?}", watch_path);
+                } else {
+                    eprintln!("Hot Reloading: Directory not found, cannot watch: {:?}", watch_path);
+                }
+            }
+
+            loop { std::thread::sleep(Duration::from_secs(60)); }
+        });
+    }
+"#);
+        main_init_lines.push("}".to_string());
     }
 
     for (crate_name, &is_ffi) in crates.iter() {
         let safe_crate_name = crate_name.replace("-", "_");
-        if is_ffi {
-            main_init_lines.push(format!("mod {}_ffi {{", safe_crate_name));
-            main_init_lines.push("    use super::Initializer;".to_string());
-            main_init_lines.push(format!("    #[link(name = \"{}\", kind = \"dylib\")]", crate_name));
-            main_init_lines.push("    unsafe extern \"C\" {".to_string());
-            main_init_lines.push(format!("        pub fn mirror_{}(initializer: *mut Initializer);", safe_crate_name));
-            main_init_lines.push("    }".to_string());
-            main_init_lines.push("}".to_string());
-        } else {
+        if !is_ffi {
             main_init_lines.push(format!("use {};", safe_crate_name));
         }
     }
 
     main_init_lines.push("\npub fn initialize_all_commands(magic: (&'static str, NDataConfig)) {".to_string());
+
+    if !ffi_crate_names.is_empty() {
+        main_init_lines.push("    hot_reloader::start_watcher();".to_string());
+    }
+
     main_init_lines.push("    let mut globals = DataStore::globals();".to_string());
     main_init_lines.push("    if !globals.has(\"RUST_COMMANDS\") {".to_string());
     main_init_lines.push("        globals.put_object(\"RUST_COMMANDS\", ndata::dataobject::DataObject::new());".to_string());
     main_init_lines.push("    }".to_string());
     main_init_lines.push("    let mut cmd_map = globals.get_object(\"RUST_COMMANDS\");".to_string());
 
+    if has_ffi_crates {
+        main_init_lines.push("    // For FFI".to_string());
+        main_init_lines.push("    START.call_once(|| {".to_string());
+        main_init_lines.push("        LIBRARYHEAP.init(HashMap::new());".to_string());
+        main_init_lines.push("    });".to_string());
+    }
 
     for (crate_name, &is_ffi) in crates.iter() {
         let safe_crate_name = crate_name.replace("-", "_");
         main_init_lines.push(format!("\n    // Initialize crate: {}", crate_name));
         main_init_lines.push("    {".to_string());
-        main_init_lines.push("        let mut cmds = Vec::new();".to_string());
+        main_init_lines.push("        let mut cmds = Vec::<(String, Transform, String)>::new();".to_string());
 
         if is_ffi {
-            // Use the 'magic' parameter to populate the Initializer struct.
-            main_init_lines.push("        let mut initializer = Initializer {".to_string());
-            main_init_lines.push("            ndata_config: magic.1,".to_string());
-            main_init_lines.push("            cmds: Vec::new(),".to_string());
-            main_init_lines.push("        };".to_string());
-            main_init_lines.push("        unsafe {".to_string());
-            main_init_lines.push(format!("            {}_ffi::mirror_{}(&mut initializer as *mut _);", safe_crate_name, safe_crate_name));
-            main_init_lines.push("        }".to_string());
-            main_init_lines.push("        cmds.extend(initializer.cmds);".to_string());
+            main_init_lines.push("        // Load the library dynamically".to_string());
+            main_init_lines.push(format!("        match FlowLangLibrary::load(\"{}\".to_string(), magic.1.clone()) {{", crate_name));
+            main_init_lines.push(r#"            Ok(mut flolib) => {
+                let mut initializer = Initializer {
+                    ndata_config: magic.1.clone(),
+                    cmds: Vec::new(),
+                };
+
+                // Call the function from the dynamic library
+                if let Err(e) = flolib.call_mirror(&mut initializer as *mut _) {
+                    eprintln!("Failed to call mirror function for {}: {}", flolib.name, e);
+                }
+
+                cmds.extend(initializer.cmds);
+
+                let mut libheap = LIBRARYHEAP.lock();"#.to_string());
+            main_init_lines.push(format!("                libheap.insert(\"{}\".to_string(), flolib);", crate_name));
+            main_init_lines.push(format!(r#"            }}
+            Err(e) => {{
+                eprintln!("Failed to load {} library: {{}}", e);
+            }}
+        }}"#, crate_name));
         } else {
             main_init_lines.push(format!("        {}::cmdinit(&mut cmds);", safe_crate_name));
         }
@@ -99,9 +289,10 @@ pub(crate) fn generate_main_initializer(crates: &HashMap<String, bool>) {
     write_lines_to_file(&generated_file_path, &main_init_lines)
         .expect("Failed to write generated initializer file.");
 
-    update_main_cargo_dependencies(&top_level_path.join("Cargo.toml"), crates);
+    let main_cargo_path = top_level_path.join("Cargo.toml");
+    update_main_cargo_dependencies(&main_cargo_path, crates);
+    update_main_cargo_workspace_exclude(&main_cargo_path, crates);
 }
-
 
 /// Adds path dependencies for all sub-crates to the main project's Cargo.toml.
 fn update_main_cargo_dependencies(main_cargo_path: &Path, crates: &HashMap<String, bool>) {
@@ -114,10 +305,12 @@ fn update_main_cargo_dependencies(main_cargo_path: &Path, crates: &HashMap<Strin
     let dep_insertion_line = find_section_insertion_line(&lines, "[dependencies]", &mut dependencies_map);
 
     let mut new_deps_config = DataObject::new();
-    for crate_name in crates.keys() {
-        if !dependencies_map.contains_key(crate_name) {
-            let dependency_value = format!("{{ path = \"./{}\" }}", crate_name);
-            new_deps_config.put_string(crate_name, &dependency_value);
+    for (crate_name, &is_ffi) in crates.iter() {
+        if !is_ffi {
+            if !dependencies_map.contains_key(crate_name) {
+                let dependency_value = format!("{{ path = \"./{}\" }}", crate_name);
+                new_deps_config.put_string(crate_name, &dependency_value);
+            }
         }
     }
 
@@ -135,5 +328,92 @@ fn update_main_cargo_dependencies(main_cargo_path: &Path, crates: &HashMap<Strin
             write_lines_to_file(&main_cargo_path.to_path_buf(), &lines)
                 .expect("Failed to write updated main Cargo.toml");
         }
+    }
+}
+
+/// Adds FFI crates to the workspace.exclude list in the main Cargo.toml.
+/// This prevents Cargo from trying to build them as part of the main workspace.
+fn update_main_cargo_workspace_exclude(main_cargo_path: &Path, crates: &HashMap<String, bool>) {
+    if !main_cargo_path.exists() {
+        return;
+    }
+
+    let ffi_crates_to_exclude: Vec<_> = crates.iter()
+        .filter(|(_, &is_ffi)| is_ffi)
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    if ffi_crates_to_exclude.is_empty() {
+        return; // Nothing to do if there are no FFI crates.
+    }
+
+    let mut lines = read_lines_from_file(&main_cargo_path.to_path_buf())
+        .expect("Failed to read main Cargo.toml");
+    let mut modified = false;
+
+    let workspace_section_index = lines.iter().position(|l| l.trim() == "[workspace]");
+
+    // Find the `exclude =` line, but only within the [workspace] section.
+    let mut exclude_line_index: Option<usize> = None;
+    if let Some(start_index) = workspace_section_index {
+        for i in (start_index + 1)..lines.len() {
+            let line = lines[i].trim();
+            if line.starts_with('[') { break; } // We've hit the next section.
+            if line.starts_with("exclude =") {
+                exclude_line_index = Some(i);
+                break;
+            }
+        }
+    }
+
+    if let Some(index) = exclude_line_index {
+        // --- Case 1: `exclude =` line already exists, so we modify it. ---
+        let line = &lines[index];
+        let mut existing_crates: HashSet<String> = if let (Some(start), Some(end)) = (line.find('['), line.rfind(']')) {
+            line[start + 1..end]
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            HashSet::new()
+        };
+
+        let initial_count = existing_crates.len();
+        for crate_name in ffi_crates_to_exclude {
+            existing_crates.insert(crate_name);
+        }
+
+        if existing_crates.len() > initial_count {
+            let mut sorted_crates: Vec<_> = existing_crates.into_iter().collect();
+            sorted_crates.sort();
+            let quoted_crates: Vec<_> = sorted_crates.iter().map(|s| format!("\"{}\"", s)).collect();
+            let indent = lines[index].find("exclude").unwrap_or(0);
+            lines[index] = format!("{}exclude = [{}]", " ".repeat(indent), quoted_crates.join(", "));
+            modified = true;
+        }
+
+    } else {
+        // --- Case 2: No `exclude =` line, so we add it. ---
+        let quoted_crates: Vec<_> = ffi_crates_to_exclude.iter().map(|s| format!("\"{}\"", s)).collect();
+        let exclude_line = format!("exclude = [{}]", quoted_crates.join(", "));
+
+        if let Some(start_index) = workspace_section_index {
+            // [workspace] section exists, just insert the exclude line.
+            lines.insert(start_index + 1, exclude_line);
+        } else {
+            // No [workspace] section, add the whole thing to the end of the file.
+            if !lines.last().map_or(false, |l| l.is_empty()) {
+                lines.push("".to_string());
+            }
+            lines.push("[workspace]".to_string());
+            lines.push(exclude_line);
+        }
+        modified = true;
+    }
+
+    if modified {
+        write_lines_to_file(&main_cargo_path.to_path_buf(), &lines)
+            .expect("Failed to write updated main Cargo.toml with workspace excludes");
     }
 }
