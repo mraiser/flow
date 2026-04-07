@@ -172,11 +172,38 @@ fn generate_rust_source_from_meta(meta: DataObject, user_code: &str) -> String {
     let return_packaging_code = generate_rust_return_packaging(&rust_return_type);
 
     src.push_str(&param_extraction_code);
-    src.push_str(&format!("    let ax = {}({});\n", command_name, function_call_args));
-    src.push_str("    let mut result_obj = DataObject::new();\n");
+    src.push_str("    use std::panic;\n");
+    src.push_str(&format!("    let ax = panic::catch_unwind(|| {}({}));\n", command_name, function_call_args));
+
+    src.push_str(r#"    match ax {
+        Ok(ax) => {
+            let mut result_obj = DataObject::new();
+"#);
+
+    // Inject the dynamically generated packaging code inside the Ok branch
     src.push_str(&return_packaging_code);
-    src.push_str("    result_obj\n");
-    src.push_str("}\n\n");
+
+    src.push_str(r#"            result_obj
+        }
+        Err(err) => {
+            let mut err_obj = DataObject::new();
+            err_obj.put_string("status", "err");
+
+            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic occurred".to_string()
+            };
+
+            err_obj.put_string("msg", &msg);
+            err_obj
+        }
+    }
+}
+
+"#);
 
     // Append the user's actual function code
     src.push_str(&format!("pub fn {}({}) -> {} {{\n", command_name, user_fn_param_defs, rust_return_type));

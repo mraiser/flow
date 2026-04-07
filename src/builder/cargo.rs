@@ -21,7 +21,7 @@ pub(crate) fn update_cargo_toml(cargo_toml_path: &PathBuf, cargo_config: &DataOb
             let (flowlang_dep_line, ndata_dep_line) = get_core_dependency_lines();
 
             let crate_types_str = if is_ffi {
-                "[\"cdylib\", \"rlib\"]".to_string()
+                "[\"dylib\"]".to_string()
             } else if cargo_config.has("crate_types") {
                 let crate_types_da = cargo_config.get_array("crate_types");
                 let types: Vec<String> = crate_types_da.objects().iter()
@@ -102,8 +102,8 @@ default = []
 /// Reads the root Cargo.toml to find the dependency lines for flowlang and ndata.
 fn get_core_dependency_lines() -> (String, String) {
     let root_cargo_path = get_project_top_level_path().join("Cargo.toml");
-    let fallback_flowlang = "flowlang = { version = \"0.3.25\" }".to_string();
-    let fallback_ndata = "ndata = { version = \"0.3.14\" }".to_string();
+    let fallback_flowlang = "flowlang = { version = \"0.3.29\" }".to_string();
+    let fallback_ndata = "ndata = { version = \"0.3.16\" }".to_string();
 
     if !root_cargo_path.exists() {
         println!("WARNING: Root Cargo.toml not found. Falling back to default dependency versions.");
