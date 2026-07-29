@@ -171,9 +171,44 @@ fn generate_rust_source_from_meta(meta: DataObject, user_code: &str) -> String {
         generate_rust_invoke_parts(params_array.clone());
     let return_packaging_code = generate_rust_return_packaging(&rust_return_type);
 
-    src.push_str(&param_extraction_code);
     src.push_str("    use std::panic;\n");
-    src.push_str(&format!("    let ax = panic::catch_unwind(|| {}({}));\n", command_name, function_call_args));
+
+    // Declared params are validated BEFORE anything reads them. DataObject's
+    // get_* panics on a missing key, and this wrapper is compiled into a
+    // hot-loaded dylib, so that panic unwinds across an FFI boundary where
+    // Rust cannot catch it: "fatal runtime error: Rust cannot catch foreign
+    // exceptions, aborting". A caller omitting one param therefore killed the
+    // whole process, not just its own request.
+    if params_array.len() > 0 {
+        let names: Vec<String> = params_array
+            .objects()
+            .iter()
+            .map(|p| format!("\"{}\"", p.object().get_string("name")))
+            .collect();
+        src.push_str(&format!("    for p in [{}] {{\n", names.join(", ")));
+        src.push_str("        if !o.has(p) {\n");
+        src.push_str("            let mut e = DataObject::new();\n");
+        src.push_str("            e.put_string(\"status\", \"err\");\n");
+        src.push_str("            e.put_string(\"msg\", &format!(\"missing required parameter: {}\", p));\n");
+        src.push_str("            let mut result_obj = DataObject::new();\n");
+        src.push_str("            result_obj.put_object(\"a\", e);\n");
+        src.push_str("            return result_obj;\n");
+        src.push_str("        }\n");
+        src.push_str("    }\n");
+    }
+
+    // Extraction moves INSIDE the guard as well, so a wrong TYPE (get_int on a
+    // string, say) is caught rather than aborting. AssertUnwindSafe because
+    // DataObject is a handle into the global store, which the command body
+    // already mutates under this same catch_unwind.
+    src.push_str("    let ax = panic::catch_unwind(panic::AssertUnwindSafe(|| {\n");
+    for line in param_extraction_code.lines() {
+        src.push_str("    ");
+        src.push_str(line);
+        src.push('\n');
+    }
+    src.push_str(&format!("        {}({})\n", command_name, function_call_args));
+    src.push_str("    }));\n");
 
     src.push_str(r#"    match ax {
         Ok(ax) => {
@@ -198,7 +233,13 @@ fn generate_rust_source_from_meta(meta: DataObject, user_code: &str) -> String {
             };
 
             err_obj.put_string("msg", &msg);
-            err_obj
+            // Wrapped in the same `a` envelope a successful return uses.
+            // Unwrapped, callers that unpack the envelope (newbound's
+            // format_result, for one) report an opaque 500 — "Not an object:
+            // DString(\"err\")" — instead of this message.
+            let mut result_obj = DataObject::new();
+            result_obj.put_object("a", err_obj);
+            result_obj
         }
     }
 }
@@ -263,5 +304,52 @@ fn generate_rust_return_packaging(rust_return_type: &str) -> String {
             }
         };
         format!("    result_obj.put_{};\n", putter_suffix)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndata::dataarray::DataArray;
+
+    /// A command wrapper must never be able to abort the process. Params are
+    /// validated before use and extracted inside the panic guard, because this
+    /// code is compiled into a hot-loaded dylib: a panic escaping it crosses an
+    /// FFI boundary, where Rust aborts rather than unwinding.
+    #[test]
+    fn generated_wrapper_guards_its_params() {
+        ndata::init();
+        let mut params = DataArray::new();
+        for n in ["lib", "ctl", "name", "author"] {
+            let mut p = DataObject::new();
+            p.put_string("name", n);
+            p.put_string("type", "String");
+            params.push_object(p);
+        }
+        let mut data = DataObject::new();
+        data.put_string("import", "");
+        data.put_string("returntype", "String");
+        data.put_array("params", params);
+        let mut meta = DataObject::new();
+        meta.put_string("cmd", "remove_timer");
+        meta.put_object("data", data);
+
+        let src = generate_rust_source_from_meta(meta, "String::new()");
+
+        // every declared param is checked for presence, with a clear message
+        for n in ["lib", "ctl", "name", "author"] {
+            assert!(src.contains(&format!("\"{}\"", n)), "param {} not checked", n);
+        }
+        assert!(src.contains("missing required parameter"),
+                "no presence check emitted:\n{}", src);
+
+        // and nothing is READ before the guard opens
+        let guard = src.find("catch_unwind").expect("no catch_unwind emitted");
+        let first_get = src.find("o.get_string(\"lib\")").expect("no extraction emitted");
+        assert!(first_get > guard,
+                "params are extracted BEFORE the panic guard — a missing key \
+                 would abort the process:\n{}", src);
+        assert!(src.contains("AssertUnwindSafe"),
+                "extraction inside the guard needs AssertUnwindSafe:\n{}", src);
     }
 }
