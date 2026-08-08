@@ -1,10 +1,10 @@
-    println!("[MCP] Incoming request: {}", data.to_string());
+    eprintln!("[MCP] Incoming request: {}", data.to_string());
 
     let id = if data.has("id") { data.get_property("id") } else { DNull };
 
     if !data.has("jsonrpc") || !data.has("method") {
         let err = error_response(id, -32600_i64, "Invalid Request");
-        println!("[MCP] Responding with error: {}", err.to_string());
+        eprintln!("[MCP] Responding with error: {}", err.to_string());
         return err;
     }
 
@@ -19,7 +19,7 @@
         "initialize" => initialize(),
         _ => {
             let err = error_response(id.clone(), -32601_i64, "Method not found");
-            println!("[MCP] Responding with error: {}", err.to_string());
+            eprintln!("[MCP] Responding with error: {}", err.to_string());
             return err;
         }
     };
@@ -29,8 +29,66 @@
     response.set_property("id", id);
     response.put_object("result", result);
 
-    println!("[MCP] Response: {}", response.to_string());
+    eprintln!("[MCP] Response: {}", response.to_string());
     response
+}
+
+pub fn run(){
+    eprintln!("[flow] MCP flow started — expecting JSON-RPC over stdin/stdout");
+
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut stdout_lock = stdout.lock();
+
+    for line in stdin.lock().lines() {
+        match line {
+            Ok(line) => {
+                if line.trim().is_empty() {
+                    continue;
+                }
+
+                eprintln!("[flow] Incoming line: {}", line);
+
+                match DataObject::try_from_string(&line) {
+                    Ok(query) => {
+                        if !query.has("id") || !query.get_property("id").is_number() {
+                            eprintln!("[flow] NOT GONNA DO IT JACK: {}", query.to_string());
+                            continue;
+                        }
+
+                        let response = {
+                            #[cfg(feature = "gag")]
+                            let _stdout_gag = Gag::stdout().unwrap();
+                            mcp(query)
+                        };
+
+                        eprintln!("[flow] Outgoing response: {}", response.to_string());
+                        writeln!(stdout_lock, "{}", response.to_string()).unwrap();
+                        stdout_lock.flush().unwrap();
+                    }
+                    Err(err) => {
+                        eprintln!("[flow] Error during request: {}", err);
+                        let msg = format!("Internal error: {}", err);
+                        let mut error = DataObject::new();
+                        error.put_int("code", -32603);
+                        error.put_string("message", &msg);
+                        let mut fallback = DataObject::new();
+                        fallback.put_string("jsonrpc","2.0");
+                        fallback.put_null("id");
+                        fallback.put_object("error", error);
+                        writeln!(stdout_lock, "{}", fallback.to_string()).unwrap();
+                        stdout_lock.flush().unwrap();
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("[flow] Error reading stdin: {}", err);
+                break;
+            }
+        }
+    }
+
+    eprintln!("[flow] Stream closed. Exiting MCP flow.");
 }
 
 fn error_response(id: Data, code: i64, message: &str) -> DataObject {

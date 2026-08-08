@@ -1,5 +1,5 @@
 let mut out = DataObject::new();
-let mut resources = DataArray::new();
+let resources = DataArray::new();
 
 // Add resources here
 
