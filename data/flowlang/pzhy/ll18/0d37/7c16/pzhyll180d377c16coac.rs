@@ -1,29 +1,55 @@
-let mut old = input;
-let mut out = "".to_string();
-let mut i;
+// Percent-decoding is BYTE-oriented: one non-ASCII character arrives as a
+// RUN of consecutive %XX escapes (UTF-8 bytes), so escapes must be collected
+// into a byte run before UTF-8 validation. Decoding each escape alone
+// rejects every byte >= 0x80 and lets multi-byte characters through as
+// literal "%E2%80%94" text. Invalid escapes and byte runs that are not
+// valid UTF-8 fall back to the old per-escape behavior (literal
+// passthrough), so no input that previously decoded changes meaning.
+let src: Vec<char> = input.chars().collect();
+let n = src.len();
+let mut out = String::new();
+let mut i = 0;
 
-while old.contains("%") {
-  i = old.find("%").unwrap();
-  out = out + &old[0..i];
-  old = old[i..].to_string();
-  if old.len() < 3 {
-    break;
+let hexval = |c: char| c.to_digit(16);
+
+while i < n {
+  if src[i] != '%' {
+    out.push(src[i]);
+    i += 1;
+    continue;
   }
-  
-  let s = old[1..3].to_string();
-  let res:Result<Vec<u8>, ParseIntError> = (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
-        .collect();
-  
-  if res.is_err(){
-    out = out + &old[0..1];
-    old = old[1..].to_string();
+  // collect the run of consecutive well-formed %XX escapes starting here
+  let start = i;
+  let mut bytes: Vec<u8> = Vec::new();
+  while i < n && src[i] == '%' && i + 2 < n {
+    let h = hexval(src[i + 1]);
+    let l = hexval(src[i + 2]);
+    if h.is_none() || l.is_none() { break; }
+    bytes.push((h.unwrap() * 16 + l.unwrap()) as u8);
+    i += 3;
   }
-  else {
-    out = out + std::str::from_utf8(&res.unwrap()).unwrap();
-    old = old[3..].to_string();
+  if bytes.is_empty() {
+    // a bare or malformed '%' — literal, as before
+    out.push('%');
+    i = start + 1;
+    continue;
+  }
+  match std::str::from_utf8(&bytes) {
+    Ok(s) => out.push_str(s),
+    Err(_) => {
+      // not UTF-8 as a whole: the old escape-by-escape fallback
+      for (j, b) in bytes.iter().enumerate() {
+        match std::str::from_utf8(std::slice::from_ref(b)) {
+          Ok(s) => out.push_str(s),
+          Err(_) => {
+            out.push('%');
+            out.push(src[start + j * 3 + 1]);
+            out.push(src[start + j * 3 + 2]);
+          }
+        }
+      }
+    }
   }
 }
 
-out + &old
+out
