@@ -1,4 +1,4 @@
-use ndata::dataobject::*;
+use ndata::dataobject::DataObject;
 use std::io::prelude::*;
 use std::net::TcpListener;
 use std::thread;
@@ -6,7 +6,6 @@ use std::panic;
 use std::fs;
 use ndata::dataarray::*;
 use std::sync::RwLock;
-//use state::Storage;
 use std::sync::Once;
 use std::net::TcpStream;
 use ndata::heap::Heap;
@@ -20,17 +19,55 @@ use crate::flowlang::http::hex_decode::hex_decode;
 use crate::flowlang::system::time::time;
 use crate::flowlang::file::mime_type::*;
 pub fn execute(o: DataObject) -> DataObject {
-let a0 = o.get_string("socket_address");
-let a1 = o.get_string("library");
-let a2 = o.get_string("control");
-let a3 = o.get_string("command");
-let ax = listen(a0, a1, a2, a3);
-let mut o = DataObject::new();
-o.put_string("a", &ax);
-o
+    use std::panic;
+    for p in ["socket_address", "library", "control", "command"] {
+        if !o.has(p) {
+            let mut e = DataObject::new();
+            e.put_string("status", "err");
+            e.put_string("msg", &format!("missing required parameter: {}", p));
+            let mut result_obj = DataObject::new();
+            result_obj.put_object("a", e);
+            return result_obj;
+        }
+    }
+    let ax = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let arg_0: String = o.get_string("socket_address");
+        let arg_1: String = o.get_string("library");
+        let arg_2: String = o.get_string("control");
+        let arg_3: String = o.get_string("command");
+        listen(arg_0, arg_1, arg_2, arg_3)
+    }));
+    match ax {
+        Ok(ax) => {
+            let mut result_obj = DataObject::new();
+    result_obj.put_string("a", &ax);
+            result_obj
+        }
+        Err(err) => {
+            let mut err_obj = DataObject::new();
+            err_obj.put_string("status", "err");
+
+            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic occurred".to_string()
+            };
+
+            err_obj.put_string("msg", &msg);
+            // Wrapped in the same `a` envelope a successful return uses.
+            // Unwrapped, callers that unpack the envelope (newbound's
+            // format_result, for one) report an opaque 500 — "Not an object:
+            // DString(\"err\")" — instead of this message.
+            let mut result_obj = DataObject::new();
+            result_obj.put_object("a", err_obj);
+            result_obj
+        }
+    }
 }
 
-pub fn listen(socket_address:String, library:String, control:String, command:String) -> String {
+pub fn listen(socket_address: String, library: String, control: String, command: String) -> String {
 START.call_once(|| {
   //WEBSOCKS.set(RwLock::new(Heap::new()));
   *WEBSOCKS.write().unwrap() = Some(Heap::new());
@@ -429,5 +466,5 @@ fn read_until(reader: &mut TcpStream, c: u8, bufout: &mut Vec<u8>) -> usize {
     if i >= 4096 { break; } // FIXME - What is an appropriate max HTTP request line length?
   }
   i
-}
 
+}
