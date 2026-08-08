@@ -685,7 +685,7 @@ impl Scalar {
   /// Get the bits of the scalar, in little-endian order.
   /// The iterator produces 256 bits, $b_0, b_1, \ldots, b_{255}$.
   pub(crate) fn bits_le(&self) -> impl DoubleEndedIterator<Item = bool> + Clone + '_ {
-    (0..256).map(move |i| (((self.bytes[i >> 3] >> (i & 7)) & 1u8) == 1u8))
+    (0..256).map(move |i| ((self.bytes[i >> 3] >> (i & 7)) & 1u8) == 1u8)
   }
 
   /// Convert this `Scalar` to its underlying sequence of bytes.

@@ -1,6 +1,5 @@
 use ndata::dataobject::DataObject;
 use ndata::data::Data;
-use ndata::data::*;
 
 pub fn execute(o: DataObject) -> DataObject {
     use std::panic;
