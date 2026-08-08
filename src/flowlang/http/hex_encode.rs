@@ -1,32 +1,66 @@
-use ndata::dataobject::*;
+use ndata::dataobject::DataObject;
 
 pub fn execute(o: DataObject) -> DataObject {
-let a0 = o.get_string("a");
-let ax = hex_encode(a0);
-let mut o = DataObject::new();
-o.put_string("a", &ax);
-o
+    use std::panic;
+    for p in ["a"] {
+        if !o.has(p) {
+            let mut e = DataObject::new();
+            e.put_string("status", "err");
+            e.put_string("msg", &format!("missing required parameter: {}", p));
+            let mut result_obj = DataObject::new();
+            result_obj.put_object("a", e);
+            return result_obj;
+        }
+    }
+    let ax = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let arg_0: String = o.get_string("a");
+        hex_encode(arg_0)
+    }));
+    match ax {
+        Ok(ax) => {
+            let mut result_obj = DataObject::new();
+    result_obj.put_string("a", &ax);
+            result_obj
+        }
+        Err(err) => {
+            let mut err_obj = DataObject::new();
+            err_obj.put_string("status", "err");
+
+            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic occurred".to_string()
+            };
+
+            err_obj.put_string("msg", &msg);
+            // Wrapped in the same `a` envelope a successful return uses.
+            // Unwrapped, callers that unpack the envelope (newbound's
+            // format_result, for one) report an opaque 500 — "Not an object:
+            // DString(\"err\")" — instead of this message.
+            let mut result_obj = DataObject::new();
+            result_obj.put_object("a", err_obj);
+            result_obj
+        }
+    }
 }
 
-pub fn hex_encode(a:String) -> String {
-let mut s = "".to_string();
-let chars = a.chars();
-for c in chars {
-  if is_ok(c) {
-    s.push(c);
+pub fn hex_encode(a: String) -> String {
+// Match JavaScript's encodeURIComponent: percent-encode the UTF-8 BYTES of
+// every character outside the unreserved set (A-Za-z0-9 - _ . ! ~ * ' ( )),
+// two uppercase hex digits per byte. The old encoder wrote the CODE POINT
+// with unpadded width, so every non-ASCII character produced output nothing
+// could decode ("é" -> "%E9", "—" -> "%2014", "\t" -> "%9") and distinct
+// inputs could collide ("\t"+"a" -> "%9a", U+009A -> "%9A").
+let mut s = String::new();
+for b in a.bytes() {
+  if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+    s.push(b as char);
   }
   else {
-    let x = c as i32;
-    s += "%";
-    s += &format!( "{:0X}", x);
+    s += &format!("%{:02X}", b);
   }
 }
 s
 }
-
-fn is_ok(c:char) -> bool {
-  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-
-
-}
-

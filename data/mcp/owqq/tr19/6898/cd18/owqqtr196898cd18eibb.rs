@@ -1,7 +1,7 @@
 let mut out = DataObject::new();
-let mut prompts = DataArray::new();
+let prompts = DataArray::new();
 
-
+// Add prompts here
 
 out.put_array("prompts", prompts);
 out

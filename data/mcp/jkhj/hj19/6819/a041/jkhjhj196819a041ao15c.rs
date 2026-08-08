@@ -1,4 +1,4 @@
-appserver::init_globals();
+//appserver::init_globals();
 
 let mut out = DataObject::new();
 let mut tools = DataArray::new();

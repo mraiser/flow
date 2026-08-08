@@ -318,7 +318,7 @@ mod tests {
     /// FFI boundary, where Rust aborts rather than unwinding.
     #[test]
     fn generated_wrapper_guards_its_params() {
-        ndata::init();
+        crate::builder::test_init();
         let mut params = DataArray::new();
         for n in ["lib", "ctl", "name", "author"] {
             let mut p = DataObject::new();

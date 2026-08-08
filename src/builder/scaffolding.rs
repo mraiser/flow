@@ -89,8 +89,11 @@ pub fn cmdinit(cmds: &mut Vec<(String, Transform, String)>) {
     } else {
         let content = read_to_string(path).unwrap_or_default();
         if !content.contains("pub fn cmdinit") {
+            // The closing brace must sit on its own line: update_mod_file_content
+            // inserts registration lines by searching for a lone "}", and a
+            // one-line "{}" stub leaves it appending them OUTSIDE the fn.
             let mut file = OpenOptions::new().append(true).open(path).unwrap();
-            writeln!(file, "\npub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {{}}")
+            writeln!(file, "\npub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {{\n}}")
                 .expect("Failed to append cmdinit to existing mod file");
         }
     }

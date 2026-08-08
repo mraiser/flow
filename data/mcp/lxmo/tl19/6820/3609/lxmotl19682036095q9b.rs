@@ -77,12 +77,19 @@ if !store.exists(lib, &cmd_id){
 }
 
 let data_ptr = store.get_data(lib, &cmd_id).get_object("data");
+if !data_ptr.has("type"){
+  eprintln!("lib {} malformed {}", lib, cmd_id);
+  return out;
+}
 let typ = data_ptr.get_string("type");
 let data_ptr = data_ptr.get_string(&typ);
 if !store.exists(lib, &data_ptr){
   eprintln!("lib {} does not have data {}", lib, data_ptr);
   return out;
 }
+
+//eprintln!("loading lib {} ctl {}", lib, data_ptr);
+
 let real_data = store
 .get_data(lib, &data_ptr)
 .get_object("data");
@@ -114,7 +121,7 @@ if real_data.has("params") {
 
     // required list (treat as optional if field "optional" == true)
     let optional = if p.has("optional") {
-      p.get_bool("optional")
+      p.get_boolean("optional")
     } else {
       false
     };

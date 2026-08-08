@@ -33,6 +33,7 @@ use ndata::NDataConfig;
 use crate::cmdinit::*;
 use crate::rustcmd::RustCmd;
 use ndata::dataobject::DataObject;
+pub mod testflow;
 
 pub type Transform = fn(DataObject) -> DataObject;
 

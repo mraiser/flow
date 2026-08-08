@@ -1,14 +1,42 @@
-use ndata::dataobject::*;
+use ndata::dataobject::DataObject;
 use crate::datastore::*;
 
 use crate::flowlang::system::random_non_hex_char::random_non_hex_char;
 use crate::flowlang::system::time::time;
 
-pub fn execute(_o: DataObject) -> DataObject {
-let ax = unique_session_id();
-let mut o = DataObject::new();
-o.put_string("a", &ax);
-o
+pub fn execute(_: DataObject) -> DataObject {
+    use std::panic;
+    let ax = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        unique_session_id()
+    }));
+    match ax {
+        Ok(ax) => {
+            let mut result_obj = DataObject::new();
+    result_obj.put_string("a", &ax);
+            result_obj
+        }
+        Err(err) => {
+            let mut err_obj = DataObject::new();
+            err_obj.put_string("status", "err");
+
+            let msg = if let Some(s) = err.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = err.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic occurred".to_string()
+            };
+
+            err_obj.put_string("msg", &msg);
+            // Wrapped in the same `a` envelope a successful return uses.
+            // Unwrapped, callers that unpack the envelope (newbound's
+            // format_result, for one) report an opaque 500 — "Not an object:
+            // DString(\"err\")" — instead of this message.
+            let mut result_obj = DataObject::new();
+            result_obj.put_object("a", err_obj);
+            result_obj
+        }
+    }
 }
 
 pub fn unique_session_id() -> String {
@@ -31,4 +59,3 @@ let s = random_non_hex_char()
 
 s
 }
-
