@@ -1,6 +1,5 @@
 use ndata::dataobject::DataObject;
 use ndata::dataarray::DataArray;
-use ndata::dataarray::*;
 use std::fs;
 
 pub fn execute(o: DataObject) -> DataObject {
