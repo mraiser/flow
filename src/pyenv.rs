@@ -29,24 +29,66 @@ impl PyEnv {
 
     fn activate_venv(venv_path: &str) {
         let _venv_bin = format!("{}/bin/python", venv_path);
-        std::env::set_var("PYTHONHOME", "");
-        std::env::set_var("PYTHONPATH", "");
+        //std::env::set_var("PYTHONHOME", "");
+        //std::env::set_var("PYTHONPATH", "");
         std::env::set_var("PATH", format!("{}/bin:{}", venv_path, std::env::var("PATH").unwrap_or_default()));
         std::env::set_var("VIRTUAL_ENV", venv_path);
     }
 
     // Added returntype parameter
     pub fn execute_function(&self, file_path: &str, name: &str, params: DataObject, returntype: &str) -> PyResult<DataObject> {
-        let base_path = "cmd/src";
+        let index = file_path.find("/src/").unwrap() + 4;
+        let base_path = &file_path[..index];
         let module_name = compute_module_name(base_path, file_path);
 
         Python::with_gil(|py| {
             let sys_module = py.import_bound("sys")?;
+
+            // --- VOODO PATH BS ---
+            if let Ok(venv_path) = std::env::var("VIRTUAL_ENV") {
+                // 1. Synchronize the sys.path from the real CLI to handle Nix store paths
+                let python_exe = format!("{}/bin/python", venv_path);
+                if let Ok(output) = std::process::Command::new(&python_exe)
+                    .arg("-c")
+                    .arg("import sys, json; print(json.dumps(sys.path))")
+                    .output()
+                {
+                    if output.status.success() {
+                        if let Ok(path_json) = String::from_utf8(output.stdout) {
+                            let _ = py.run_bound(
+                                &format!("import sys, json; sys.path = json.loads('{}')", path_json.trim()),
+                                None,
+                                None
+                            );
+                        }
+                    }
+                }
+
+                // 2. MUST explicitly call site.addsitedir to trigger .pth files for editable installs (pip install -e)
+                let py_version = py.version_info();
+                let site_packages = format!(
+                    "{}/lib/python{}.{}/site-packages",
+                    venv_path, py_version.major, py_version.minor
+                );
+
+                if let Ok(site) = py.import_bound("site") {
+                    let _ = site.call_method1("addsitedir", (&site_packages,));
+                }
+            }
+            // --------------------------------
             let binding = sys_module.getattr("path")?;
             let sys_path: &Bound<'_, PyList> = binding.downcast()?;
 
+            // Still insert base_path for your generated pycmd files
             if !sys_path.contains(base_path)? {
                 sys_path.insert(0, base_path)?;
+            }
+
+            if let Ok(cwd) = std::env::current_dir() {
+                let cwd_str = cwd.to_string_lossy().to_string();
+                if !sys_path.contains(&cwd_str)? {
+                    sys_path.insert(0, &cwd_str)?;
+                }
             }
 
             if let Some(file_dir) = Path::new(file_path).parent() {
@@ -179,12 +221,17 @@ fn compute_module_name(base_path: &str, file_path: &str) -> String {
 
 pub fn dopy(lib: &str, id: &str, args: DataObject) -> DataObject {
     START.call_once(|| {
-        let venv_path_str = DataStore::new().root
+        let venv_path_str = DataStore::new().root.canonicalize().unwrap();
+        eprintln!("Checking for DataStore.root at: {:?}", venv_path_str);
+
+        let venv_path_str = venv_path_str
             .parent()
-            .unwrap_or_else(|| Path::new("."))
+            .unwrap()
             .join("venv")
             .to_string_lossy()
             .to_string();
+
+        eprintln!("Checking for venv at: {}", venv_path_str);
 
         let venv_option = if Path::new(&venv_path_str).exists() {
             Some(venv_path_str.as_str())
