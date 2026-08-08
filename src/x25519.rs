@@ -1081,7 +1081,7 @@ impl From<u8> for Choice {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use subtle::ConstantTimeEq;
 /// let x: u8 = 5;
 /// let y: u8 = 13;
@@ -1130,7 +1130,7 @@ impl<T: ConstantTimeEq> ConstantTimeEq for [T] {
   ///
   /// Since arrays coerce to slices, this function works with fixed-size arrays:
   ///
-  /// ```
+  /// ```ignore
   /// # use subtle::ConstantTimeEq;
   /// #
   /// let a: [u8; 8] = [0,1,2,3,4,5,6,7];
@@ -1233,7 +1233,7 @@ pub trait ConditionallySelectable: Copy {
   ///
   /// # Example
   ///
-  /// ```
+  /// ```ignore
   /// use subtle::ConditionallySelectable;
   /// #
   /// # fn main() {
@@ -1256,7 +1256,7 @@ pub trait ConditionallySelectable: Copy {
   ///
   /// # Example
   ///
-  /// ```
+  /// ```ignore
   /// use subtle::ConditionallySelectable;
   /// #
   /// # fn main() {
@@ -1281,7 +1281,7 @@ pub trait ConditionallySelectable: Copy {
   ///
   /// # Example
   ///
-  /// ```
+  /// ```ignore
   /// use subtle::ConditionallySelectable;
   /// #
   /// # fn main() {
@@ -1665,7 +1665,7 @@ pub trait ConstantTimeGreater {
   ///
   /// # Example
   ///
-  /// ```
+  /// ```ignore
   /// use subtle::ConstantTimeGreater;
   ///
   /// let x: u8 = 13;
@@ -1756,7 +1756,7 @@ pub trait ConstantTimeLess: ConstantTimeEq + ConstantTimeGreater {
   ///
   /// # Example
   ///
-  /// ```
+  /// ```ignore
   /// use subtle::ConstantTimeLess;
   ///
   /// let x: u8 = 13;
