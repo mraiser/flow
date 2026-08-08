@@ -2,7 +2,9 @@
 //! It contains the crate-public functions that are called by the `buildrust.rs` facade.
 
 // Declare the submodules as crate-public
-pub(crate) mod api;
+// (api is fully public: external harnesses generate against arbitrary stores
+// via `generate_api_code` and compile-check the result)
+pub mod api;
 pub(crate) mod cargo;
 pub(crate) mod initializer;
 pub(crate) mod loader;
@@ -166,4 +168,18 @@ pub(crate) fn build(
 /// A crate-public facade for the API rebuilding logic.
 pub(crate) fn rebuild_rust_api() {
     self::api::rebuild_rust_api();
+}
+
+/// Initializes the global store exactly once across ALL tests in this crate.
+/// ndata's heap init is guarded but not atomic — two test threads racing
+/// through `is_initialized()` both pass the check and the second `set` panics
+/// ("SharedMutex may only be initialized once") — so every test that touches
+/// ndata or the DataStore must come through this Once instead of calling
+/// `ndata::init()` / `DataStore::init()` itself.
+#[cfg(test)]
+pub(crate) fn test_init() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        crate::DataStore::init("data");
+    });
 }
