@@ -170,25 +170,26 @@ assembles the flow libraries as modules within their designated crates,
 generates `src/generated_initializer.rs` for the main binary, and adds path
 dependencies to the top-level `Cargo.toml`.
 
-**FFI isolation (advanced):** a sub-crate can be compiled as a dynamic shared
-library by setting `"ffi": true` in the `cargo` section of the library's
-`meta.json`. Because each shared library links its own dependencies, two
-sub-projects can then depend on conflicting versions of the same crate. The
-main binary needs a `build.rs` that adds the deps directory to the linker
-search path:
+**FFI sub-crates: dynamic loading and hot reload.** A sub-crate can be
+compiled as a dynamic shared library by setting `"ffi": true` in the `cargo`
+section of the library's `meta.json`. This is not just a build setting — it is
+a runtime plugin system:
 
-```rust
-// /my_project/build.rs
-use std::env;
-use std::path::PathBuf;
+- The generated sub-crate exports a C-ABI entry point
+  (`#[no_mangle] pub unsafe extern "C" fn mirror_<crate>(...)`).
+- The host's `generated_initializer.rs` loads the library at runtime with
+  [libloading](https://crates.io/crates/libloading) — from a uniquely-named
+  temp copy, so rebuilding the sub-crate and reloading picks up the new code
+  without restarting the host. This is how Newbound hot-loads command crates.
+- On load, the plugin **mirrors the host's ndata heap**, so `DataObject`s
+  cross the FFI boundary as shared handles — no serialization. The commands it
+  registers are function pointers into the dylib; invoking them is a direct
+  FFI call.
+- Because each shared library links its own dependencies, two sub-projects can
+  depend on **conflicting versions of the same crate**.
 
-fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let profile = env::var("PROFILE").unwrap();
-    let deps_path = manifest_dir.join("target").join(profile).join("deps");
-    println!("cargo:rustc-link-search=native={}", deps_path.display());
-}
-```
+The host binary needs `libloading` in its own `[dependencies]`; no `build.rs`
+or linker configuration is required.
 
 ### The generated typed API
 
@@ -240,8 +241,11 @@ cargo build --features java_runtime        # loads a JVM via JNI
   bridging `DataObject` to V8 values.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`
   on the library path (e.g. `LD_LIBRARY_PATH`).
-- **Rust** — commands are not FFI at all: `flowb` generates a wrapper and
-  registry entry, and they compile into your binary (or sub-crate dylib).
+- **Rust** — statically linked by default: `flowb` generates a wrapper and
+  registry entry, and commands compile into your binary or its sub-crates. A
+  sub-crate marked `"ffi": true` instead becomes a dynamic library that Rust
+  applications load and invoke over FFI at runtime, with hot reload — see
+  *FFI sub-crates* under [Using Flowlang as a library](#using-flowlang-as-a-library).
 
 ## Design notes
 
