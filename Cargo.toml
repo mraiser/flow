@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.3.30"
+version = "0.3.31"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -19,7 +19,7 @@ python_no_singleton = []
 gag = ["dep:gag"]
 
 [dependencies]
-ndata = { version = "0.3.16" }
+ndata = { version = "0.3.17" }
 libc = "0.2"
 
 gag = { version = "1.0", optional = true }

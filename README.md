@@ -1,619 +1,301 @@
-# **Flowlang**
-
-NOTE: Support for back-end commands written in Java and Javascript 
-is kind of broken for now. Contact me if you'd like to help fix it.
-
-## **Purpose and Core Functionality**
-
-**Flowlang** is a Rust implementation of the **Flow language**, a
-dataflow-oriented programming language designed for visual \"flow\"
-diagrams. The crate\'s primary purpose is to **execute Flow programs**
-(defined in JSON) and provide a unified function-call interface across
-multiple programming languages, including Rust, Python, JavaScript, and
-Java. In essence, Flowlang acts as an **interpreter and runtime** for
-Flow programs, allowing developers to construct programs as dataflow
-graphs and run them seamlessly. This addresses the problem of
-orchestrating complex logic in a visual, data-driven manner, and
-integrating code written in different languages into one workflow.
-
-Its multi-language support and inherent dataflow paradigm make Flowlang
-particularly well-suited for **building and orchestrating Large Language
-Model (LLM) based tools and agents**. Developers can seamlessly
-integrate Python scripts for LLM interactions, Rust for
-performance-critical tasks, and JavaScript for other utilities, all
-within a unified visual workflow. The *flowmcp* binary further enhances
-this by providing direct support for the Model Control Protocol.
-
-A Flow program is represented as a directed graph of operations
-(\"commands\") where data flows along connections between nodes. The
-Flow language is loosely based on Prograph, a visual dataflow language.
-Using an IDE like **Newbound**, a developer draws a diagram of how data
-moves through functions and conditions; Flowlang then executes this
-diagram by passing data through the graph. Each node (operation)
-processes inputs and produces outputs that feed into other nodes. The
-Flowlang crate essentially interprets the JSON representation of such a
-diagram, allowing it to run as a program.
-
-One of Flowlang\'s distinctive features is **multi-language support**.
-It provides a unified functional API so that \"Flow commands\" (nodes in
-the flow graph) can be implemented not only in Flow\'s own visual
-language but also in **Rust, Python, JavaScript, or Java**. This means
-developers can write certain nodes as native Rust functions, or as
-Python/JS scripts, etc., and integrate them into the dataflow. The
-Flowlang runtime handles calling out to the correct language runtime and
-feeding data in/out, which simplifies building heterogeneous systems.
-All these languages maintain state between calls, so for example the
-Python interpreter or JavaScript engine isn\'t re-initialized on every
-use, enabling persistent stateful behavior across multiple calls.
-
-**Relation to ndata:** The Flowlang crate is built on top of the
-companion crate *ndata*, which provides the dynamic data structures used
-to represent and pass data between flow nodes. *ndata* defines types
-like *Data*, *DataObject*, and *DataArray* that behave similarly to
-loosely-typed JSON values or Python objects. These can hold numbers,
-strings, booleans, nested objects/arrays, etc., and are used as the
-universal data container in Flowlang. Crucially, *ndata* implements an
-**internal heap with reference counting and garbage collection**. This
-allows Flowlang to create and pass around dynamic data (e.g., the input
-and output parameters to commands) without worrying about Rust\'s strict
-ownership rules\-\--much like a garbage-collected language. In practice,
-every input or output in a flow is a *DataObject* (a JSON-like map of
-keys to *Data* values) that can be freely shared across threads and
-languages. The Flowlang runtime leverages *ndata* so that data flows
-smoothly through the graph, regardless of which language produced or
-consumes it. This design choice makes Flowlang **thread-safe by design**
-as *ndata*\'s objects use internal reference counts and locks so they
-can be sent between threads without explicit *Arc* wrappers. In summary,
-Flowlang\'s core functionality is enabling dataflow programming
-(especially visual programming via Newbound) and seamless multi-language
-function integration, built atop a dynamic data model provided by
-*ndata*. This empowers rapid prototyping and cross-language development
-by abstracting away memory management and language interop complexities.
-
-## **Flowlang as a Premier Platform for LLM Tooling and Model Control Protocol (MCP)**
-
-With the rise of Large Language Models (LLMs), the need for robust and
-flexible tooling to orchestrate LLM interactions, chain prompts, manage
-state, and integrate with various APIs has become paramount. Flowlang,
-with its inherent strengths, is exceptionally positioned as the **best
-vehicle for rolling your own LLM tools and agents**, especially with the
-introduction of Model Control Protocol (MCP) support via the *flowmcp*
-binary.
-
-**What is Model Control Protocol (MCP)?** MCP provides a standardized
-way for applications to communicate with and control AI models or
-agents. It involves sending structured requests (often JSON-RPC) to a
-model endpoint and receiving structured responses. This allows for
-complex interactions beyond simple prompt-response, including managing
-context, controlling model parameters, and invoking specific agent
-capabilities.
-
-**Introducing** ****flowmcp******:** The *flowmcp* binary in Flowlang is
-a dedicated executable that implements an MCP server. It listens for
-JSON-RPC messages over stdin, processes them using the Flowlang engine,
-and sends responses back via stdout. This allows external systems or
-interfaces to interact with Flowlang-defined workflows as if they were
-language models or intelligent agents.
-
-**Why Flowlang is Ideal for LLM Tooling:**
-
-1.  **Seamless Multi-Language Integration:**
-
-    -   **Python Dominance in LLMs:** The majority of LLM SDKs (e.g.,
-        OpenAI, Hugging Face Transformers, LangChain, LlamaIndex) are
-        Python-based. Flowlang\'s first-class Python support (via
-        *PyO3*) allows direct embedding of Python scripts as nodes in a
-        flow. This means leveraging existing LLM libraries and custom
-        Python code for model interaction, prompt templating, and data
-        processing without complex FFI wrappers.
-    -   **Rust for Performance:** For pre-processing, post-processing,
-        or any performance-critical logic in an LLM pipeline, native
-        Rust commands can be written.
-    -   **JavaScript & Java:** Integration with web APIs or existing
-        Java/.js libraries is also supported.
-
-2.  **Visual Dataflow Programming for Complex Chains:**
-
-    -   LLM applications often involve complex chains of operations:
-        fetching data, constructing prompts, calling an LLM, parsing the
-        response, making decisions, calling another LLM or tool, and so
-        on.
-    -   Representing these chains as visual Flow diagrams (e.g., in
-        Newbound) makes them significantly easier to design, understand,
-        debug, and modify compared to monolithic scripts.
-    -   The dataflow paradigm naturally maps to how data (prompts,
-        responses, context) moves through an LLM agent.
-
-3.  **Flexible Data Handling with** ****ndata******:**
-
-    -   LLM inputs and outputs can be complex JSON structures.
-        *ndata*\'s *DataObject* provides a flexible, JSON-like way to
-        handle this data dynamically across different language
-        components in a flow.
-
-4.  **State Management:**
-
-    -   Flowlang\'s ability to maintain state within language runtimes
-        (e.g., Python interpreter, JS engine) between calls is crucial
-        for LLM applications that require conversational memory or
-        persistent context.
-    -   Global variables within Flowlang can also be used to manage
-        shared state across different parts of an LLM agent\'s logic.
-
-5.  **Rapid Prototyping and Iteration:**
-
-    -   The visual nature and multi-language support accelerate the
-        prototyping of LLM tools. Different models, prompt strategies,
-        or processing logic can be quickly swapped by modifying the flow
-        graph or the underlying scripts.
-
-6.  **Exposing LLM Tools as Services:**
-
-    -   With *flowmcp*, sophisticated Flowlang-orchestrated LLM agents
-        can be exposed over a standardized JSON-RPC interface.
-    -   Additionally, Flowlang\'s built-in HTTP server allows easy
-        conversion of LLM flows into web services.
-    -   Flowlang's Command Line Interface enables integration with
-        build\
-        tools, scripts, and is just super handy for running commands in
-        the\
-        terminal.
-
-**Example Use Case: A Research Agent Flow** Imagine an LLM agent that
-takes a research query, searches the web, summarizes relevant articles,
-and generates a report. In Flowlang:
-
--   An initial node (Python) uses a search engine API.
--   Multiple parallel nodes (Python) call an LLM to summarize each
-    article.
--   A subsequent node (Python or Rust) synthesizes these summaries.
--   A final node (Python) uses an LLM to generate the final report based
-    on the synthesis.
--   *flowmcp* allows an external application to invoke this entire
-    research agent with a single JSON-RPC call.
-
-By leveraging Flowlang and *flowmcp*, developers can build powerful,
-modular, and maintainable LLM-powered applications with greater ease and
-clarity than traditional scripting approaches.
-
-## **Key Technologies and Design (Rust Features & Concurrency)**
-
-Despite being implemented in Rust, Flowlang adopts many techniques more
-common in dynamic or functional languages. Key Rust technologies and
-design choices include:
-
--   **Dynamic Data with Manual GC:** Flowlang uses the *ndata* crate to
-    manage data dynamically. *ndata* internally uses a global heap and
-    manual garbage collection\-\--unusual for Rust, but deliberate here
-    to allow more flexibility. All *DataObject* and *DataArray*
-    instances carry their own reference counts, and memory is only freed
-    when a GC function is explicitly called. This means Flowlang can
-    store cyclic or cross-scope data (e.g., global state or
-    interconnected node outputs) without immediate ownership issues. The
-    trade-off is that the programmer (or the runtime) must periodically
-    invoke *DataStore::gc()* (which calls *NData::gc()*) to clean up
-    unused values. This design restores some of the \"garbage-collected
-    language\" convenience inside Rust\'s safe environment, at the cost
-    of forgoing Rust\'s usual compile-time memory guarantees. It\'s a
-    conscious choice to make Flowlang suitable for **rapid prototyping**
-    and multi-language interop. In practice, when writing Rust code that
-    uses Flowlang, **do not wrap Flow data in additional** ****Arc****
-    **or** ****Mutex****\-\--*ndata* already handles thread-safe
-    reference counting internally. A common mistake is to put *Data* or
-    *DataObject* inside an *Arc*; this is unnecessary and could lead to
-    memory never being freed (as *ndata*\'s GC would not see the data as
-    collectable). Instead, rely on Flowlang/*ndata*\'s own memory model
-    and simply call the GC when appropriate (for example, after a batch
-    of flow executions, call *DataStore::gc()* to reclaim heap storage).
-
--   **Thread-Safety and Concurrency Model:** Flowlang\'s concurrency
-    model is built around the idea that flows can run in parallel, but
-    individual flow executions are single-threaded by default. The Flow
-    interpreter uses an event-loop style algorithm to evaluate the
-    dataflow graph (detailed in the next section) and does not spawn
-    multiple threads for parallel nodes\-\--instead, it processes nodes
-    whose inputs are ready in sequence. However, because *ndata* data
-    structures are thread-safe, it is possible to run multiple Flow
-    **commands (functions)** concurrently in different threads or tasks.
-    For example, two separate *Command::execute* calls can happen on
-    different threads\-\--the underlying data passing (using
-    *DataObject*) is protected by atomic reference counts and locks, so
-    data races will not occur. In short, Flowlang itself doesn\'t
-    automatically parallelize a single flow, but it *allows
-    multi-threaded use*. The thread safety is achieved without heavy use
-    of *Mutex* thanks to the internal design of *ndata*: references to
-    data are coordinated by a custom thread-safe reference counter
-    (*SharedMutex* in *ndata*) so that cloning a *DataObject* just bumps
-    a count and different threads can read/write through it safely. This
-    simplifies concurrent scenarios\-\--manual copying or guarding of
-    flow inputs/outputs to share them is not needed. The Flowlang
-    interpreter loop also uses only safe Rust (no *unsafe* for
-    concurrency), leaning on the atomic refcounts for synchronization.
-    There is no explicit use of Rust *async/await* in Flowlang; flows
-    are generally run to completion synchronously via
-    *Command::execute*. If asynchronous behavior is needed (e.g.,
-    waiting on I/O), implement that inside a node (for instance, a Rust
-    node can use *tokio* internally, or a JavaScript node can *await* a
-    promise in the embedded engine).
-
--   **FFI and Language Embedding:** Under the hood, Flowlang leverages
-    **Rust\'s FFI capabilities** to integrate other language runtimes:
-
-    -   **JavaScript:** It includes an optional feature to embed the
-        Deno/V8 engine. The crate depends on *deno_core* and *serde_v8*;
-        when the *javascript_runtime* feature is enabled, Flowlang
-        spawns a V8 isolate (via Deno\'s core) to execute JS code. Each
-        JS-based flow command is run in this engine, with data passed
-        through JSON serialization (*serde_v8* bridges Rust *DataObject*
-        to V8 values).
-    -   **Python:** Flowlang uses *pyo3* (via a *python_runtime*
-        feature) to embed a Python 3 interpreter. When this feature is
-        enabled, Flowlang provides a direct, high-performance bridge
-        between Rust\'s *ndata* types and Python. Instead of converting
-        data to native Python dictionaries and lists on every call,
-        Flowlang passes **handles** to the underlying Rust data. In
-        Python, these are exposed as *NDataObject*, *NDataArray*, and
-        *NDataBytes* classes. This approach avoids costly serialization
-        overhead and allows Python code to manipulate the same
-        underlying data that Rust sees, making cross-language calls
-        highly efficient. Python-defined flow commands are executed in
-        the same interpreter, maintaining state (e.g., global variables,
-        imported modules) between calls. This is particularly crucial
-        for LLM tooling, where Python is prevalent.
-    -   **Java:** Flowlang employs the Java Native Interface (JNI)
-        (*jni* crate) when *java_runtime* is enabled. Java support is
-        the most involved, requiring specific Java helper classes (e.g.,
-        *Startup.java* and associated packages) to be present in the
-        classpath. If configured, Flowlang loads the JVM (requiring
-        *libjvm.so* or its equivalent to be on the system\'s library
-        path, e.g., *LD_LIBRARY_PATH*) and can call Java methods for
-        flow commands.
-    -   **Rust (native) functions:** Flowlang has a special mechanism
-        for native functions. The Flowlang crate includes a separate
-        binary called *flowb* (\"flow builder\"), which generates Rust
-        source stubs for any Flow commands meant to be implemented in
-        Rust and compiles them into the project. By default,
-        sub-projects containing Rust commands are statically linked into
-        the main binary.
-    -   **Rust (FFI for Dependency Isolation):** As an advanced option,
-        a Rust sub-project can be compiled as a **dynamic shared
-        library** (*.so*, *.dll*, *.dylib*) and linked at compile time.
-        This is controlled by setting *\"ffi\": true* in the *cargo*
-        section of a library\'s *meta.json*. This powerful feature
-        allows different sub-projects to depend on **conflicting
-        versions of the same crate** (e.g., two different versions of
-        *tokio* or *candle*). The build script handles this by
-        instructing the linker via *#\[link\]* attributes to find the
-        shared library. This requires the main binary project to have a
-        *build.rs* script that adds the *target/debug/deps* directory to
-        the linker\'s search path, ensuring it can find the compiled
-        *.so* files.
-
-All these integrations highlight Rust\'s ability to host multiple
-runtimes simultaneously. Flowlang uses conditional compilation (feature
-flags) to keep these optional\-\--by default, only pure Flow and Rust
-are supported, and one compiles with *\--features=javascript_runtime* or
-others to include JS, Python, or Java support. This modular design keeps
-the base crate lightweight and lets users opt-in only to the needed
-language engines.
-
--   **Macros and Code Generation:** The Flowlang codebase itself
-    doesn\'t rely heavily on procedural macros, but it does generate
-    code at build-time for Rust commands. When *flowb* is run, it
-    programmatically writes out a Rust source file containing stubs to
-    call user-defined Rust functions and a registry of those functions.
-    This file is included via *mod cmdinit* in the crate. At runtime,
-    the crate calls a function (generated in that module) to register
-    these commands. This approach uses Rust\'s compile-time generation
-    rather than a macro, but the effect is similar to a plugin system.
--   **Error Handling and Control Flow:** The interpreter uses Rust
-    *Result* and a custom *CodeException* enum for internal control
-    flow. For example, if a node signals a failure or a termination, the
-    interpreter returns a *CodeException::Fail* or *::Terminate* which
-    unwinds the execution loop in a controlled way. This is how
-    Flow-level control structures like \"stop flow\" or \"goto next
-    case\" are implemented. Rust\'s *match* and error handling are used
-    here instead of exceptions; but conceptually, they serve a similar
-    role to propagate events like \"skip to next branch\" up to the main
-    loop. This design keeps the core loop clean and avoids deeply nested
-    conditionals.
-
-In summary, Flowlang\'s architecture is an interesting blend: it
-sacrifices some of Rust\'s usual strictness (using a global heap and
-dynamic typing) to gain flexibility, while still leveraging Rust\'s
-strengths in FFI, speed, and safety for multi-language support. The
-concurrency model is cooperative and data-driven\-\--multiple languages
-run in the same event loop and thread, unless they are explicitly
-threaded out. The design emphasizes that data is the primary carrier of
-state (fitting a dataflow paradigm), and everything from memory
-management to multi-language calls is built to make passing around
-*DataObject* instances simple and safe.
-
-## **Installation and Usage**
-
-Flowlang is designed to be used as a library within a larger Rust
-workspace, which acts as the main application host. The recommended
-project structure involves a top-level binary crate (e.g., *newbound*)
-and multiple sub-project library crates (e.g., *newbound-core*, *cmd*)
-that contain the actual *flowlang* libraries.
-
--   **As a Binary (CLI Tool):** The crate comes with three binaries:
-    *flow* (the main interpreter), *flowb* (the builder for Rust/Python
-    commands), and *flowmcp* (for Model Control Protocol interactions).
-    Obtain these by cloning the GitHub repo and building:
-
-    *git clone*
-    [*https://github.com/mraiser/flow.git*](https://github.com/mraiser/flow.git)
-
-    *cd flow*
-
-    *cargo build \# builds the flow, flowb, and flowmcp binaries*
-
-    *\# (Optionally, copy or symlink the binaries to a directory in your
-    PATH)*
-
-    *sudo ln -s \$(pwd)/target/debug/flow /usr/local/bin/flow*
-
-    *sudo ln -s \$(pwd)/target/debug/flowb /usr/local/bin/flowb*
-
-    *sudo ln -s \$(pwd)/target/debug/flowmcp /usr/local/bin/flowmcp*
-
-    This compiles the latest code. (For a release build, use *cargo
-    build \--release* and adjust the paths accordingly.) Once built, the
-    *flow* CLI can execute Flow libraries. By default, it looks for a
-    *data* directory in the current working directory which contains the
-    flow libraries (JSON files). The repository itself includes a
-    *data/* folder with an example library called **\"testflow\"**.
-
--   **To run a flow from the command line with** ****flow****, use:
-
-    *flow \<library\> \<control\> \<command\> \<\<\< \'\<json-input\>\'*
-
-    For example, to execute the *test_add* command in the *testflow*
-    library:
-
-    *cd path/to/flow \# directory containing \'data\' folder*
-
-    *flow testflow testflow test_add \<\<\< \'{\"a\": 300, \"b\":
-    120}\'*
-
-    This launches the Flow interpreter, loads the **testflow** library,
-    and runs the function named **test_add** with the provided JSON
-    input. The result is printed to stdout as JSON.
-
--   **To use** ****flowmcp**** **for Model Control Protocol
-    interactions:** The *flowmcp* binary starts a server that listens
-    for JSON-RPC requests on stdin and sends responses to stdout.
-
-    *\# Run flowmcp (it will wait for JSON-RPC requests on stdin)*
-
-    *./target/debug/flowmcp*
-
-    An external application would then pipe JSON-RPC requests like the
-    following to *flowmcp*\'s stdin:
-
-    *{\"jsonrpc\": \"2.0\", \"method\": \"testflow.testflow.test_add\",
-    \"params\": {\"a\": 5, \"b\": 7}, \"id\": 1}*
-
-    And *flowmcp* would respond on stdout:
-
-    *{\"jsonrpc\":\"2.0\",\"result\":{\"result\":12},\"id\":1}*
-
--   **As a Library in a Rust Workspace:**
-
-    1.  **Workspace Setup:** Structure your project as a Cargo
-        workspace. Your top-level *Cargo.toml* should define the main
-        binary and list all sub-project crates as members.
-
-        *\# In /my_project/Cargo.toml*
-
-        *\[package\]*
-
-        *name = \"my_project_bin\"*
-
-        *\# \...*
-
-        *\[workspace\]*
-
-        *members = \[*
-
-        *\"core-libs\",*
-
-        *\"command-libs\",*
-
-        *\"ffi-lib\"*
-
-        *\]*
-
-    2.  **Build Script (***build.rs***):** Your top-level binary crate
-        **must** have a *build.rs* file to ensure the linker can find
-        any FFI sub-projects.
-
-        *// In /my_project/build.rs*
-
-        *use std::env;*
-
-        *use std::path::PathBuf;*
-
-        *fn main() {*
-
-        *let manifest_dir =
-        PathBuf::from(env::var(\"CARGO_MANIFEST_DIR\").unwrap());*
-
-        *let profile = env::var(\"PROFILE\").unwrap();*
-
-        *let deps_path =
-        manifest_dir.join(\"target\").join(profile).join(\"deps\");*
-
-        *println!(\"cargo:rustc-link-search=native={}\",
-        deps_path.display());*
-
-        *}*
-
-    3.  **Sub-Project Configuration:** Use the *\"root\"* field in each
-        library\'s */data/library_name/meta.json* to assign it to a
-        sub-project crate. For example: *{\"root\": \"core-libs\",
-        \...}*
-
-    4.  **Main Application Logic:** Your *main.rs* initializes the
-        system and calls the single, auto-generated function to register
-        all commands.
-
-        *// In /my_project/src/main.rs*
-
-        *mod generated_initializer;*
-
-        *fn main() {*
-
-        *// Initialize the Flow runtime once.*
-
-        *flowlang::init(\"data\");*
-
-        *// Register all commands from all sub-projects.*
-
-        *generated_initializer::initialize_all_commands();*
-
-        *// \... your application logic \...*
-
-        *}*
-
-    5.  **Build Process:** Run *flowb* (or *flowb rebuild*) from your
-        project root. The build script will automatically:
-
-        -   Create sub-project directories (*core-libs*, *cmd*, etc.) if
-            they don\'t exist.
-        -   Generate *lib.rs*, *cmdinit.rs*, and *Cargo.toml* files for
-            each sub-project.
-        -   Assemble the flowlang libraries as modules within their
-            designated crates.
-        -   Generate the *src/generated_initializer.rs* file in your
-            main binary.
-        -   Update your top-level *Cargo.toml* with path dependencies
-            for each sub-project.
-
--   **HTTP Service Usage:** Flowlang has a built-in mini HTTP server
-    that can expose flow commands as web endpoints.
-
-    *flow flowlang http listen \<\<\< \'{\"socket_address\":
-    \"127.0.0.1:7878\", \...}\'*
-
-    This command starts an HTTP listener. Any Flow command can then be
-    invoked via an HTTP *GET* request.
-
--   **Enabling Language Runtimes:** If flows include commands written in
-    other languages, compilation must include the corresponding
-    features:
-
-    1.  **JavaScript:** *cargo run \--features \"javascript_runtime\"
-        \--bin flow \...*
-    2.  **Python:** *cargo run \--features \"python_runtime\" \...*
-    3.  **Java:** *cargo run \--features \"java_runtime\" \...*
-
-## **Code Structure and Flow Execution Architecture**
-
-Internally, Flowlang represents a flow as a collection of interconnected
-components.
-
--   **Modules Organization:** The crate is divided into several modules:
-    *datastore*, *command*, *code*, *case*, *primitives*, *rustcmd*,
-    *pycmd*, *jscmd*, *javacmd*, *mcp*, *buildrust*, and various utility
-    modules.
-
--   **Flow Definition Data Structures:** When a flow library (JSON) is
-    loaded, it is parsed into a set of in-memory structs:
-
-    -   ****Case****: Represents a flow function\'s code\-\--a
-        collection of operations and connections.
-    -   ****Operation****: Represents a single operation/node in the
-        flow graph.
-    -   ****Node****: Represents a data port on a *Case* or *Operation*.
-    -   ****Connection****: Represents a directed link from a source
-        *Node* to a destination *Node*.
-
--   **Loading and Parsing Flows:** *init(\"data\")* reads the library
-    JSON files from the *data* directory and builds the in-memory *Case*
-    structures, registering each as an executable *Command*.
-
--   **Interpreter Execution Algorithm:** The heart of Flowlang is
-    *Code::execute*, which runs a *Case*. It uses a two-phase event
-    loop:
-
-    -   **Operation Pass:** Iterates through all operations, checking if
-        their inputs are satisfied. If so, it executes the operation\'s
-        logic (calling Rust, Python, etc.).
-    -   **Connection Pass:** Iterates through all connections,
-        propagating data from completed source nodes to their
-        destination nodes. This process repeats until no more operations
-        can fire and no more data can be propagated, effectively
-        performing a topological sort of the graph on the fly. The
-        interpreter is single-threaded but allows for thread-safe data
-        access via *ndata*.
-
-## **Examples and Best Practices**
-
-**Example:** Suppose a flow is needed to compute *a \* b + c*. This can
-be done by writing a Rust function or assembling a Flow visually. A
-simplified JSON for such a flow would define inputs *a*, *b*, and *c*,
-two primitive operations (*multiply*, *add*), and connections to wire
-them together correctly.
-
-**Best Practices & Caveats:**
-
--   **Memory Management:** Run *DataStore::gc()* periodically in
-    long-running services to prevent memory bloat, as *ndata*\'s garbage
-    collection is manual.
-
--   **No External Sync Needed:** Do not wrap *ndata* types
-    (*DataObject*, *DataArray*, etc.) in *Arc* or *Mutex*. They are
-    already internally thread-safe.
-
--   **Global State:** Use *DataStore::globals()* for state that needs to
-    persist across flow invocations.
-
--   **Using Multi-Language Commands (especially for LLMs):** When
-    writing flow commands in other languages, ensure the initialization
-    steps are followed.
-
-    -   **Python:** When using the *python_runtime* feature, your Python
-        code will receive arguments as instances of the *NDataObject*,
-        *NDataArray*, and *NDataBytes* classes. These are Pythonic
-        wrappers around the underlying Rust data. Your Python functions
-        should manipulate these objects directly and can return them to
-        Flowlang. If a simple type (like a string or integer) is
-        returned, Flowlang will automatically wrap it in a *DataObject*.
-        This avoids performance penalties from data conversion and
-        allows for a more natural coding experience.
-    -   **JavaScript:** Enable *javascript_runtime*. The JS code runs in
-        a Deno/V8 sandbox.
-    -   **Rust:** After writing a Rust function for a command, use
-        *flowb* to generate the necessary stubs and register it with the
-        runtime.
-
--   **Performance Considerations:** Flowlang is optimized for
-    flexibility. For performance-critical logic, implement it as a
-    single native Rust command rather than a large graph of many small
-    operations. Be mindful of the FFI overhead when crossing language
-    boundaries frequently.
-
--   **Debugging Flows:** Set *RUST_BACKTRACE=1* for backtraces on
-    panics. Use *eprintln!* for logging in *flowmcp* to avoid
-    interfering with JSON-RPC output on stdout.
-
-## **Extensions and Advanced Features**
-
--   **Plugins/Custom Libraries:** Extend Flowlang by adding new JSON
-    flow definitions to the *data* directory.
--   **Hot Reloading:** Flowlang integrates with the *hot-lib-reloader*
-    crate to allow live code updates without restarting the runtime,
-    enabling a live-coding development style.
--   **Controls and Metacommands:** Use controls (e.g., *flowlang http
-    \...*) to access built-in system-level functionality.
--   **Peer-to-Peer and Newbound Context:** The architecture is suitable
-    for embedding in distributed or peer-to-peer systems.
-
-In conclusion, Flowlang offers a compelling way to design systems by
-**wiring together dataflow components**. It stands out by bridging
-multiple languages in one runtime and by providing Rust developers a
-dynamic, visual scripting layer. With the addition of *flowmcp* and its
-strong suitability for LLM tooling, Flowlang is an increasingly powerful
-platform for building sophisticated, modern applications.
+# Flowlang
+
+A Rust implementation of the **Flow language** — a dataflow-oriented programming
+language designed for visual "flow" diagrams, loosely based on
+[Prograph](https://en.wikipedia.org/wiki/Prograph). Flowlang executes Flow
+programs (defined in JSON), and provides a unified function-call interface
+across **Rust, Python, JavaScript, and Java**, so a single dataflow graph can
+mix nodes written in any of them. It also speaks the
+**[Model Context Protocol](https://modelcontextprotocol.io)** out of the box:
+the `flowmcp` binary exposes every command as an MCP tool that any MCP client
+can call.
+
+> **Note:** Support for back-end commands written in Java and JavaScript is
+> kind of broken for now. Contact me if you'd like to help fix it.
+
+A Flow program is a directed graph of operations ("commands") in which data
+flows along connections between nodes. Using an IDE like
+[Newbound](https://github.com/mraiser/newbound), a developer draws a diagram of
+how data moves through functions and conditions; Flowlang interprets the JSON
+representation of that diagram, firing each operation as its inputs become
+ready. Commands may be implemented in Flow itself or natively in Rust, Python,
+JavaScript, or Java — the runtime dispatches to the right language engine and
+moves data in and out. Language runtimes persist between calls, so a Python
+interpreter's globals or a JS engine's state survive from one invocation to the
+next.
+
+## Relation to ndata
+
+Flowlang is built on the companion crate
+[ndata](https://crates.io/crates/ndata), which provides the dynamic data
+structures used to pass data between flow nodes: `Data`, `DataObject`, and
+`DataArray` behave like loosely-typed JSON values. ndata implements an internal
+heap with reference counting and *manual* garbage collection, which lets
+Flowlang create and share dynamic data across threads and languages without
+fighting the borrow checker — much like a garbage-collected language embedded
+in Rust.
+
+Two practical consequences:
+
+- **Never wrap ndata types in `Arc` or `Mutex`.** They are internally
+  thread-safe (atomic refcounts and locks); wrapping them adds nothing and can
+  keep the GC from ever collecting them.
+- **Call `DataStore::gc()` periodically** in long-running services. Collection
+  is manual by design; nothing is freed until you ask.
+
+> Flowlang 0.3.30+ should be used with **ndata 0.3.17 or later** — earlier
+> ndata versions had a JSON parser bug that rejected negative numbers, which
+> made flow diagrams containing nodes at negative coordinates unreadable.
+
+## MCP: every command is a tool
+
+The `flowmcp` binary is a Model Context Protocol server speaking JSON-RPC over
+stdin/stdout. It implements `initialize`, `tools/list`, `tools/call`,
+`prompts/list`, and `resources/list`. Tools are named
+`library-control-command`, and `tools/call` invokes the corresponding Flow,
+Rust, or Python command directly.
+
+A real session (run from a directory containing a `data/` folder; note that
+requests must carry a numeric `id`):
+
+```
+→ {"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"demo","version":"0"}},"id":1}
+← {"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"newbound-mcp","version":"0.1.0"},"capabilities":{"tools":{"listChanged":false}},"protocolVersion":"2024-11-05"}}
+
+→ {"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}
+← {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"flowlang-data-read", ...}, ...]}}
+
+→ {"jsonrpc":"2.0","method":"tools/call","params":{"name":"testflow-testflow-test_add","arguments":{"a":300,"b":120}},"id":3}
+← {"jsonrpc":"2.0","id":3,"result":{"content":[{"text":"300+120=420","type":"text"}]}}
+```
+
+This makes Flowlang a natural substrate for LLM tooling: the majority of LLM
+SDKs are Python-based, and Flowlang's embedded Python (via PyO3) runs them as
+flow nodes with state preserved between calls; performance-critical steps can
+be native Rust commands; and the whole orchestration — prompt construction,
+model calls, branching on responses — is a visual dataflow graph rather than a
+monolithic script. `flowmcp` then exposes the finished agent to any MCP client
+with no additional glue. Flows can also be served over HTTP or invoked from
+the command line.
+
+## Installation
+
+Three binaries ship with the crate: `flow` (the interpreter), `flowb` (the
+builder for Rust and Python commands), and `flowmcp` (the MCP server).
+
+```bash
+# From crates.io:
+cargo install flowlang
+
+# Or from source:
+git clone https://github.com/mraiser/flow.git
+cd flow
+cargo build --release
+```
+
+All three binaries look for a `data/` directory in the current working
+directory containing the flow libraries. The repository (and the published
+crate) include a `data/` folder with an example library, **testflow**.
+
+## Command-line usage
+
+```bash
+cd path/to/flow   # any directory containing a 'data' folder
+
+flow testflow testflow test_add <<< '{"a": 300, "b": 120}'
+```
+
+Output:
+
+```json
+{"a":"300+120=420"}
+```
+
+The arguments are `<library> <control> <command>`, with the JSON input on
+stdin and the result printed to stdout as JSON.
+
+`flowb` regenerates source for Rust and Python commands from the `data/`
+definitions:
+
+```bash
+flowb            # build everything, then regenerate the typed Rust API
+flowb ALL        # same as above
+flowb API        # regenerate only the typed Rust API
+flowb <library> <control> <command>   # build a single command
+```
+
+## Using Flowlang as a library
+
+### Single-crate layout
+
+The simplest structure hosts flow libraries directly in your crate: set
+`"root": "."` in each library's `data/<library>/meta.json`, and `flowb` will
+generate command sources into `src/<library>/…` of the current crate. This
+repository itself is organized this way.
+
+```rust
+mod generated_initializer;
+
+fn main() {
+    // Initialize the runtime and register all generated commands.
+    generated_initializer::initialize_all_commands(flowlang::init("data"));
+
+    // ... your application logic ...
+}
+```
+
+(`flowlang::init` returns the ndata configuration tuple that
+`initialize_all_commands` needs — pass it straight through.)
+
+### Workspace layout with sub-crates
+
+Larger projects can split libraries into separate crates. Give each library a
+`"root"` naming its sub-crate directory: `{"root": "core-libs", ...}`.
+A library whose `meta.json` has **no** `root` field defaults to a sub-crate
+named `cmd`.
+
+```toml
+# /my_project/Cargo.toml
+[package]
+name = "my_project_bin"
+# ...
+
+[workspace]
+members = ["core-libs", "command-libs", "ffi-lib"]
+```
+
+Running `flowb` from the project root then creates the sub-project
+directories, generates each one's `lib.rs`, `cmdinit.rs`, and `Cargo.toml`,
+assembles the flow libraries as modules within their designated crates,
+generates `src/generated_initializer.rs` for the main binary, and adds path
+dependencies to the top-level `Cargo.toml`.
+
+**FFI isolation (advanced):** a sub-crate can be compiled as a dynamic shared
+library by setting `"ffi": true` in the `cargo` section of the library's
+`meta.json`. Because each shared library links its own dependencies, two
+sub-projects can then depend on conflicting versions of the same crate. The
+main binary needs a `build.rs` that adds the deps directory to the linker
+search path:
+
+```rust
+// /my_project/build.rs
+use std::env;
+use std::path::PathBuf;
+
+fn main() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let profile = env::var("PROFILE").unwrap();
+    let deps_path = manifest_dir.join("target").join(profile).join("deps");
+    println!("cargo:rustc-link-search=native={}", deps_path.display());
+}
+```
+
+### The generated typed API
+
+`flowb` also generates a typed Rust API (`src/api.rs` in each sub-crate) so
+commands can be called like ordinary functions:
+
+```rust
+// Current form: modules of stateless functions
+let sum = api::testflow::testflow::test_add(300, 120);
+```
+
+As of 0.3.30 the previous struct-based form
+(`api::new().testflow.testflow.test_add(...)`) still works but is deprecated;
+each method's deprecation warning names its replacement path. The struct
+facade will be removed in a future release.
+
+## HTTP service
+
+Flowlang includes a small HTTP server that exposes flow commands as web
+endpoints:
+
+```bash
+flow flowlang http listen <<< '{"socket_address": "127.0.0.1:7878"}'
+```
+
+Any command can then be invoked via HTTP GET. Query parameters are decoded
+with `hex_decode`, which (as of 0.3.30) is byte-for-byte compatible with
+JavaScript's `encodeURIComponent` output, including multi-byte UTF-8;
+`hex_encode` is its exact inverse.
+
+## Language runtimes
+
+Language engines are feature-gated so the base crate stays light. Enable the
+ones your flows need:
+
+```bash
+cargo build --features python_runtime      # embeds Python 3 via PyO3
+cargo build --features javascript_runtime  # embeds V8 via deno_core
+cargo build --features java_runtime        # loads a JVM via JNI
+```
+
+- **Python** — commands run in a persistent embedded interpreter. Arguments
+  arrive as `NDataObject` / `NDataArray` / `NDataBytes`, thin Python wrappers
+  around the underlying Rust data — no serialization on the boundary, and
+  Python mutates the same data Rust sees. Returning a plain value (string,
+  int, dict, …) wraps it into a `DataObject` automatically. If a `venv`
+  directory exists next to `data/`, it is activated automatically.
+- **JavaScript** — commands run in a Deno/V8 isolate, with `serde_v8`
+  bridging `DataObject` to V8 values.
+- **Java** — requires the Java helper classes on the classpath and `libjvm`
+  on the library path (e.g. `LD_LIBRARY_PATH`).
+- **Rust** — commands are not FFI at all: `flowb` generates a wrapper and
+  registry entry, and they compile into your binary (or sub-crate dylib).
+
+## Design notes
+
+- **Interpreter:** the heart of Flowlang is a two-phase event loop. An
+  *operation pass* fires every operation whose inputs are satisfied; a
+  *connection pass* propagates outputs along connections. The passes repeat
+  until the graph is quiescent — a topological sort performed on the fly. A
+  single flow executes on one thread, but ndata's thread-safety means separate
+  `Command::execute` calls can safely run concurrently on different threads.
+- **Robustness:** generated Rust command wrappers validate declared parameters
+  before use and run the command body inside a panic guard. A missing or
+  mistyped argument produces a structured error response — it cannot take down
+  the process, which matters when commands are compiled into hot-loaded
+  dynamic libraries where an escaped panic would abort.
+- **Control flow:** the interpreter propagates Flow-level events ("fail",
+  "terminate", "next case") as a `CodeException` enum through `Result`,
+  keeping the core loop free of deeply nested conditionals.
+- **Code generation over macros:** `flowb` writes ordinary Rust source
+  (command wrappers, registries, the typed API) rather than using procedural
+  macros — what runs is readable code checked into your tree.
+- **Vendored crypto:** peer-to-peer session encryption uses a vendored X25519
+  implementation (no external crypto dependency chain). It is verified against
+  the RFC 7748 test vectors in this crate's test suite.
+
+## Testing
+
+```bash
+cargo test
+```
+
+The suite covers the builder's wrapper guarantees, `hex_encode`/`hex_decode`
+compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values
+generated with Node), and RFC 7748 conformance for the vendored X25519 (both
+section 5.2 vectors, the iterated test, and the section 6.1 Diffie-Hellman
+vectors — expected values derived with an independent OpenSSL-backed
+implementation).
+
+## Best practices
+
+- Run `DataStore::gc()` periodically in long-running services.
+- Do not wrap ndata types in `Arc`/`Mutex` — they are already thread-safe.
+- Use `DataStore::globals()` for state that persists across flow invocations.
+- Log with `eprintln!`, never `println!`, in anything that might run under
+  `flowmcp` — stdout is the JSON-RPC channel.
+- For performance-critical logic, prefer one native Rust command over a large
+  graph of many small operations, and mind FFI overhead when crossing language
+  boundaries in a tight loop.
+- Set `RUST_BACKTRACE=1` while debugging for backtraces on panics.
+
+## Extending
+
+New flow libraries are added by dropping their JSON definitions into the
+`data/` directory — no recompilation is needed for Flow-language commands.
+Rust and Python commands are added through `flowb`, which regenerates their
+wrappers from the store. The architecture is designed for embedding: Newbound
+uses Flowlang as the execution engine of a peer-to-peer web platform, with
+commands hot-loaded from dynamic libraries.
