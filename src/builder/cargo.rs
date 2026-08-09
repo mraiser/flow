@@ -103,7 +103,7 @@ default = []
 fn get_core_dependency_lines() -> (String, String) {
     let root_cargo_path = get_project_top_level_path().join("Cargo.toml");
     let fallback_flowlang = "flowlang = { version = \"0.3.30\" }".to_string();
-    let fallback_ndata = "ndata = { version = \"0.3.16\" }".to_string();
+    let fallback_ndata = "ndata = { version = \"0.3.17\" }".to_string();
 
     if !root_cargo_path.exists() {
         println!("WARNING: Root Cargo.toml not found. Falling back to default dependency versions.");
