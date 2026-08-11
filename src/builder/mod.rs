@@ -27,6 +27,7 @@ pub(crate) fn build_all() -> bool {
         .expect("Failed to read 'data' directory. This directory is essential for the build process.");
 
     let mut crates_to_wire: HashMap<String, bool> = HashMap::new();
+    let mut lib_roots: Vec<(String, String)> = Vec::new();
 
     for dir_entry_result in lib_entries {
         let dir_entry = dir_entry_result.expect("Error reading a directory entry in 'data'.");
@@ -36,11 +37,51 @@ pub(crate) fn build_all() -> bool {
         let (root_name, is_ffi) = self::util::get_crate_info(&lib_metadata);
 
         if root_name != "." {
-             crates_to_wire.insert(root_name, is_ffi);
+             crates_to_wire.insert(root_name.clone(), is_ffi);
         }
+        lib_roots.push((lib_name.clone(), root_name));
 
         if build_lib(lib_name) {
             overall_build_occurred = true;
+        }
+    }
+
+    // Sweep stale per-library modules out of the OTHER crates' src trees.
+    // A library whose root changed - e.g. a blanked root routed it into the
+    // default `cmd` crate before being restored - otherwise keeps compiling
+    // (and failing) from the old location forever, because the mod files are
+    // append-only. Only directories named after a known library whose declared
+    // root is elsewhere are touched; unknown dirs (runtime/, hand-placed
+    // modules) are left alone. The top-level "." root is never swept.
+    let mut roots_to_sweep: Vec<String> = crates_to_wire.keys().cloned().collect();
+    if !roots_to_sweep.iter().any(|r| r == "cmd") {
+        roots_to_sweep.push("cmd".to_string());
+    }
+    for crate_root in &roots_to_sweep {
+        let crate_src = self::util::get_project_top_level_path().join(crate_root).join("src");
+        for (lib_name, lib_root) in &lib_roots {
+            if lib_root == crate_root {
+                continue;
+            }
+            let stale_dir = crate_src.join(lib_name);
+            if stale_dir.exists() {
+                let _ = std::fs::remove_dir_all(&stale_dir);
+                self::util::remove_mod_file_content(
+                    &crate_src.join("lib.rs"),
+                    &format!("pub mod {};", lib_name),
+                    None,
+                );
+                self::util::remove_mod_file_content(
+                    &crate_src.join("cmdinit.rs"),
+                    &format!("{}::cmdinit(cmds);", lib_name),
+                    Some(&format!("use crate::{};", lib_name)),
+                );
+                println!(
+                    "Removed stale module '{}' from crate '{}' (its root is '{}')",
+                    lib_name, crate_root, lib_root
+                );
+                overall_build_occurred = true;
+            }
         }
     }
 

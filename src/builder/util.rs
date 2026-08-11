@@ -121,6 +121,43 @@ pub(crate) fn update_mod_file_content(
     }
 }
 
+/// Idempotently removes a line of code (and optionally a `use` statement) from
+/// a `mod.rs`-style file. The inverse of `update_mod_file_content`, matched on
+/// trimmed content so indentation (e.g. cmdinit body lines) doesn't matter.
+pub(crate) fn remove_mod_file_content(
+    mod_file_path: &PathBuf,
+    line_to_remove: &str,
+    use_line_to_remove: Option<&str>,
+) {
+    if !mod_file_path.exists() {
+        return;
+    }
+    let lines = match read_lines_from_file(mod_file_path) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let original_len = lines.len();
+    let kept: Vec<String> = lines
+        .into_iter()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if !line_to_remove.is_empty() && trimmed == line_to_remove.trim() {
+                return false;
+            }
+            if let Some(use_line) = use_line_to_remove {
+                if !use_line.is_empty() && trimmed == use_line.trim() {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+    if kept.len() != original_len {
+        write_lines_to_file(mod_file_path, &kept)
+            .expect(&format!("Unable to write mod file: {:?}", mod_file_path));
+    }
+}
+
 
 /// Looks up the Rust data type string corresponding to a flowlang metadata type.
 pub(crate) fn lookup_rust_api_data_type(meta_type: &str) -> &str {

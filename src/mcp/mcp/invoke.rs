@@ -66,12 +66,29 @@ pub fn invoke(data: DataObject) -> DataObject {
 
     // ── dispatch to Flowlang command impl ────────────────────────────────────
     //appserver::init_globals();
-    let cmd = Command::lookup(lib, control, command);
-    let result = cmd.execute(arguments);
+    // The whole dispatch rides inside a panic guard: Command::lookup panics on
+    // a command the store knows but no loaded crate registered (e.g. a dylib
+    // that failed to load), and an uncaught panic here kills the entire MCP
+    // server. One bad tool call must come back as an error result instead.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let cmd = Command::lookup(lib, control, command);
+        let return_type = cmd.return_type.clone();
+        (cmd.execute(arguments), return_type)
+    }));
 
-    match result {
-        Ok(v)  => wrap_value(v, cmd.return_type),
-        Err(e) => make_error(format!("{:?}", e)),
+    match outcome {
+        Ok((Ok(v), return_type)) => wrap_value(v, return_type),
+        Ok((Err(e), _)) => make_error(format!("{:?}", e)),
+        Err(panic_payload) => {
+            let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic occurred".to_string()
+            };
+            make_error(format!("Tool '{}' failed: {}", tool, msg))
+        }
     }
 }
 
