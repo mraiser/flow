@@ -1,0 +1,109 @@
+[
+  {
+    "claim": "MCP tool discovery (tools/list) depends on the desc field not being blank: a command with an empty desc is omitted from the list entirely, though direct dispatch by lib-control-command name still works. Corollary: every command must carry a desc, or agents browsing the tool list cannot find it.",
+    "tags": "mcp,discovery,desc",
+    "source": {
+      "doc": "the owner, in session, 2026-08-05 — explained why remember/set_tags/set_groups/set_plugin/remove_plugin were missing from tools/list"
+    },
+    "confidence": "high",
+    "time": 1785934811069
+  },
+  {
+    "claim": "The flowlang primitives are part of the MIT-licensed open source flowlang crate. Newbound is not flowlang: flowlang's data/flowlang library must never be committed into newbound's repo. The /data/flowlang gitignore line IS the product and license boundary -- removing it makes those commands part of Newbound, which is not authorized.",
+    "tags": "flowlang,license,boundary,dependencies",
+    "source": {
+      "doc": "the owner's correction of a reverted mistake, in session, 2026-08-05"
+    },
+    "confidence": "high",
+    "time": 1785944284303
+  },
+  {
+    "claim": "Installing a store library whose impl ids duplicate a compiled crate's registrations SUPERSEDES the originals rather than replacing them: at rebuild, newbound generates those commands into its own cmd crate under the same ids, shadowing the flowlang crate's native impls. Presence in the store makes a library part of the BUILD, not just the listing.",
+    "tags": "flowlang,build,rebuild,ids,supersede",
+    "source": {
+      "doc": "the owner's correction of a reverted mistake, in session, 2026-08-05"
+    },
+    "confidence": "high",
+    "time": 1785944284305
+  },
+  {
+    "claim": "The flow repo's data/flowlang lags its src/: manual changes were made in the src directory that were never propagated back to the data records, so the shipped records are an old version of the primitives. Do not treat data/flowlang as current.",
+    "tags": "flowlang,drift,stale",
+    "source": {
+      "doc": "the owner's correction of a reverted mistake, in session, 2026-08-05"
+    },
+    "confidence": "high",
+    "time": 1785944284307
+  },
+  {
+    "claim": "App discovery and activation: an app is any runtime/<name>/app.properties; activation is membership in the comma-separated `apps` key of config.properties, written by app/settings (which re-runs init_globals — no restart to activate a facet-served app). app.properties' `libraries=` list drives load_library at init. The peer-to-peer alternative to git import is dev/install_lib, which streams the library zip from a peer and copies data/<lib>/_APPS/<app> out to runtime/<app>.",
+    "tags": "platform-api,apps,activation,install_lib",
+    "source": {
+      "doc": "flowlang appserver.rs init_globals + newbound_core app/{apps,settings}.rs, dev/dev/install_lib.rs, verified 2026-08-09"
+    },
+    "confidence": "high",
+    "time": 1786292476516
+  },
+  {
+    "claim": "The flowlang builder has three verified gaps around FFI library crates (all worked around, all wanting an upstream flow-repo PR): (1) the default generated Cargo.toml declares serde/serde_json optional deps but omits the serde_support/python_runtime/javascript_runtime feature blocks, so any compile passing --features=serde_support fails until the features are added - which is why the agent/kb/scratch/nebula repos track their crate Cargo.tomls by hand; (2) the generated <ctl>/mod.rs cmdinit is append-only across regenerations - stale command ids accumulate (a delete+re-upsert leaves both generations registered) and the built dylib lags the sources by one compile - the clean reset is delete the generated src dir and run `newbound rebuild`; (3) build_lib answers 'unchanged' when a repo's tracked generated src already matches the store, so rebuild_lib skips the crate build and a fresh install never produces an artifact - dev.github.import/update now build the crate unconditionally.",
+    "tags": "platform-api,flowlang,builder,ffi,bug",
+    "source": {
+      "doc": "verified live during the nebula overhaul, 2026-08-09"
+    },
+    "confidence": "high",
+    "time": 1786295573656
+  },
+  {
+    "claim": "Store meta.json cargo dependencies are the source the builder regenerates crate Cargo.tomls from - bumping a crate version in a Cargo.toml without updating the owning library's store meta makes every subsequent rebuild silently regress it. The 2026-08-09 flowlang 0.3.31 / ndata 0.3.17 sync had this latent regression via data/app/meta.json (still 0.3.30/0.3.16, masked by Cargo.lock semver compatibility); fixed via save_library_config on the nebula-overhaul branch. Corollary: dev.dev.compile on a newbound_core-rooted library builds only the newbound_core package as an error check - the host binary relink is a separate explicit `cargo build` at the checkout root, per the interim-process restart table.",
+    "tags": "platform-api,build,meta.json,cargo,drift",
+    "source": {
+      "doc": "verified live during the nebula overhaul, 2026-08-09"
+    },
+    "confidence": "high",
+    "time": 1786295580721
+  },
+  {
+    "claim": "Both web transports inject EVERY request field into a command's params as nn_<key> — nn_sessionid is just the one the author-defaulting uses; nn_session (the whole session object), headers-derived fields, etc. are equally available to any command that declares them.",
+    "detail": "HTTP: app/exec puts nn_sessionid into args after check_auth; websocket: the cmd handler copies all request fields as nn_* into params before dispatch (app/service/init.rs). Declared params are REQUIRED by the generated wrapper, so a command declaring nn_* still works on the web (injected) but CLI/MCP callers must pass it explicitly (\"\").",
+    "tags": "frontend,bench-collapse",
+    "confidence": "high",
+    "time": 1786411233530
+  },
+  {
+    "claim": "flowlang Command::cast_params (0.3.31, command.rs:158) panics on a MALFORMED value for a declared Integer param - parse::<i64>().unwrap() - killing the HTTP handler thread; the 0.3.30 wrapper guard covers only MISSING params. Any UI that builds command URLs from unvalidated DOM values (empty select -> width=, undefined chains, Date arithmetic -> NaN) can panic a thread per request; a retrying poller makes it continuous, which is how the owner hit it in the camera settings preview (2026-08-11). Until fixed upstream, the library-side idiom is: declare URL-facing numeric params as String and parse leniently in-body with a soft-fail (camera does this across snapshot/keyframe/events_page since 228b089); declared-type changes are wire-compatible because query params are strings anyway.",
+    "tags": "flowlang,cast_params,panic,http,params,hardening",
+    "source": {
+      "doc": "owner panic report + disposable repro, flowlang 0.3.31 command.rs:158, 2026-08-11"
+    },
+    "confidence": "high",
+    "time": 1786472610314
+  },
+  {
+    "claim": "The generated cmd crate declares serde/serde_json as optional with no feature wiring them on, so store code that does 'use serde::...' directly (hollis ask_llm/data) fails the host rebuild; the generator needs to emit them non-optional (or wire a serde_support feature) when a library's code imports them.",
+    "detail": "Also: a tools/call for a command whose dylib failed to load panics UNCAUGHT in Command::lookup ('No such command <id>') and kills the whole newbound mcp server - the per-command panic guard does not cover lookup.",
+    "tags": "cmd-crate,serde,mcp,panic",
+    "confidence": "high",
+    "time": 1786479035557
+  },
+  {
+    "claim": "The cmd crate's optional serde/serde_json are activated by the owner's prescribed feature pattern (implemented, same branch): cmd/Cargo.toml defines serde_support = [serde, serde_json, flowlang/serde_support, ndata/serde_support] and the host Cargo.toml forwards cmd/serde_support from its own serde_support feature - the general rule for any subcrate needing serde is that two-sided wiring, with a matching python_runtime pattern when python is needed.",
+    "detail": "The hollis-in-cmd compile failure that first exposed this was itself fallout from the root:\"\" meta corruption - a lib whose root is blanked is generated into cmd as rootless, and build_all does not clean cmd/src/<lib> when the lib regains its own root (stale files linger; flowlang-side hygiene item).",
+    "tags": "cmd-crate,serde,feature-wiring,build_all",
+    "confidence": "high",
+    "time": 1786482273738
+  },
+  {
+    "claim": "flowlang branch claude/hollis-repo-evaluation-85817i (commit d27c110, repo mraiser/flow) fixes both Tranche-C items: mcp::invoke wraps Command::lookup+execute in catch_unwind so a tools/call for an unregistered command (e.g. an FFI dylib that failed to load) returns an isError result instead of killing the server, and builder::build_all sweeps stale per-library module dirs plus their lib.rs/cmdinit.rs lines out of crates that are not the library's declared root (new util::remove_mod_file_content).",
+    "detail": "Both verified on a disposable newbound with [patch.crates-io] flowlang = { path = ... }: broken-dylib call answered with 'Tool ... failed: No such command ...' and the server kept serving tools/list; a planted cmd/src/<lib> was removed by 'newbound rebuild' with runtime/ untouched. Not yet published to crates.io - newbound consumes flowlang from the registry, so the fixes reach the platform only after the owner publishes (0.3.32) and bumps.",
+    "tags": "flowlang,mcp,panic-guard,build_all,stale-modules",
+    "confidence": "high",
+    "time": 1786487289900
+  },
+  {
+    "claim": "The flowlang/ndata version lives in FIVE hand-maintained manifests plus data/app/meta.json, and a bump must touch each one: builder::cargo::get_core_dependency_lines() reads the root Cargo.toml but is called ONLY when a subcrate manifest does not yet exist, so it seeds new crates and never rewrites an existing pin - 'newbound rebuild' will not propagate a bump to agent/kb/scratch/hollis/cmd.",
+    "detail": "data/app/meta.json is the pin for newbound_core's generated manifest (app's root is newbound_core), so it must be bumped through dev.libsettings.save_library_config or the next sync reverts newbound_core/Cargo.toml. Verified 2026-08-11 bumping 0.3.31 -> 0.3.32: after rebuild, the live hollis install still read 0.3.31 until edited directly. Note the hardcoded fallback in get_core_dependency_lines is stale (0.3.31/0.3.17); it only applies when the root Cargo.toml is missing, and would be self-maintaining as env!(\"CARGO_PKG_VERSION\").",
+    "tags": "flowlang,version-bump,builder,meta.json",
+    "confidence": "high",
+    "time": 1786489296164
+  }
+]
