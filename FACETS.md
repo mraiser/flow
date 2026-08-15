@@ -75,9 +75,51 @@ possible — and that requirement is amplified a thousandfold in the
 newbound space. The bar: "start up newbound with these six libraries —
 go." Any facet mechanism that adds per-library ceremony is wrong.
 
+## The edges
+
+The three homes are complete on their own axis — where the code came
+from. The axis that actually drives behavior is **writability**: every
+code source carries its data; the homes differ only in whether this
+instance owns it (resident: yes; FFI crate in this checkout: yes;
+registry dependency: no). The sharp edges the design will meet:
+
+- **Git/path dependencies** sit between homes 2 and 3: the data folder
+  is present on disk and readable, but not instance-owned. Under the
+  writability framing they need no fourth home — a path-patched flowlang
+  in a dev checkout is home 3 with a different mount path.
+- **Precedence and collision.** Once multi-homing exists, two homes can
+  claim the same library name (an FFI crate shipping a stale copy of a
+  resident library, or vice versa). Resolution order must be declared —
+  instance `data/` wins, then FFI homes, then read-only mounts — with a
+  loud warning on shadowing.
+- **Writes against read-only homes** need a defined refusal that
+  redirects to the curated channel (deposit to the brain with a
+  `subject`, promote where the subject's repo is writable), so the
+  failure teaches the workflow instead of just erroring.
+- **Version binding.** A read-only mount must serve the *pinned*
+  version's data — the builder's core-pair resolution provides exactly
+  that mapping. Embedding the manual in the crate at compile time
+  sidesteps the question entirely: the binary carries its own version's
+  manual, and the same bytes serve the single-binary publish mode.
+- **Packaging intentionality.** The published crate ships `data/` today
+  only because nothing excludes it — `data/mcp` and `data/testflow` ride
+  along. Whatever ships becomes the read-only home's contents, so the
+  package include list should be a decision, not a default.
+- **ndata.** Manuals-first-class-at-the-flowlang-level leaves ndata
+  homeless — it has no data folder anywhere. Either it grows the same
+  embedded single-file manual, or its manual lives as a control on
+  flowlang's store. Needs a call.
+- **The no_std floor.** Facet access code itself must be feature-gated
+  so the zero-dependency, no-facet floor genuinely holds.
+
 ## Open questions
 
 1. For the agent work: do flowlang's facets need to be pulled into the
    consuming instance at all — and if so, through what read-only
-   mechanism?
-2. Do the three homes above cover every delivery contingency?
+   mechanism? (Current lean: read access via a compile-time-embedded
+   manual, not residency; instance-authored claims about flowlang stay
+   in the brain until promoted through a session with this repo
+   attached.)
+2. Do the three homes above cover every delivery contingency? (See "The
+   edges" — the taxonomy holds; the writability rule and the edge
+   policies above are what remain to pin down.)
