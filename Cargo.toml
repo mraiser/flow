@@ -8,6 +8,20 @@ description = "A dataflow oriented programming meta-language in JSON supporting 
 homepage = "https://github.com/mraiser/flow"
 documentation = "https://docs.rs/flowlang/latest/flowlang/"
 repository = "https://github.com/mraiser/flow"
+# Package allowlist (FACETS.md, packaging intentionality): what ships to
+# crates.io is a decision, not a default. The crate carries its code and
+# the flowlang library's own store data (the future read-only facet home)
+# and nothing else - dev fixtures (data/mcp, data/testflow), local runtime
+# settings (config.properties), and anything a checkout accumulates stay
+# out by construction.
+include = [
+    "/src",
+    "/data/flowlang",
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE.md",
+    "/FACETS.md",
+]
 
 [features]
 serde_support = ["serde","serde_json","ndata/serde_support"]
