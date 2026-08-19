@@ -52,7 +52,6 @@ serde = {{ version = "1.0", features = ["derive"], optional = true }}
 serde_json = {{ version = "1.0", optional = true }}
 
 [features]
-reload = []
 default = []
 "# , default_package_name, crate_types_str, flowlang_dep_line, ndata_dep_line);
 
