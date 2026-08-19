@@ -13,30 +13,11 @@ pub(crate) fn get_project_top_level_path() -> PathBuf {
 }
 
 /// Extracts the crate's root directory name and FFI status from its metadata.
-/// The root defaults to "cmd" if not specified.
+/// The root defaults to "cmd" if not specified. Delegates to the shared
+/// parser in `datastore` so the builder and the hotswap loader can never
+/// disagree about what is FFI-rooted.
 pub(crate) fn get_crate_info(lib_metadata: &DataObject) -> (String, bool) {
-    let root = if lib_metadata.has("root") {
-        let value = lib_metadata.get_string("root");
-        if value.is_empty() { "cmd".to_string() } else { value }
-    } else {
-        "cmd".to_string()
-    };
-
-    let is_ffi = if lib_metadata.has("cargo") {
-        let cargo_obj = lib_metadata.get_object("cargo");
-        // THIS IS THE FIX:
-        // We must check if the 'ffi' key exists before trying to get it as a boolean.
-        // The get_boolean function panics if the key is not found.
-        if cargo_obj.has("ffi") {
-            cargo_obj.get_boolean("ffi")
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    (root, is_ffi)
+    crate::datastore::crate_info_from_meta(lib_metadata)
 }
 
 /// Reads all lines from a file into a Vec<String>.

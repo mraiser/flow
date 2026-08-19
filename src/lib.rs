@@ -4,6 +4,7 @@ pub mod code;
 pub mod case;
 pub mod command;
 pub mod datastore;
+pub mod hotswap;
 pub mod primitives;
 pub mod rustcmd;
 pub mod rand;
