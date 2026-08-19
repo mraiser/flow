@@ -78,7 +78,14 @@ impl DataStore {
     };
     DataObject::from_string(&s)
   }
-  
+
+  /// Returns a library's (crate root, is_ffi) pair from its meta.json.
+  /// This is the single source of truth for FFI-rootedness — the builder
+  /// and the hotswap loader both read through it and can never disagree.
+  pub fn lib_crate_info(&self, lib:&str) -> (String, bool) {
+    crate_info_from_meta(&self.lib_info(lib))
+  }
+
   #[allow(static_mut_refs)]
   pub fn get_lib_root(&self, lib:&str) -> PathBuf {
     let meta = self.lib_info(&lib);
@@ -236,3 +243,30 @@ impl DataStore {
   }
 }
 
+
+/// Parses a library's meta.json object into its (crate root, is_ffi) pair.
+/// The root defaults to "cmd" when absent or blank; is_ffi defaults to
+/// false. Shared by the builder (`get_crate_info`) and the hotswap loader
+/// so the two readings can never drift apart.
+pub fn crate_info_from_meta(meta: &DataObject) -> (String, bool) {
+  let root = if meta.has("root") {
+    let value = meta.get_string("root");
+    if value.is_empty() { "cmd".to_string() } else { value }
+  } else {
+    "cmd".to_string()
+  };
+
+  let is_ffi = if meta.has("cargo") {
+    let cargo_obj = meta.get_object("cargo");
+    // get_boolean panics on a missing key, so probe first.
+    if cargo_obj.has("ffi") {
+      cargo_obj.get_boolean("ffi")
+    } else {
+      false
+    }
+  } else {
+    false
+  };
+
+  (root, is_ffi)
+}

@@ -27,35 +27,38 @@ pub static API : crate::api::api = crate::api::new();
         if is_ffi {
             let crate_name = crate_src_path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).unwrap_or("unknown_crate").replace("-", "_");
 
-            // This is the FFI-safe definition that passes the entire NDataConfig.
+            // The handshake struct is canonical in flowlang::hotswap — both
+            // sides of the FFI boundary name the same definition, so the
+            // layouts can only drift if the flowlang versions drift, which
+            // the contract symbol below turns into a load-time refusal.
             let ffi_content = format!(
 r#"
 use std::sync::Once;
-
-// THIS IS THE FFI-SAFE INITIALIZER STRUCT.
-// ITS DEFINITION MUST EXACTLY MATCH THE ONE IN THE MAIN BINARY.
-#[repr(C)]
-#[derive(Debug)]
-pub struct Initializer {{
-    pub ndata_config: ndata::NDataConfig,
-    pub cmds: Vec<(String, Transform, String)>,
-}}
+use flowlang::hotswap::Initializer;
 
 static START: Once = Once::new();
 
 #[no_mangle]
-pub unsafe extern "C" fn mirror_{}(initializer: *mut Initializer) {{
+pub unsafe extern "C" fn mirror_{0}(initializer: *mut Initializer) {{
     if initializer.is_null() {{ return; }}
 
-    // Use Once to ensure ndata::mirror is only ever called one time,
-    // even across multiple hot-reloads of this library.
+    // Mirror the host's ndata heaps exactly once per loaded generation of
+    // this library, however many times the host calls in.
     START.call_once(|| {{
         flowlang::mirror(("data", (*initializer).ndata_config));
     }});
 
-    // Then, call this library's internal cmdinit to populate the cmds vector.
-    // We want this to run on every reload to register any new commands.
+    // Register this library's commands on every call, so a reload picks
+    // up new and changed ones.
     cmdinit(&mut (*initializer).cmds);
+}}
+
+// ABI guard: the host compares this against its own contract before
+// calling mirror, and refuses the load when the two flowlang copies
+// disagree about the handshake.
+#[no_mangle]
+pub extern "C" fn nb_ffi_contract_{0}() -> *const std::os::raw::c_char {{
+    flowlang::hotswap::contract_ptr()
 }}
 "#, crate_name);
             content.push_str(&ffi_content);
@@ -96,5 +99,50 @@ pub fn cmdinit(cmds: &mut Vec<(String, Transform, String)>) {
             writeln!(file, "\npub fn cmdinit(cmds: &mut Vec<(String, flowlang::rustcmd::Transform, String)>) {{\n}}")
                 .expect("Failed to append cmdinit to existing mod file");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_crate_files_exist;
+
+    #[test]
+    fn ffi_scaffold_uses_canonical_initializer_and_contract() {
+        let dir = std::env::temp_dir().join(format!("scaffold_test_ffi_{}", std::process::id()));
+        let src = dir.join("hot-demo").join("src");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        ensure_crate_files_exist(&src, true);
+        let lib_rs = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+
+        // The handshake struct is named from flowlang, never redefined.
+        assert!(lib_rs.contains("use flowlang::hotswap::Initializer;"));
+        assert!(!lib_rs.contains("pub struct Initializer"));
+        // Hyphens normalize into the symbol names.
+        assert!(lib_rs.contains("pub unsafe extern \"C\" fn mirror_hot_demo"));
+        assert!(lib_rs.contains("pub extern \"C\" fn nb_ffi_contract_hot_demo"));
+        assert!(lib_rs.contains("flowlang::hotswap::contract_ptr()"));
+        assert!(lib_rs.contains("flowlang::mirror((\"data\", (*initializer).ndata_config));"));
+
+        // Scaffolding never rewrites an existing lib.rs.
+        ensure_crate_files_exist(&src, true);
+        assert_eq!(std::fs::read_to_string(src.join("lib.rs")).unwrap(), lib_rs);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn static_scaffold_carries_no_ffi_exports() {
+        let dir = std::env::temp_dir().join(format!("scaffold_test_static_{}", std::process::id()));
+        let src = dir.join("plain").join("src");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        ensure_crate_files_exist(&src, false);
+        let lib_rs = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+        assert!(!lib_rs.contains("mirror_"));
+        assert!(!lib_rs.contains("nb_ffi_contract_"));
+        assert!(!lib_rs.contains("hotswap"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

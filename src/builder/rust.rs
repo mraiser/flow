@@ -51,13 +51,19 @@ pub(crate) fn build_rust_command(
         artifact_changed = true;
     }
 
-    // After generating the source, update the module tree
-    build_mod_files_for_rust_command(
+    // After generating the source, update the module tree. Wiring counts as
+    // a change: a NEW command's generated file can be byte-identical to a
+    // stale one on disk, leaving the added `cmds.push` line as the only
+    // difference — and an unchanged verdict would skip the cargo build (and
+    // the FFI hot-reload) even though the crate does not yet register it.
+    if build_mod_files_for_rust_command(
         &command_and_control_output_path,
         control_name,
         command_name,
         &rust_file_id,
-    );
+    ) {
+        artifact_changed = true;
+    }
 
     artifact_changed
 }
@@ -93,24 +99,29 @@ fn build_rust_command_source(
 }
 
 /// Updates the `mod.rs` files at the control and library level to include the new command.
+/// Returns whether any mod file changed.
 fn build_mod_files_for_rust_command(
     command_output_path: &Path,
     control_name: &str,
     command_name: &str,
     rust_cmd_meta_id: &str,
-) {
+) -> bool {
+    let mut modified = false;
+
     // Update the control's mod.rs (e.g., src/my_lib/my_control/mod.rs)
     let ctl_mod_file = command_output_path.join("mod.rs");
     // It's assumed ensure_mod_file_has_cmdinit was already called during scaffolding.
-    update_mod_file_content(&ctl_mod_file, &format!("pub mod {};", command_name), None);
-    update_mod_file_content(&ctl_mod_file, &format!("cmds.push((\"{}\".to_string(), {}::execute, \"\".to_string()));", rust_cmd_meta_id, command_name), None);
+    modified |= update_mod_file_content(&ctl_mod_file, &format!("pub mod {};", command_name), None);
+    modified |= update_mod_file_content(&ctl_mod_file, &format!("cmds.push((\"{}\".to_string(), {}::execute, \"\".to_string()));", rust_cmd_meta_id, command_name), None);
 
     // Update the library's mod.rs (e.g., src/my_lib/mod.rs)
     let lib_mod_path = command_output_path.parent()
         .expect("Command output path should have a parent (library module level)");
     let lib_mod_file = lib_mod_path.join("mod.rs");
-    update_mod_file_content(&lib_mod_file, &format!("pub mod {};", control_name), None);
-    update_mod_file_content(&lib_mod_file, &format!("{}::cmdinit(cmds);", control_name), None);
+    modified |= update_mod_file_content(&lib_mod_file, &format!("pub mod {};", control_name), None);
+    modified |= update_mod_file_content(&lib_mod_file, &format!("{}::cmdinit(cmds);", control_name), None);
+
+    modified
 }
 
 /// Generates the full Rust source code string for a command from its metadata and user code.

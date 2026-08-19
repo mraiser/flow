@@ -7,7 +7,6 @@
 pub mod api;
 pub(crate) mod cargo;
 pub(crate) mod initializer;
-pub(crate) mod loader;
 pub(crate) mod python;
 pub(crate) mod rust;
 pub(crate) mod scaffolding;
@@ -110,8 +109,12 @@ pub(crate) fn build_lib(lib_name: String) -> bool {
     create_dir_all(&lib_src_path).expect("Failed to create library module directory");
     self::scaffolding::ensure_mod_file_has_cmdinit(&lib_src_path.join("mod.rs"));
 
-    self::util::update_mod_file_content(&crate_src_path.join("lib.rs"), &format!("pub mod {};", lib_name), None);
-    self::util::update_mod_file_content(&crate_src_path.join("cmdinit.rs"), &format!("{}::cmdinit(cmds);", lib_name), Some(&format!("use crate::{};", lib_name)));
+    if self::util::update_mod_file_content(&crate_src_path.join("lib.rs"), &format!("pub mod {};", lib_name), None) {
+        build_actions_performed = true;
+    }
+    if self::util::update_mod_file_content(&crate_src_path.join("cmdinit.rs"), &format!("{}::cmdinit(cmds);", lib_name), Some(&format!("use crate::{};", lib_name))) {
+        build_actions_performed = true;
+    }
 
     if store.exists(&lib_name, "controls") {
         let controls_data = store.get_data(&lib_name, "controls");
