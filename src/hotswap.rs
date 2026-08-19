@@ -377,6 +377,19 @@ fn load_generation(root: &str) -> Result<(), String> {
         .map_err(|e| format!("library file not found at {:?}: {}", src, e))?;
     let stat: FileStat = (md.modified().map_err(|e| e.to_string())?, md.len());
 
+    // Already current: the loaded generation came from this exact file state.
+    // Skipping keeps repeated no-op compiles from leaking one mapping each.
+    let current = registry()
+        .lock()
+        .unwrap()
+        .get(root)
+        .map(|l| l.stat == stat)
+        .unwrap_or(false);
+    if current {
+        println!("hotswap: '{}' is already loaded from the current dylib; skipping", root);
+        return Ok(());
+    }
+
     // Copy to a unique path so dlopen maps a fresh library instead of
     // handing back its cached mapping for a path it has seen before.
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
