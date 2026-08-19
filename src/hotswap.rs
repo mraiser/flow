@@ -566,7 +566,7 @@ fn start_poller() {
                             }
                         }
                         if act {
-                            println!("hotswap: '{}' dylib changed; reloading", root);
+                            println!("hotswap: '{}' dylib changed or appeared; loading", root);
                             if let Err(e) = load_generation(&root) {
                                 eprintln!("hotswap: reload of '{}' failed: {}", root, e);
                                 failed.insert(root.clone(), current);
