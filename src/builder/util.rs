@@ -13,30 +13,11 @@ pub(crate) fn get_project_top_level_path() -> PathBuf {
 }
 
 /// Extracts the crate's root directory name and FFI status from its metadata.
-/// The root defaults to "cmd" if not specified.
+/// The root defaults to "cmd" if not specified. Delegates to the shared
+/// parser in `datastore` so the builder and the hotswap loader can never
+/// disagree about what is FFI-rooted.
 pub(crate) fn get_crate_info(lib_metadata: &DataObject) -> (String, bool) {
-    let root = if lib_metadata.has("root") {
-        let value = lib_metadata.get_string("root");
-        if value.is_empty() { "cmd".to_string() } else { value }
-    } else {
-        "cmd".to_string()
-    };
-
-    let is_ffi = if lib_metadata.has("cargo") {
-        let cargo_obj = lib_metadata.get_object("cargo");
-        // THIS IS THE FIX:
-        // We must check if the 'ffi' key exists before trying to get it as a boolean.
-        // The get_boolean function panics if the key is not found.
-        if cargo_obj.has("ffi") {
-            cargo_obj.get_boolean("ffi")
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    (root, is_ffi)
+    crate::datastore::crate_info_from_meta(lib_metadata)
 }
 
 /// Reads all lines from a file into a Vec<String>.
@@ -66,19 +47,23 @@ pub(crate) fn find_line_index_in_slice(lines: &[String], marker: &str) -> Option
 }
 
 /// Idempotently adds a `use` statement and/or a line of code to a `mod.rs` file.
-/// It checks if the lines already exist before adding them.
+/// It checks if the lines already exist before adding them. Returns whether the
+/// file was modified — a new command's only source change can be its mod-file
+/// wiring (the generated command file may be byte-identical to a stale one), so
+/// callers must count this toward their "did anything change" verdict or the
+/// compile pipeline skips the build (and the hot-reload) entirely.
 pub(crate) fn update_mod_file_content(
     mod_file_path: &PathBuf,
     line_to_add: &str,
     use_line_to_add: Option<&str>,
-) {
+) -> bool {
     let mut lines = if mod_file_path.exists() {
         read_lines_from_file(mod_file_path)
             .expect(&format!("Failed to read mod file: {:?}", mod_file_path))
     } else {
         // If the file doesn't exist, we can't update it.
         // It should have been created by a scaffolding function first.
-        return;
+        return false;
     };
 
     let original_content = lines.join("\n");
@@ -119,6 +104,7 @@ pub(crate) fn update_mod_file_content(
         write_lines_to_file(mod_file_path, &lines)
             .expect(&format!("Unable to write mod file: {:?}", mod_file_path));
     }
+    modified
 }
 
 /// Idempotently removes a line of code (and optionally a `use` statement) from
@@ -176,5 +162,33 @@ pub(crate) fn lookup_rust_api_ndata_method_suffix(meta_type: &str) -> &str {
         "InputStream" => "bytes", "Float" => "float", "Integer" => "int",
         "Boolean" => "boolean", "Any" => "property", "NULL" => "null",
         _ => "string",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_mod_file_content;
+
+    /// A new command's only source change can be its mod-file wiring, so the
+    /// modified flag must be true on a real insertion and false on a no-op —
+    /// compile's changed verdict (and the FFI hot-reload behind it) hangs on it.
+    #[test]
+    fn mod_file_updates_report_modification() {
+        let dir = std::env::temp_dir().join(format!("util_mod_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mod.rs");
+        std::fs::write(&path, "pub fn cmdinit(cmds: &mut Vec<(String, Transform, String)>) {\n}\n").unwrap();
+
+        let push_line = "cmds.push((\"id1\".to_string(), marker::execute, \"\".to_string()));";
+        assert!(update_mod_file_content(&path, "pub mod marker;", None));
+        assert!(update_mod_file_content(&path, push_line, None));
+        // Idempotent second pass: nothing to add, nothing reported.
+        assert!(!update_mod_file_content(&path, "pub mod marker;", None));
+        assert!(!update_mod_file_content(&path, push_line, None));
+        // Missing file: nothing written, nothing reported.
+        assert!(!update_mod_file_content(&dir.join("absent.rs"), "pub mod x;", None));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
