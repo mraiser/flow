@@ -267,8 +267,10 @@ cargo build --features java_runtime        # loads a JVM via JNI
   (command wrappers, registries, the typed API) rather than using procedural
   macros — what runs is readable code checked into your tree.
 - **Vendored crypto:** peer-to-peer session encryption uses a vendored X25519
-  implementation (no external crypto dependency chain). It is verified against
-  the RFC 7748 test vectors in this crate's test suite.
+  implementation, and content hashing a vendored BLAKE2b (`flowlang::blake2b`:
+  digests of 1-64 bytes, keyed mode, salt and personalization) — no external
+  crypto dependency chain. Both are verified against their RFC test vectors
+  (7748 and 7693) in this crate's test suite.
 
 ## Testing
 
@@ -281,7 +283,10 @@ compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values
 generated with Node), and RFC 7748 conformance for the vendored X25519 (both
 section 5.2 vectors, the iterated test, and the section 6.1 Diffie-Hellman
 vectors — expected values derived with an independent OpenSSL-backed
-implementation).
+implementation), and RFC 7693 conformance for the vendored BLAKE2b (the
+Appendix A vector plus block-boundary, streaming, keyed, salt and
+personalization cases — expected values derived with python's `hashlib`,
+which wraps the BLAKE2 reference C code).
 
 ## Best practices
 
