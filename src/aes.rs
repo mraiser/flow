@@ -247,18 +247,6 @@ fn xtime(x: u8) -> u8 {
   (x << 1) ^ (((x >> 7) & 1) * 0x1b)
 }
 
-/// General GF(2^8) multiplication, used by InvMixColumns.
-#[inline(always)]
-fn gmul(mut a: u8, mut b: u8) -> u8 {
-  let mut p = 0u8;
-  for _ in 0..8 {
-    p ^= a * (b & 1);
-    a = xtime(a);
-    b >>= 1;
-  }
-  p
-}
-
 #[inline(always)]
 fn mix_columns(state: &mut [u8; 16]) {
   for c in 0..4 {
@@ -274,6 +262,13 @@ fn mix_columns(state: &mut [u8; 16]) {
   }
 }
 
+/// InvMixColumns factored as a cheap pre-step followed by MixColumns
+/// (FIPS 197 section 5.3.3 / the "efficient implementation" note in the
+/// AES proposal): the inverse matrix {0e,0b,0d,09} equals the forward
+/// matrix {02,03,01,01} times {05,00,04,00}. Applying the second factor
+/// costs two doublings per column instead of sixteen general GF(2^8)
+/// multiplications, which is what made decryption twice the cost of
+/// encryption before.
 #[inline(always)]
 fn inv_mix_columns(state: &mut [u8; 16]) {
   for c in 0..4 {
@@ -281,11 +276,15 @@ fn inv_mix_columns(state: &mut [u8; 16]) {
     let a1 = state[4 * c + 1];
     let a2 = state[4 * c + 2];
     let a3 = state[4 * c + 3];
-    state[4 * c]     = gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9);
-    state[4 * c + 1] = gmul(a0, 9)  ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13);
-    state[4 * c + 2] = gmul(a0, 13) ^ gmul(a1, 9)  ^ gmul(a2, 14) ^ gmul(a3, 11);
-    state[4 * c + 3] = gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9)  ^ gmul(a3, 14);
+    // 4 * (a0 ^ a2) and 4 * (a1 ^ a3); 5a = 4a ^ a.
+    let u = xtime(xtime(a0 ^ a2));
+    let v = xtime(xtime(a1 ^ a3));
+    state[4 * c]     = a0 ^ u;
+    state[4 * c + 1] = a1 ^ v;
+    state[4 * c + 2] = a2 ^ u;
+    state[4 * c + 3] = a3 ^ v;
   }
+  mix_columns(state);
 }
 
 /// One-shot ECB encryption of block-aligned data.
