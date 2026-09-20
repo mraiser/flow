@@ -16,6 +16,7 @@ pub mod base64;
 pub mod appserver;
 pub mod x25519;
 pub mod blake2b;
+pub mod aes;
 pub mod mcp;
 
 pub mod cmdinit;
