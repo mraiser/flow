@@ -10,7 +10,7 @@
 //! Every other expected value was derived with OpenSSL's `enc -aes-256-ecb
 //! -nopad` before being committed, not copied from this crate's output.
 
-use flowlang::aes::{aes256_ecb_decrypt, aes256_ecb_encrypt, Aes256, AES256_KEYBYTES, AES_BLOCKBYTES};
+use flowlang::aes::{aes256_ecb_decrypt, aes256_ecb_encrypt, Aes256, AesBackend, AES256_KEYBYTES, AES_BLOCKBYTES};
 
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len() / 2)
@@ -32,19 +32,25 @@ fn block(s: &str) -> [u8; AES_BLOCKBYTES] {
     b
 }
 
+/// The detected backend and the software one, so every vector is checked
+/// on both. On a CPU without AES instructions the two are the same.
+fn both(k: &[u8; AES256_KEYBYTES]) -> [Aes256; 2] {
+    [Aes256::new(k), Aes256::new_software(k)]
+}
+
 /// Encrypts, checks the ciphertext, then decrypts back and checks the
-/// round trip — both directions of every vector.
+/// round trip — both directions of every vector, on both backends.
 fn check_block(keyhex: &str, plainhex: &str, cipherhex: &str) {
-    let cipher = Aes256::new(&key(keyhex));
     let plain = block(plainhex);
     let expected = block(cipherhex);
+    for cipher in both(&key(keyhex)).iter() {
+        let mut b = plain;
+        cipher.encrypt_block(&mut b);
+        assert_eq!(b, expected, "encrypt key={} pt={} backend={:?}", keyhex, plainhex, cipher.backend());
 
-    let mut b = plain;
-    cipher.encrypt_block(&mut b);
-    assert_eq!(b, expected, "encrypt key={} pt={}", keyhex, plainhex);
-
-    cipher.decrypt_block(&mut b);
-    assert_eq!(b, plain, "decrypt key={} ct={}", keyhex, cipherhex);
+        cipher.decrypt_block(&mut b);
+        assert_eq!(b, plain, "decrypt key={} ct={} backend={:?}", keyhex, cipherhex, cipher.backend());
+    }
 }
 
 /// FIPS 197 Appendix C.3: AES-256 single block.
@@ -91,19 +97,20 @@ fn sp800_38a_ecb_aes256() {
     assert_eq!(aes256_ecb_encrypt(&k, &plain), expected);
     assert_eq!(aes256_ecb_decrypt(&k, &expected), plain);
 
-    // In-place multi-block, and block-by-block, agree.
-    let cipher = Aes256::new(&k);
-    let mut buf = plain.clone();
-    cipher.encrypt_blocks(&mut buf);
-    assert_eq!(buf, expected);
-    cipher.decrypt_blocks(&mut buf);
-    assert_eq!(buf, plain);
+    // In-place multi-block, and block-by-block, agree — on both backends.
+    for cipher in both(&k).iter() {
+        let mut buf = plain.clone();
+        cipher.encrypt_blocks(&mut buf);
+        assert_eq!(buf, expected, "{:?}", cipher.backend());
+        cipher.decrypt_blocks(&mut buf);
+        assert_eq!(buf, plain, "{:?}", cipher.backend());
 
-    for (i, (p, c)) in plain.chunks(16).zip(expected.chunks(16)).enumerate() {
-        let mut b = [0u8; 16];
-        b.copy_from_slice(p);
-        cipher.encrypt_block(&mut b);
-        assert_eq!(&b[..], c, "block {}", i);
+        for (i, (p, c)) in plain.chunks(16).zip(expected.chunks(16)).enumerate() {
+            let mut b = [0u8; 16];
+            b.copy_from_slice(p);
+            cipher.encrypt_block(&mut b);
+            assert_eq!(&b[..], c, "block {} {:?}", i, cipher.backend());
+        }
     }
 }
 
@@ -195,8 +202,74 @@ fn from_slice_clone_and_debug() {
         assert_eq!(x, expected);
     }
     let dbg = format!("{:?}", a);
-    assert_eq!(dbg, "Aes256 { .. }");
+    assert!(dbg.starts_with("Aes256 { backend: "), "{}", dbg);
+    assert!(dbg.ends_with(", .. }"), "{}", dbg);
     assert!(!dbg.contains("603d"), "debug output leaks the key");
+}
+
+/// The detected backend is what `new` uses, it is available, and the
+/// software backend is always available.
+#[test]
+fn backend_detection() {
+    let detected = AesBackend::detect();
+    assert!(detected.is_available());
+    assert!(AesBackend::Software.is_available());
+    assert_eq!(Aes256::new(&[0u8; 32]).backend(), detected);
+    assert_eq!(Aes256::new_software(&[0u8; 32]).backend(), AesBackend::Software);
+    assert_eq!(Aes256::with_backend(&[0u8; 32], detected).backend(), detected);
+    eprintln!("AES backend on this CPU: {:?}", detected);
+}
+
+/// The hardware backend must agree with the software one bit for bit on
+/// random keys and data, block by block and over ECB runs of every length
+/// around the multi-block lane width (1..=40 blocks covers the 8-lane
+/// loop's full groups and every remainder size).
+#[test]
+fn backends_agree() {
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let mut fill = |buf: &mut [u8]| {
+        for chunk in buf.chunks_mut(8) {
+            let bytes = next().to_le_bytes();
+            let n = chunk.len();
+            chunk.copy_from_slice(&bytes[..n]);
+        }
+    };
+    for _ in 0..25 {
+        let mut k = [0u8; 32];
+        fill(&mut k);
+        let hw = Aes256::new(&k);
+        let sw = Aes256::new_software(&k);
+
+        let mut b = [0u8; 16];
+        fill(&mut b);
+        let (mut b1, mut b2) = (b, b);
+        hw.encrypt_block(&mut b1);
+        sw.encrypt_block(&mut b2);
+        assert_eq!(b1, b2, "encrypt_block");
+        hw.decrypt_block(&mut b1);
+        sw.decrypt_block(&mut b2);
+        assert_eq!(b1, b2, "decrypt_block");
+        assert_eq!(b1, b, "round trip");
+
+        for blocks in 1..=40usize {
+            let mut data = vec![0u8; blocks * 16];
+            fill(&mut data);
+            let (mut d1, mut d2) = (data.clone(), data.clone());
+            hw.encrypt_blocks(&mut d1);
+            sw.encrypt_blocks(&mut d2);
+            assert_eq!(d1, d2, "encrypt_blocks, {} blocks", blocks);
+            hw.decrypt_blocks(&mut d1);
+            sw.decrypt_blocks(&mut d2);
+            assert_eq!(d1, d2, "decrypt_blocks, {} blocks", blocks);
+            assert_eq!(d1, data, "round trip, {} blocks", blocks);
+        }
+    }
 }
 
 #[test]

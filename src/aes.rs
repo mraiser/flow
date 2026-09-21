@@ -7,12 +7,18 @@
 //! and decrypt — plus block-aligned ECB helpers. It provides no padding, no
 //! IV and no authentication; a mode of operation is the caller's job.
 //!
-//! It is a straightforward table-driven implementation. Like every plain
-//! software AES it indexes lookup tables with secret-derived bytes and is
-//! therefore not constant-time against a local cache-timing observer, and
-//! it does not use hardware AES instructions. Verified against the FIPS 197
-//! Appendix C.3 vector, the Appendix A.3 key schedule, the NIST SP 800-38A
-//! ECB vectors and independently derived vectors in `tests/aes.rs`.
+//! On x86-64 with AES-NI and on AArch64 with the ARMv8 cryptography
+//! extension the block operations run on the CPU's AES instructions through
+//! `core::arch` intrinsics; support is detected once, at key setup, and the
+//! choice is recorded in the [`Aes256`] as its [`AesBackend`]. Everywhere
+//! else, and on CPUs without the instructions, the same API runs a
+//! table-driven software implementation. Like every plain software AES the
+//! fallback indexes lookup tables with secret-derived bytes and is therefore
+//! not constant-time against a local cache-timing observer; the hardware
+//! paths are. Both backends are verified against the FIPS 197 Appendix C.3
+//! vector, the Appendix A.3 key schedule, the NIST SP 800-38A ECB vectors
+//! and independently derived vectors in `tests/aes.rs`, and against each
+//! other.
 //!
 //! ```
 //! use flowlang::aes::Aes256;
@@ -81,6 +87,51 @@ const INV_SBOX: [u8; 256] = [
 /// Round constants for the key schedule: rcon[i] = x^(i-1) in GF(2^8).
 const RCON: [u8; 8] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80];
 
+/// Which implementation an [`Aes256`] runs its block operations on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AesBackend {
+  /// Table-driven software, available everywhere.
+  Software,
+  /// x86-64 AES-NI (`aesenc`/`aesdec` and friends).
+  X86Aesni,
+  /// AArch64 ARMv8 cryptography extension (`aese`/`aesd`/`aesmc`/`aesimc`).
+  Aarch64Aes,
+}
+
+impl AesBackend {
+  /// The fastest backend this CPU supports. Hardware support is probed
+  /// through the standard library's runtime feature detection, which caches
+  /// its answer, so calling this often is cheap.
+  pub fn detect() -> AesBackend {
+    #[cfg(target_arch = "x86_64")]
+    {
+      if std::arch::is_x86_feature_detected!("aes") {
+        return AesBackend::X86Aesni;
+      }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+      if std::arch::is_aarch64_feature_detected!("aes") {
+        return AesBackend::Aarch64Aes;
+      }
+    }
+    AesBackend::Software
+  }
+
+  /// Whether this backend can run on the current CPU.
+  pub fn is_available(self) -> bool {
+    match self {
+      AesBackend::Software => true,
+      #[cfg(target_arch = "x86_64")]
+      AesBackend::X86Aesni => std::arch::is_x86_feature_detected!("aes"),
+      #[cfg(target_arch = "aarch64")]
+      AesBackend::Aarch64Aes => std::arch::is_aarch64_feature_detected!("aes"),
+      #[allow(unreachable_patterns)]
+      _ => false,
+    }
+  }
+}
+
 /// An expanded AES-256 key. Cheap to clone; build one per key and reuse it
 /// for every block. Its `Debug` output never includes key material.
 #[derive(Clone)]
@@ -88,17 +139,43 @@ pub struct Aes256 {
   /// Round keys 0..=14, each one 16-byte block in FIPS 197 column-major
   /// order (byte `r + 4*c` is row `r`, column `c`).
   round_keys: [[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+  /// Round keys 1..=13 passed through InvMixColumns, which is what the
+  /// x86 `aesdec` instruction's equivalent inverse cipher consumes. Only
+  /// filled in for the AES-NI backend.
+  #[cfg(target_arch = "x86_64")]
+  dec_round_keys: [[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+  backend: AesBackend,
 }
 
 impl Debug for Aes256 {
   fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-    f.write_str("Aes256 { .. }")
+    write!(f, "Aes256 {{ backend: {:?}, .. }}", self.backend)
   }
 }
 
 impl Aes256 {
-  /// Expands a 32-byte key into the 15 round keys (FIPS 197 section 5.2).
+  /// Expands a 32-byte key into the 15 round keys (FIPS 197 section 5.2)
+  /// on the fastest backend this CPU supports (see [`AesBackend::detect`]).
   pub fn new(key: &[u8; AES256_KEYBYTES]) -> Aes256 {
+    Aes256::with_backend(key, AesBackend::detect())
+  }
+
+  /// Like [`Aes256::new`] but always uses the software implementation.
+  /// Useful for benchmarking the backends against each other and for
+  /// tests; production code wants [`Aes256::new`].
+  pub fn new_software(key: &[u8; AES256_KEYBYTES]) -> Aes256 {
+    Aes256::with_backend(key, AesBackend::Software)
+  }
+
+  /// Expands the key for a specific backend.
+  ///
+  /// # Panics
+  /// If `backend` is not available on this CPU (see
+  /// [`AesBackend::is_available`]).
+  pub fn with_backend(key: &[u8; AES256_KEYBYTES], backend: AesBackend) -> Aes256 {
+    if !backend.is_available() {
+      panic!("AES backend {:?} is not available on this CPU", backend);
+    }
     // 4 * (Nr + 1) = 60 words.
     let total_words = 4 * (ROUNDS + 1);
     let mut w = [[0u8; 4]; 4 * (ROUNDS + 1)];
@@ -123,7 +200,28 @@ impl Aes256 {
         round_keys[r][4 * c..4 * c + 4].copy_from_slice(&w[4 * r + c]);
       }
     }
-    Aes256 { round_keys }
+
+    #[cfg(target_arch = "x86_64")]
+    let dec_round_keys = {
+      let mut d = [[0u8; AES_BLOCKBYTES]; ROUNDS + 1];
+      if backend == AesBackend::X86Aesni {
+        // SAFETY: the backend was checked available just above.
+        unsafe { aesni::inv_mix_round_keys(&round_keys, &mut d) };
+      }
+      d
+    };
+
+    Aes256 {
+      round_keys,
+      #[cfg(target_arch = "x86_64")]
+      dec_round_keys,
+      backend,
+    }
+  }
+
+  /// The backend this key was expanded for.
+  pub fn backend(&self) -> AesBackend {
+    self.backend
   }
 
   /// Builds a cipher from a key slice, which must be exactly 32 bytes.
@@ -141,6 +239,80 @@ impl Aes256 {
 
   /// Encrypts one 16-byte block in place (FIPS 197 section 5.1).
   pub fn encrypt_block(&self, block: &mut [u8; AES_BLOCKBYTES]) {
+    match self.backend {
+      AesBackend::Software => self.encrypt_block_soft(block),
+      // SAFETY: the backend was checked available on this CPU in
+      // `with_backend`, and CPU features do not go away.
+      #[cfg(target_arch = "x86_64")]
+      AesBackend::X86Aesni => unsafe { aesni::encrypt_block(&self.round_keys, block) },
+      #[cfg(target_arch = "aarch64")]
+      AesBackend::Aarch64Aes => unsafe { armv8::encrypt_block(&self.round_keys, block) },
+      #[allow(unreachable_patterns)]
+      _ => unreachable!(),
+    }
+  }
+
+  /// Decrypts one 16-byte block in place (FIPS 197 section 5.3).
+  pub fn decrypt_block(&self, block: &mut [u8; AES_BLOCKBYTES]) {
+    match self.backend {
+      AesBackend::Software => self.decrypt_block_soft(block),
+      // SAFETY: as in `encrypt_block`.
+      #[cfg(target_arch = "x86_64")]
+      AesBackend::X86Aesni => unsafe { aesni::decrypt_block(&self.round_keys, &self.dec_round_keys, block) },
+      #[cfg(target_arch = "aarch64")]
+      AesBackend::Aarch64Aes => unsafe { armv8::decrypt_block(&self.round_keys, block) },
+      #[allow(unreachable_patterns)]
+      _ => unreachable!(),
+    }
+  }
+
+  /// Encrypts every 16-byte block of `data` in place, independently (ECB).
+  /// The hardware backends work several blocks at a time here, which is
+  /// where their throughput comes from.
+  ///
+  /// # Panics
+  /// If `data.len()` is not a multiple of 16.
+  pub fn encrypt_blocks(&self, data: &mut [u8]) {
+    check_block_aligned(data.len());
+    match self.backend {
+      AesBackend::Software => {
+        for chunk in data.chunks_exact_mut(AES_BLOCKBYTES) {
+          self.encrypt_block_soft(chunk.try_into().unwrap());
+        }
+      }
+      // SAFETY: as in `encrypt_block`.
+      #[cfg(target_arch = "x86_64")]
+      AesBackend::X86Aesni => unsafe { aesni::encrypt_blocks(&self.round_keys, data) },
+      #[cfg(target_arch = "aarch64")]
+      AesBackend::Aarch64Aes => unsafe { armv8::encrypt_blocks(&self.round_keys, data) },
+      #[allow(unreachable_patterns)]
+      _ => unreachable!(),
+    }
+  }
+
+  /// Decrypts every 16-byte block of `data` in place, independently (ECB).
+  ///
+  /// # Panics
+  /// If `data.len()` is not a multiple of 16.
+  pub fn decrypt_blocks(&self, data: &mut [u8]) {
+    check_block_aligned(data.len());
+    match self.backend {
+      AesBackend::Software => {
+        for chunk in data.chunks_exact_mut(AES_BLOCKBYTES) {
+          self.decrypt_block_soft(chunk.try_into().unwrap());
+        }
+      }
+      // SAFETY: as in `encrypt_block`.
+      #[cfg(target_arch = "x86_64")]
+      AesBackend::X86Aesni => unsafe { aesni::decrypt_blocks(&self.round_keys, &self.dec_round_keys, data) },
+      #[cfg(target_arch = "aarch64")]
+      AesBackend::Aarch64Aes => unsafe { armv8::decrypt_blocks(&self.round_keys, data) },
+      #[allow(unreachable_patterns)]
+      _ => unreachable!(),
+    }
+  }
+
+  fn encrypt_block_soft(&self, block: &mut [u8; AES_BLOCKBYTES]) {
     add_round_key(block, &self.round_keys[0]);
     for round in 1..ROUNDS {
       sub_bytes(block);
@@ -153,8 +325,7 @@ impl Aes256 {
     add_round_key(block, &self.round_keys[ROUNDS]);
   }
 
-  /// Decrypts one 16-byte block in place (FIPS 197 section 5.3).
-  pub fn decrypt_block(&self, block: &mut [u8; AES_BLOCKBYTES]) {
+  fn decrypt_block_soft(&self, block: &mut [u8; AES_BLOCKBYTES]) {
     add_round_key(block, &self.round_keys[ROUNDS]);
     for round in (1..ROUNDS).rev() {
       inv_shift_rows(block);
@@ -166,28 +337,250 @@ impl Aes256 {
     inv_sub_bytes(block);
     add_round_key(block, &self.round_keys[0]);
   }
+}
 
-  /// Encrypts every 16-byte block of `data` in place, independently (ECB).
-  ///
-  /// # Panics
-  /// If `data.len()` is not a multiple of 16.
-  pub fn encrypt_blocks(&self, data: &mut [u8]) {
-    check_block_aligned(data.len());
-    for chunk in data.chunks_exact_mut(AES_BLOCKBYTES) {
-      let block: &mut [u8; AES_BLOCKBYTES] = chunk.try_into().unwrap();
-      self.encrypt_block(block);
+/// x86-64 AES-NI backend. Every function here must only be called after
+/// `is_x86_feature_detected!("aes")` returned true, which `Aes256` ensures.
+#[cfg(target_arch = "x86_64")]
+mod aesni {
+  use super::{AES_BLOCKBYTES, ROUNDS};
+  use core::arch::x86_64::*;
+
+  /// How many independent blocks the ECB loops keep in flight, so the
+  /// pipelined `aesenc`/`aesdec` units are not stalled on one block's
+  /// round-to-round latency.
+  const LANES: usize = 8;
+
+  #[inline(always)]
+  unsafe fn load(k: &[u8; AES_BLOCKBYTES]) -> __m128i {
+    _mm_loadu_si128(k.as_ptr() as *const __m128i)
+  }
+
+  #[inline(always)]
+  unsafe fn load_keys(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1]) -> [__m128i; ROUNDS + 1] {
+    let mut k = [_mm_setzero_si128(); ROUNDS + 1];
+    for r in 0..=ROUNDS {
+      k[r] = load(&rk[r]);
+    }
+    k
+  }
+
+  #[inline(always)]
+  unsafe fn enc_one(k: &[__m128i; ROUNDS + 1], mut s: __m128i) -> __m128i {
+    s = _mm_xor_si128(s, k[0]);
+    for r in 1..ROUNDS {
+      s = _mm_aesenc_si128(s, k[r]);
+    }
+    _mm_aesenclast_si128(s, k[ROUNDS])
+  }
+
+  /// Equivalent inverse cipher (FIPS 197 section 5.3.5): `aesdec` wants
+  /// the InvMixColumns-transformed round keys for rounds 13..=1, the plain
+  /// key 14 first and the plain key 0 last.
+  #[inline(always)]
+  unsafe fn dec_one(k: &[__m128i; ROUNDS + 1], dk: &[__m128i; ROUNDS + 1], mut s: __m128i) -> __m128i {
+    s = _mm_xor_si128(s, k[ROUNDS]);
+    for r in (1..ROUNDS).rev() {
+      s = _mm_aesdec_si128(s, dk[r]);
+    }
+    _mm_aesdeclast_si128(s, k[0])
+  }
+
+  /// Derives the decryption round keys: InvMixColumns of round keys
+  /// 1..=13 (`aesimc`), with keys 0 and 14 copied through unchanged. The
+  /// same transform the software `inv_mix_columns` computes, on the
+  /// instruction built for it.
+  #[target_feature(enable = "aes")]
+  pub unsafe fn inv_mix_round_keys(
+    rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+    out: &mut [[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+  ) {
+    out[0] = rk[0];
+    out[ROUNDS] = rk[ROUNDS];
+    for r in 1..ROUNDS {
+      let t = _mm_aesimc_si128(load(&rk[r]));
+      _mm_storeu_si128(out[r].as_mut_ptr() as *mut __m128i, t);
     }
   }
 
-  /// Decrypts every 16-byte block of `data` in place, independently (ECB).
-  ///
-  /// # Panics
-  /// If `data.len()` is not a multiple of 16.
-  pub fn decrypt_blocks(&self, data: &mut [u8]) {
-    check_block_aligned(data.len());
-    for chunk in data.chunks_exact_mut(AES_BLOCKBYTES) {
-      let block: &mut [u8; AES_BLOCKBYTES] = chunk.try_into().unwrap();
-      self.decrypt_block(block);
+  #[target_feature(enable = "aes")]
+  pub unsafe fn encrypt_block(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], block: &mut [u8; AES_BLOCKBYTES]) {
+    let k = load_keys(rk);
+    let s = enc_one(&k, _mm_loadu_si128(block.as_ptr() as *const __m128i));
+    _mm_storeu_si128(block.as_mut_ptr() as *mut __m128i, s);
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn decrypt_block(
+    rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+    drk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+    block: &mut [u8; AES_BLOCKBYTES],
+  ) {
+    let k = load_keys(rk);
+    let dk = load_keys(drk);
+    let s = dec_one(&k, &dk, _mm_loadu_si128(block.as_ptr() as *const __m128i));
+    _mm_storeu_si128(block.as_mut_ptr() as *mut __m128i, s);
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn encrypt_blocks(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], data: &mut [u8]) {
+    let k = load_keys(rk);
+    let mut wide = data.chunks_exact_mut(AES_BLOCKBYTES * LANES);
+    for chunk in &mut wide {
+      let p = chunk.as_mut_ptr() as *mut __m128i;
+      let mut s = [_mm_setzero_si128(); LANES];
+      for i in 0..LANES {
+        s[i] = _mm_xor_si128(_mm_loadu_si128(p.add(i)), k[0]);
+      }
+      for r in 1..ROUNDS {
+        for i in 0..LANES {
+          s[i] = _mm_aesenc_si128(s[i], k[r]);
+        }
+      }
+      for i in 0..LANES {
+        _mm_storeu_si128(p.add(i), _mm_aesenclast_si128(s[i], k[ROUNDS]));
+      }
+    }
+    for chunk in wide.into_remainder().chunks_exact_mut(AES_BLOCKBYTES) {
+      let p = chunk.as_mut_ptr() as *mut __m128i;
+      _mm_storeu_si128(p, enc_one(&k, _mm_loadu_si128(p)));
+    }
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn decrypt_blocks(
+    rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+    drk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+    data: &mut [u8],
+  ) {
+    let k = load_keys(rk);
+    let dk = load_keys(drk);
+    let mut wide = data.chunks_exact_mut(AES_BLOCKBYTES * LANES);
+    for chunk in &mut wide {
+      let p = chunk.as_mut_ptr() as *mut __m128i;
+      let mut s = [_mm_setzero_si128(); LANES];
+      for i in 0..LANES {
+        s[i] = _mm_xor_si128(_mm_loadu_si128(p.add(i)), k[ROUNDS]);
+      }
+      for r in (1..ROUNDS).rev() {
+        for i in 0..LANES {
+          s[i] = _mm_aesdec_si128(s[i], dk[r]);
+        }
+      }
+      for i in 0..LANES {
+        _mm_storeu_si128(p.add(i), _mm_aesdeclast_si128(s[i], k[0]));
+      }
+    }
+    for chunk in wide.into_remainder().chunks_exact_mut(AES_BLOCKBYTES) {
+      let p = chunk.as_mut_ptr() as *mut __m128i;
+      _mm_storeu_si128(p, dec_one(&k, &dk, _mm_loadu_si128(p)));
+    }
+  }
+}
+
+/// AArch64 ARMv8 cryptography extension backend. Every function here must
+/// only be called after `is_aarch64_feature_detected!("aes")` returned
+/// true, which `Aes256` ensures.
+///
+/// The ARM instructions split a round differently from x86: `aese` is
+/// AddRoundKey then SubBytes and ShiftRows, `aesmc` is MixColumns, and the
+/// inverses likewise, so the round keys are used untransformed and the
+/// final round is `aese` plus a plain xor with the last key.
+#[cfg(target_arch = "aarch64")]
+mod armv8 {
+  use super::{AES_BLOCKBYTES, ROUNDS};
+  use core::arch::aarch64::*;
+
+  const LANES: usize = 8;
+
+  #[inline(always)]
+  unsafe fn load_keys(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1]) -> [uint8x16_t; ROUNDS + 1] {
+    let mut k = [vdupq_n_u8(0); ROUNDS + 1];
+    for r in 0..=ROUNDS {
+      k[r] = vld1q_u8(rk[r].as_ptr());
+    }
+    k
+  }
+
+  #[inline(always)]
+  unsafe fn enc_one(k: &[uint8x16_t; ROUNDS + 1], mut s: uint8x16_t) -> uint8x16_t {
+    for r in 0..ROUNDS - 1 {
+      s = vaesmcq_u8(vaeseq_u8(s, k[r]));
+    }
+    s = vaeseq_u8(s, k[ROUNDS - 1]);
+    veorq_u8(s, k[ROUNDS])
+  }
+
+  #[inline(always)]
+  unsafe fn dec_one(k: &[uint8x16_t; ROUNDS + 1], mut s: uint8x16_t) -> uint8x16_t {
+    for r in (2..=ROUNDS).rev() {
+      s = vaesimcq_u8(vaesdq_u8(s, k[r]));
+    }
+    s = vaesdq_u8(s, k[1]);
+    veorq_u8(s, k[0])
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn encrypt_block(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], block: &mut [u8; AES_BLOCKBYTES]) {
+    let k = load_keys(rk);
+    vst1q_u8(block.as_mut_ptr(), enc_one(&k, vld1q_u8(block.as_ptr())));
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn decrypt_block(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], block: &mut [u8; AES_BLOCKBYTES]) {
+    let k = load_keys(rk);
+    vst1q_u8(block.as_mut_ptr(), dec_one(&k, vld1q_u8(block.as_ptr())));
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn encrypt_blocks(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], data: &mut [u8]) {
+    let k = load_keys(rk);
+    let mut wide = data.chunks_exact_mut(AES_BLOCKBYTES * LANES);
+    for chunk in &mut wide {
+      let p = chunk.as_mut_ptr();
+      let mut s = [vdupq_n_u8(0); LANES];
+      for i in 0..LANES {
+        s[i] = vld1q_u8(p.add(i * AES_BLOCKBYTES));
+      }
+      for r in 0..ROUNDS - 1 {
+        for i in 0..LANES {
+          s[i] = vaesmcq_u8(vaeseq_u8(s[i], k[r]));
+        }
+      }
+      for i in 0..LANES {
+        let t = veorq_u8(vaeseq_u8(s[i], k[ROUNDS - 1]), k[ROUNDS]);
+        vst1q_u8(p.add(i * AES_BLOCKBYTES), t);
+      }
+    }
+    for chunk in wide.into_remainder().chunks_exact_mut(AES_BLOCKBYTES) {
+      let p = chunk.as_mut_ptr();
+      vst1q_u8(p, enc_one(&k, vld1q_u8(p)));
+    }
+  }
+
+  #[target_feature(enable = "aes")]
+  pub unsafe fn decrypt_blocks(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], data: &mut [u8]) {
+    let k = load_keys(rk);
+    let mut wide = data.chunks_exact_mut(AES_BLOCKBYTES * LANES);
+    for chunk in &mut wide {
+      let p = chunk.as_mut_ptr();
+      let mut s = [vdupq_n_u8(0); LANES];
+      for i in 0..LANES {
+        s[i] = vld1q_u8(p.add(i * AES_BLOCKBYTES));
+      }
+      for r in (2..=ROUNDS).rev() {
+        for i in 0..LANES {
+          s[i] = vaesimcq_u8(vaesdq_u8(s[i], k[r]));
+        }
+      }
+      for i in 0..LANES {
+        let t = veorq_u8(vaesdq_u8(s[i], k[1]), k[0]);
+        vst1q_u8(p.add(i * AES_BLOCKBYTES), t);
+      }
+    }
+    for chunk in wide.into_remainder().chunks_exact_mut(AES_BLOCKBYTES) {
+      let p = chunk.as_mut_ptr();
+      vst1q_u8(p, dec_one(&k, vld1q_u8(p)));
     }
   }
 }
@@ -338,5 +731,30 @@ mod tests {
     assert_eq!(words(2), [0xa573c29f, 0xa176c498, 0xa97fce93, 0xa572c09c], "w[8..12]");
     assert_eq!(words(3), [0x1651a8cd, 0x0244beda, 0x1a5da4c1, 0x0640bade], "w[12..16]");
     assert_eq!(words(14), [0x24fc79cc, 0xbf0979e9, 0x371ac23c, 0x6d68de36], "w[56..60]");
+  }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod aesni_tests {
+  use super::*;
+
+  /// `aesimc` and the software InvMixColumns must produce the same
+  /// decryption key schedule; this pins the hardware key derivation to the
+  /// software reference directly, not only through decrypt results.
+  #[test]
+  fn aesimc_matches_software_inv_mix_columns() {
+    if !AesBackend::X86Aesni.is_available() {
+      return;
+    }
+    let mut key = [0u8; 32];
+    for i in 0..32 {
+      key[i] = (i * 7 + 3) as u8;
+    }
+    let cipher = Aes256::with_backend(&key, AesBackend::X86Aesni);
+    let mut expected = cipher.round_keys;
+    for r in 1..ROUNDS {
+      inv_mix_columns(&mut expected[r]);
+    }
+    assert_eq!(cipher.dec_round_keys, expected);
   }
 }

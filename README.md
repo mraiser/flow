@@ -274,8 +274,10 @@ cargo build --features java_runtime        # loads a JVM via JNI
   keyed mode, salt and personalization) — no external crypto dependency
   chain. All three are verified against their standards' test vectors
   (RFC 7748, FIPS 197 / SP 800-38A, RFC 7693) in this crate's test suite.
-  The AES is plain table-driven software: not constant-time against a local
-  cache-timing observer, and it does not use hardware AES instructions.
+  The AES runs on the CPU's AES instructions where they exist (x86-64
+  AES-NI, AArch64 ARMv8 crypto extension; detected at runtime through
+  `core::arch`) and otherwise on plain table-driven software, which is not
+  constant-time against a local cache-timing observer.
 
 ## Testing
 
@@ -293,7 +295,9 @@ Appendix A vector plus block-boundary, streaming, keyed, salt and
 personalization cases — expected values derived with python's `hashlib`,
 which wraps the BLAKE2 reference C code), and FIPS 197 conformance for the
 vendored AES-256 (the Appendix C.3 block and A.3 key schedule, the NIST
-SP 800-38A ECB vectors, and further cases derived with OpenSSL).
+SP 800-38A ECB vectors, and further cases derived with OpenSSL, every one run
+on both the hardware and the software backend, plus a randomized
+hardware-vs-software agreement sweep).
 
 ## Best practices
 
