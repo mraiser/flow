@@ -297,7 +297,20 @@ which wraps the BLAKE2 reference C code), and FIPS 197 conformance for the
 vendored AES-256 (the Appendix C.3 block and A.3 key schedule, the NIST
 SP 800-38A ECB vectors, and further cases derived with OpenSSL, every one run
 on both the hardware and the software backend, plus a randomized
-hardware-vs-software agreement sweep).
+hardware-vs-software agreement sweep). The AArch64 backend can be exercised
+from an x86-64 host under user-mode QEMU, which emulates the crypto
+extension:
+
+```bash
+rustup target add aarch64-unknown-linux-gnu
+apt-get install qemu-user gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER="qemu-aarch64 -L /usr/aarch64-linux-gnu" \
+cargo test --target aarch64-unknown-linux-gnu --lib --test aes -- --skip dynlib_generations_never_unload
+```
+
+(the skipped test builds and loads a dynamic library at run time, which
+user-mode emulation cannot do.)
 
 ## Best practices
 

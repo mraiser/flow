@@ -139,10 +139,11 @@ pub struct Aes256 {
   /// Round keys 0..=14, each one 16-byte block in FIPS 197 column-major
   /// order (byte `r + 4*c` is row `r`, column `c`).
   round_keys: [[u8; AES_BLOCKBYTES]; ROUNDS + 1],
-  /// Round keys 1..=13 passed through InvMixColumns, which is what the
-  /// x86 `aesdec` instruction's equivalent inverse cipher consumes. Only
-  /// filled in for the AES-NI backend.
-  #[cfg(target_arch = "x86_64")]
+  /// Round keys 1..=13 passed through InvMixColumns (keys 0 and 14 copied
+  /// unchanged), which is what the equivalent inverse cipher consumes on
+  /// both x86 (`aesdec`) and AArch64 (`aesd` + `aesimc`). Only filled in
+  /// for a hardware backend.
+  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
   dec_round_keys: [[u8; AES_BLOCKBYTES]; ROUNDS + 1],
   backend: AesBackend,
 }
@@ -201,19 +202,23 @@ impl Aes256 {
       }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     let dec_round_keys = {
       let mut d = [[0u8; AES_BLOCKBYTES]; ROUNDS + 1];
-      if backend == AesBackend::X86Aesni {
+      match backend {
         // SAFETY: the backend was checked available just above.
-        unsafe { aesni::inv_mix_round_keys(&round_keys, &mut d) };
+        #[cfg(target_arch = "x86_64")]
+        AesBackend::X86Aesni => unsafe { aesni::inv_mix_round_keys(&round_keys, &mut d) },
+        #[cfg(target_arch = "aarch64")]
+        AesBackend::Aarch64Aes => unsafe { armv8::inv_mix_round_keys(&round_keys, &mut d) },
+        _ => {}
       }
       d
     };
 
     Aes256 {
       round_keys,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
       dec_round_keys,
       backend,
     }
@@ -260,7 +265,7 @@ impl Aes256 {
       #[cfg(target_arch = "x86_64")]
       AesBackend::X86Aesni => unsafe { aesni::decrypt_block(&self.round_keys, &self.dec_round_keys, block) },
       #[cfg(target_arch = "aarch64")]
-      AesBackend::Aarch64Aes => unsafe { armv8::decrypt_block(&self.round_keys, block) },
+      AesBackend::Aarch64Aes => unsafe { armv8::decrypt_block(&self.dec_round_keys, block) },
       #[allow(unreachable_patterns)]
       _ => unreachable!(),
     }
@@ -306,7 +311,7 @@ impl Aes256 {
       #[cfg(target_arch = "x86_64")]
       AesBackend::X86Aesni => unsafe { aesni::decrypt_blocks(&self.round_keys, &self.dec_round_keys, data) },
       #[cfg(target_arch = "aarch64")]
-      AesBackend::Aarch64Aes => unsafe { armv8::decrypt_blocks(&self.round_keys, data) },
+      AesBackend::Aarch64Aes => unsafe { armv8::decrypt_blocks(&self.dec_round_keys, data) },
       #[allow(unreachable_patterns)]
       _ => unreachable!(),
     }
@@ -483,9 +488,16 @@ mod aesni {
 /// true, which `Aes256` ensures.
 ///
 /// The ARM instructions split a round differently from x86: `aese` is
-/// AddRoundKey then SubBytes and ShiftRows, `aesmc` is MixColumns, and the
-/// inverses likewise, so the round keys are used untransformed and the
-/// final round is `aese` plus a plain xor with the last key.
+/// AddRoundKey then SubBytes and ShiftRows, `aesmc` is MixColumns, and
+/// `aesd`/`aesimc` are their inverses. Encryption therefore uses the round
+/// keys untransformed, with the final round an `aese` plus a plain xor
+/// with the last key. Decryption is the equivalent inverse cipher (FIPS
+/// 197 section 5.3.5) just as on x86: the round-key xor of each middle
+/// round sits before that round's InvMixColumns, and because InvMixColumns
+/// is linear the xor is pushed through it, so `aesd` in rounds 13..=1
+/// consumes the InvMixColumns-transformed keys. Using the plain keys there
+/// decrypts to garbage — which is exactly what the first cut of this
+/// module did.
 #[cfg(target_arch = "aarch64")]
 mod armv8 {
   use super::{AES_BLOCKBYTES, ROUNDS};
@@ -511,13 +523,29 @@ mod armv8 {
     veorq_u8(s, k[ROUNDS])
   }
 
+  /// `dk` is the decryption schedule: key 14 and key 0 as expanded, keys
+  /// 13..=1 passed through InvMixColumns.
   #[inline(always)]
-  unsafe fn dec_one(k: &[uint8x16_t; ROUNDS + 1], mut s: uint8x16_t) -> uint8x16_t {
+  unsafe fn dec_one(dk: &[uint8x16_t; ROUNDS + 1], mut s: uint8x16_t) -> uint8x16_t {
     for r in (2..=ROUNDS).rev() {
-      s = vaesimcq_u8(vaesdq_u8(s, k[r]));
+      s = vaesimcq_u8(vaesdq_u8(s, dk[r]));
     }
-    s = vaesdq_u8(s, k[1]);
-    veorq_u8(s, k[0])
+    s = vaesdq_u8(s, dk[1]);
+    veorq_u8(s, dk[0])
+  }
+
+  /// Derives the decryption round keys: InvMixColumns of round keys
+  /// 1..=13 (`aesimc`), with keys 0 and 14 copied through unchanged.
+  #[target_feature(enable = "aes")]
+  pub unsafe fn inv_mix_round_keys(
+    rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+    out: &mut [[u8; AES_BLOCKBYTES]; ROUNDS + 1],
+  ) {
+    out[0] = rk[0];
+    out[ROUNDS] = rk[ROUNDS];
+    for r in 1..ROUNDS {
+      vst1q_u8(out[r].as_mut_ptr(), vaesimcq_u8(vld1q_u8(rk[r].as_ptr())));
+    }
   }
 
   #[target_feature(enable = "aes")]
@@ -527,9 +555,9 @@ mod armv8 {
   }
 
   #[target_feature(enable = "aes")]
-  pub unsafe fn decrypt_block(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], block: &mut [u8; AES_BLOCKBYTES]) {
-    let k = load_keys(rk);
-    vst1q_u8(block.as_mut_ptr(), dec_one(&k, vld1q_u8(block.as_ptr())));
+  pub unsafe fn decrypt_block(drk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], block: &mut [u8; AES_BLOCKBYTES]) {
+    let dk = load_keys(drk);
+    vst1q_u8(block.as_mut_ptr(), dec_one(&dk, vld1q_u8(block.as_ptr())));
   }
 
   #[target_feature(enable = "aes")]
@@ -559,8 +587,8 @@ mod armv8 {
   }
 
   #[target_feature(enable = "aes")]
-  pub unsafe fn decrypt_blocks(rk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], data: &mut [u8]) {
-    let k = load_keys(rk);
+  pub unsafe fn decrypt_blocks(drk: &[[u8; AES_BLOCKBYTES]; ROUNDS + 1], data: &mut [u8]) {
+    let dk = load_keys(drk);
     let mut wide = data.chunks_exact_mut(AES_BLOCKBYTES * LANES);
     for chunk in &mut wide {
       let p = chunk.as_mut_ptr();
@@ -570,17 +598,17 @@ mod armv8 {
       }
       for r in (2..=ROUNDS).rev() {
         for i in 0..LANES {
-          s[i] = vaesimcq_u8(vaesdq_u8(s[i], k[r]));
+          s[i] = vaesimcq_u8(vaesdq_u8(s[i], dk[r]));
         }
       }
       for i in 0..LANES {
-        let t = veorq_u8(vaesdq_u8(s[i], k[1]), k[0]);
+        let t = veorq_u8(vaesdq_u8(s[i], dk[1]), dk[0]);
         vst1q_u8(p.add(i * AES_BLOCKBYTES), t);
       }
     }
     for chunk in wide.into_remainder().chunks_exact_mut(AES_BLOCKBYTES) {
       let p = chunk.as_mut_ptr();
-      vst1q_u8(p, dec_one(&k, vld1q_u8(p)));
+      vst1q_u8(p, dec_one(&dk, vld1q_u8(p)));
     }
   }
 }
@@ -734,8 +762,8 @@ mod tests {
   }
 }
 
-#[cfg(all(test, target_arch = "x86_64"))]
-mod aesni_tests {
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod hw_tests {
   use super::*;
 
   /// `aesimc` and the software InvMixColumns must produce the same
@@ -743,14 +771,15 @@ mod aesni_tests {
   /// software reference directly, not only through decrypt results.
   #[test]
   fn aesimc_matches_software_inv_mix_columns() {
-    if !AesBackend::X86Aesni.is_available() {
+    let backend = AesBackend::detect();
+    if backend == AesBackend::Software {
       return;
     }
     let mut key = [0u8; 32];
     for i in 0..32 {
       key[i] = (i * 7 + 3) as u8;
     }
-    let cipher = Aes256::with_backend(&key, AesBackend::X86Aesni);
+    let cipher = Aes256::with_backend(&key, backend);
     let mut expected = cipher.round_keys;
     for r in 1..ROUNDS {
       inv_mix_columns(&mut expected[r]);
