@@ -255,6 +255,18 @@ cargo build --features java_runtime        # loads a JVM via JNI
   until the graph is quiescent — a topological sort performed on the fly. A
   single flow executes on one thread, but ndata's thread-safety means separate
   `Command::execute` calls can safely run concurrently on different threads.
+- **Synchros:** a case may carry `syncs: [{"src": i, "dest": j}]`, data-less
+  edges between two of its operations meaning "op `i` finishes before op `j`
+  starts". An operation with an incoming synchro never runs at case start;
+  it runs, exactly once, when every awaited input has landed AND the source of
+  every incoming synchro is done (a list/loop source after its last
+  iteration, a local after its whole local case). A case ends only when every
+  connection and every synchro has fired; if it ends early (`next`,
+  `terminate`, `fail`) a pending destination never runs. Order among
+  operations that are ready together stays unspecified, so any ordering a
+  flow depends on must be a synchro. The key is optional (absent = none), and
+  endpoints that are not two distinct operations of the case are inert.
+  Wires plus synchros must be acyclic: a cycle stalls the case.
 - **Robustness:** generated Rust command wrappers validate declared parameters
   before use and run the command body inside a panic guard. A missing or
   mistyped argument produces a structured error response — it cannot take down
@@ -285,7 +297,9 @@ cargo build --features java_runtime        # loads a JVM via JNI
 cargo test
 ```
 
-The suite covers the builder's wrapper guarantees, `hex_encode`/`hex_decode`
+The suite covers the builder's wrapper guarantees, synchro ordering under
+`Code::execute` (`tests/synchros.rs`: each fixture's result differs when
+`syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values
 generated with Node), and RFC 7748 conformance for the vendored X25519 (both
 section 5.2 vectors, the iterated test, and the section 6.1 Diffie-Hellman

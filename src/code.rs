@@ -45,6 +45,8 @@ impl Code {
         let n2 = cmds.len();
         let cons = &mut current_case.cons;
         let n = cons.len();
+        let syncs = &mut current_case.syncs;
+        let n3 = syncs.len();
         
         let mut i = 0;
         while i<n2{
@@ -63,7 +65,8 @@ impl Code {
                 value.done = true;
               }
             }
-            if count == 0 || b {
+            // Case start: no awaited input AND no incoming synchro.
+            if (count == 0 || b) && (n3 == 0 || !Code::awaits_synchro(syncs, i, n2)) {
               self.evaluate(cmd)?;
             }
           }
@@ -121,8 +124,9 @@ impl Code {
                       b = b && v.done;
                       if !b { break; }
                     }
-                    if b { 
-                      self.evaluate(cmd)?; 
+                    // Readiness also requires every incoming synchro's src done.
+                    if b && (n3 == 0 || Code::synchros_satisfied(cmds, syncs, dest as usize)) { 
+                      self.evaluate(&mut cmds[dest as usize])?; 
                     }
                   }
                 }
@@ -130,6 +134,30 @@ impl Code {
             }
             i = i + 1;
           }
+          
+          // Fire every synchro whose src is done; run a now-ready dest once.
+          let mut k = 0;
+          while k<n3 {
+            if !syncs[k].done {
+              c = false;
+              let src = syncs[k].src;
+              let dest = syncs[k].dest;
+              if !Code::synchro_valid(src, dest, n2) {
+                // Malformed endpoints never gate an op (diagnosed by editors).
+                syncs[k].done = true;
+              }
+              else if cmds[src as usize].done {
+                syncs[k].done = true;
+                let d = dest as usize;
+                if !cmds[d].done && Code::inputs_done(&cmds[d]) && Code::synchros_satisfied(cmds, syncs, d) {
+                  self.evaluate(&mut cmds[d])?;
+                }
+              }
+            }
+            k = k + 1;
+          }
+          
+          // The case ends only when every wire and every synchro has fired.
           if c {
             done = true;
           }
@@ -154,6 +182,36 @@ impl Code {
     Ok(out)
   }
     
+  /// A synchro gates only when both endpoints are distinct ops of this case.
+  fn synchro_valid(src: i64, dest: i64, n: usize) -> bool {
+    src >= 0 && dest >= 0 && src != dest && (src as usize) < n && (dest as usize) < n
+  }
+
+  /// Does op `dest` have an incoming synchro?
+  fn awaits_synchro(syncs: &Vec<Synchro>, dest: usize, n: usize) -> bool {
+    for s in syncs {
+      if s.dest == dest as i64 && Code::synchro_valid(s.src, s.dest, n) { return true; }
+    }
+    false
+  }
+
+  /// Is the src of every incoming synchro of op `dest` done?
+  fn synchros_satisfied(cmds: &Vec<Operation>, syncs: &Vec<Synchro>, dest: usize) -> bool {
+    let n = cmds.len();
+    for s in syncs {
+      if s.dest == dest as i64 && Code::synchro_valid(s.src, s.dest, n) && !cmds[s.src as usize].done { return false; }
+    }
+    true
+  }
+
+  /// Has every input of `cmd` been delivered (or marked unawaited at case start)?
+  fn inputs_done(cmd: &Operation) -> bool {
+    for (_key, v) in &cmd.input {
+      if !v.done { return false; }
+    }
+    true
+  }
+
   fn lookup_con<'m>(&self, cons: &mut Vec<Connection>, key: &str, which: &str) -> Option<usize> {
     let n = cons.len();
     let mut j = 0;
