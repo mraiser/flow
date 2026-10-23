@@ -33,153 +33,34 @@ impl Code {
     }
   }
 
+  /// Execute this case chain: a continue-to-end over the stepper (Flow step debugger P6).
+  /// The stepper (`crate::stepper`) is the single source of truth for flow execution; this builds
+  /// the root frame and runs it to completion on the default pick. Semantics are the language's
+  /// (docs/flow-language.md 1.5), with two hardenings the stepper already proved: a `next` with no
+  /// next case (I-4) and a stuck case (I-1/I-2) now return `Err(CodeException::Fail)` instead of
+  /// panicking / hanging the thread. A nested `Terminate` propagates; at the root it ends the flow
+  /// with the result delivered so far.
   pub fn execute(&mut self, args: DataObject) -> Result<DataObject, CodeException> {
-    let mut out = DataObject::new();
-    
-    let mut done = false;
-    let mut current_case = self.data.duplicate();
-    
-    while !done {
-      let evaluation: Result<(), CodeException> = (|| {
-        let cmds = &mut current_case.cmds;
-        let n2 = cmds.len();
-        let cons = &mut current_case.cons;
-        let n = cons.len();
-        let syncs = &mut current_case.syncs;
-        let n3 = syncs.len();
-        
-        let mut i = 0;
-        while i<n2{
-          let cmd = &mut cmds.get_mut(i).unwrap();
-          if !cmd.done {
-            let mut count = 0;
-            let mut b = true;
-            let input = &mut cmd.input;
-            for (key,value) in input {
-              count = count + 1;
-              if let Some(_con) = self.lookup_con(cons, &key, "in"){
-                b = false;
-                break;
-              }
-              else {
-                value.done = true;
-              }
-            }
-            // Case start: no awaited input AND no incoming synchro.
-            if (count == 0 || b) && (n3 == 0 || !Code::awaits_synchro(syncs, i, n2)) {
-              self.evaluate(cmd)?;
-            }
-          }
-          i = i + 1;
-        }
-        
-        while !done {
-          let mut c = true;
-          let mut i = 0;
-          while i<n {
-            let con = &mut cons[i];
-            if !con.done {
-              c = false;
-              let mut b = false;
-              let mut val = Data::DNull;
-              let ja = &mut con.src;
-              let src = ja.index;
-              let srcname = &ja.name;
-              let ja = &mut con.dest;
-              let dest = ja.index;
-              let destname = &ja.name;
-              if src == -1 {
-                if args.has(&srcname){
-                  val = args.get_property(&srcname);
-                }
-                b = true;
-              }
-              else {
-                let cmd = &mut cmds[src as usize];
-                if cmd.done {
-                  val = cmd.result.as_ref().unwrap().get_property(srcname).clone();
-                  b = true;
-                }
-              }
-              
-              if b {
-                con.done = true;
-                if dest == -2 {
-                  out.set_property(&destname, val);
-                }
-                else {
-                  let cmd = &mut cmds[dest as usize];
-                  if cmd.cmd_type == "undefined" {
-                    // FIXME - is this used?
-                    println!("Marking undefined command as done");
-                    cmd.done = true;
-                  }
-                  else {
-                    let var = &mut cmd.input.get_mut(destname).unwrap();
-                    var.val = val;
-                    var.done = true;
-                    
-                    let input = &mut cmd.input;
-                    for (_key,v) in input {
-                      b = b && v.done;
-                      if !b { break; }
-                    }
-                    // Readiness also requires every incoming synchro's src done.
-                    if b && (n3 == 0 || Code::synchros_satisfied(cmds, syncs, dest as usize)) { 
-                      self.evaluate(&mut cmds[dest as usize])?; 
-                    }
-                  }
-                }
-              }
-            }
-            i = i + 1;
-          }
-          
-          // Fire every synchro whose src is done; run a now-ready dest once.
-          let mut k = 0;
-          while k<n3 {
-            if !syncs[k].done {
-              c = false;
-              let src = syncs[k].src;
-              let dest = syncs[k].dest;
-              if !Code::synchro_valid(src, dest, n2) {
-                // Malformed endpoints never gate an op (diagnosed by editors).
-                syncs[k].done = true;
-              }
-              else if cmds[src as usize].done {
-                syncs[k].done = true;
-                let d = dest as usize;
-                if !cmds[d].done && Code::inputs_done(&cmds[d]) && Code::synchros_satisfied(cmds, syncs, d) {
-                  self.evaluate(&mut cmds[d])?;
-                }
-              }
-            }
-            k = k + 1;
-          }
-          
-          // The case ends only when every wire and every synchro has fired.
-          if c {
-            done = true;
-          }
-        }
-        Ok(())
-      })();
-      
-      if let Err(e) = evaluation {
-        if e == CodeException::NextCase {
-          current_case = *current_case.nextcase.unwrap();
-        }
-        else if e == CodeException::Terminate {
-          break;
-        }
-        else {
-          return Err(e);
-        }
+    let body = self.data.to_data();
+    let mut frames = DataArray::new();
+    frames.push_object(crate::stepper::new_frame(args, "root", body, DataArray::new()));
+    let r = crate::stepper::run(&mut frames, 0);
+    self.finishflag = frames.get_object(0).get_boolean("finish");
+    DataObject::gc();
+    DataArray::gc();
+    DataBytes::gc();
+    if r.outcome == "fail" {
+      let e = &r.event;
+      let code = if e.has("code") { e.get_string("code") } else { "fail".to_string() };
+      let msg = if e.has("msg") { e.get_string("msg") } else { String::new() };
+      match code.as_str() {
+        "fail" | "I-4" => return Err(CodeException::Fail),
+        "terminate" => return Err(CodeException::Terminate),
+        "next" => return Err(CodeException::NextCase),
+        _ => { println!("FLOW ERROR [{}]: {}", code, msg); return Err(CodeException::Fail); }
       }
-      
     }
-    
-    Ok(out)
+    Ok(r.out)
   }
     
   /// A synchro gates only when both endpoints are distinct ops of this case.
@@ -554,5 +435,4 @@ impl Code {
     Ok(())
   }
 }
-
 
