@@ -11,6 +11,11 @@ pub struct Case {
   pub output: HashMap<String, Node>,
   pub cmds: Vec<Operation>,
   pub cons: Vec<Connection>,
+  /// Synchros: data-less op -> op ordering edges of this case (`src` must
+  /// finish before `dest` starts). Absent in the JSON means empty, so every
+  /// body written before synchros parses unchanged.
+  #[cfg_attr(feature = "serde_support", serde(default))]
+  pub syncs: Vec<Synchro>,
   pub nextcase: Option<Box<Case>>,
 }
 
@@ -62,6 +67,19 @@ pub struct Operation {
 pub struct Connection {
   pub src: Dest,
   pub dest: Dest,
+
+  #[cfg_attr(feature = "serde_support", serde(default))]
+  pub done: bool,
+}
+
+/// A synchro: a data-less edge between two operations of the same case.
+/// `src` and `dest` index the case's `cmds`; `dest` may not start until
+/// `src` is done. It carries no value. `done` is runtime state (fired).
+#[derive(Debug)]
+#[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
+pub struct Synchro {
+  pub src: i64,
+  pub dest: i64,
 
   #[cfg_attr(feature = "serde_support", serde(default))]
   pub done: bool,
@@ -127,6 +145,23 @@ impl Connection {
   }
 }
 
+impl Synchro {
+  pub fn from_data(data:DataObject) -> Synchro {
+    Synchro {
+      src: data.get_int("src"),
+      dest: data.get_int("dest"),
+      done: false,
+    }
+  }
+
+  pub fn duplicate(&self) -> Synchro {
+    Synchro {
+      src: self.src,
+      dest: self.dest,
+      done: false,
+    }
+  }
+}
 
 impl Condition {
   pub fn from_data(data:DataObject) -> Condition {
@@ -320,6 +355,7 @@ impl Case {
     let mut output = HashMap::<String, Node>::new();
     let mut cmds = Vec::<Operation>::new();
     let mut cons = Vec::<Connection>::new();
+    let mut syncs = Vec::<Synchro>::new();
     let mut nextcase = None;
     
     for (k, node) in data.get_object("input").objects() {
@@ -338,6 +374,12 @@ impl Case {
       cons.push(Connection::from_data(con.object()));
     }
     
+    if data.has("syncs") {
+      for sync in data.get_array("syncs").objects() {
+        syncs.push(Synchro::from_data(sync.object()));
+      }
+    }
+    
     if data.has("nextcase") {
       nextcase = Some(Box::new(Case::from_data(data.get_object("nextcase"))));
     }
@@ -347,6 +389,7 @@ impl Case {
       output: output,
       cmds: cmds,
       cons: cons,
+      syncs: syncs,
       nextcase: nextcase,
     }
   }
@@ -356,6 +399,7 @@ impl Case {
     let mut output = HashMap::<String, Node>::new();
     let mut cmds = Vec::<Operation>::new();
     let mut cons = Vec::<Connection>::new();
+    let mut syncs = Vec::<Synchro>::new();
     let mut nextcase = None;
     
     for (k, node) in &self.input {
@@ -374,6 +418,10 @@ impl Case {
       cons.push(con.duplicate());
     }
     
+    for sync in &self.syncs {
+      syncs.push(sync.duplicate());
+    }
+    
     if !self.nextcase.is_none() {
       nextcase = Some(Box::new(self.nextcase.as_ref().unwrap().duplicate()));
     }
@@ -383,6 +431,7 @@ impl Case {
       output: output,
       cmds: cmds,
       cons: cons,
+      syncs: syncs,
       nextcase: nextcase,
     }
   }
