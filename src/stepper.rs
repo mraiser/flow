@@ -753,29 +753,14 @@ pub fn step_stack(frames: &mut DataArray, pick: &DataObject) -> DataObject {
   }
   if phase == "closing" {
     let oc = f.get_string("outcome");
-    if n > 1 {
-      // A nested frame that closed with a RULE outcome (`next` / `terminate` / `fail`) PROPAGATES
-      // to the enclosing frame: this is the language's `Code::execute(in1)?` (0.3.39), in which a
-      // child's NextCase / Terminate / Fail ends the enclosing flow rather than becoming a normal
-      // op result. Only a frame whose case simply ran out of work LEAVES with outcome ok
-      // (`end_nested`). Before R1 this arm called `leave` for EVERY closing frame, which handed a
-      // `terminate` / `fail` / `next` to `closing_result` as if the op had finished - and, worse,
-      // `leave` assumed the parent's op was in `closing` stage, so a child closing off the
-      // `pending`-rule path looped the stepper until the budget (R1 reproductions (a) and (b)).
-      if oc != "ok" {
-        f.put_string("phase", "ended");
-        let parent_op = match f.get_array("path").objects().last() { Some(at) => { let a = at.array(); if a.len() > 0 { Some(a.get_int(0)) } else { None } }, None => None };
-        frames.remove_property(n - 1);
-        let mut p = frames.get_object(frames.len() - 1);
-        p.put_null("inprog"); // abandon the op that opened the child; its other deliveries are moot
-        p.put_string("outcome", &oc);
-        p.put_string("phase", "closing");
-        let mut e = ev(&oc, &p); // the propagated effect, reported from the ENCLOSING frame
-        if let Some(i) = parent_op { e.put_int("op", i); }
-        return e;
-      }
-      return leave(frames, "ok", DataArray::new());
-    }
+    // A nested frame that closed LEAVES to the enclosing op with its outcome; `closing_result`
+    // applies the per-outcome contract (spec 1.5.4 Frames / early exit): `terminate` completes the
+    // op with the child's partial `out` and success TRUE (it does NOT end the parent); `fail`
+    // becomes the op's FALSE condition (an empty result and b=false) so the op's own condition
+    // decides; `ok` is a normal completion. A nested `next`-with-no-next-case (I-4) never reaches
+    // here - the child's own `pending` arm ends it with an `error` event first (a fatal, not an
+    // outcome), and `run` stops on that event (below). At the root, closing is `done`.
+    if n > 1 { return leave(frames, &oc, DataArray::new()); }
     let mut e = ev("done", &f);
     e.put_string("outcome", &oc); put_copy(&mut e, "out", f.get_property("out")); e.put_boolean("fail", oc == "fail");
     f.put_string("phase", "ended");

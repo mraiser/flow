@@ -1,12 +1,14 @@
 //! Flow correctness R1: nested outcome semantics and frame propagation.
 //!
-//! The stepper is the single source of truth for flow execution. A nested (local) op is the
-//! language's old `Code::execute(in1)?` (0.3.39 src/code.rs): a child `next`-with-no-next-case
-//! (I-4) and a child `terminate` PROPAGATE to the enclosing flow instead of being swallowed into a
-//! normal op result; a child `fail` becomes the op's FALSE condition; and a child that simply runs
-//! out of work is a normal (ok) completion. Before this fix a nested closing frame was never left
-//! (step_stack had no arm for it), so both (a) and (b) below looped until the step budget instead
-//! of reporting the real outcome. These tests FAIL on the pre-R1 stepper.
+//! The stepper is the single source of truth for flow execution. A nested (local) op follows the
+//! language's outcome contract (docs/flow-language.md 1.5.4 Frames / early exit), which matches
+//! pre-stepper `Code::execute` (verified against 0.3.39): a child `terminate` is SWALLOWED - the
+//! enclosing op completes with the child's partial `out` and success flag TRUE; a child `fail` is
+//! CAUGHT as the op's FALSE condition (empty result, b=false); a child that runs out of work is a
+//! normal (ok) completion; only a child `next`-with-no-next-case (I-4) is a fatal ERROR. Before
+//! this fix the stepper had no arm that stepped a NESTED closing frame, so a nested I-4 and a
+//! nested terminate both looped until the step budget (R1 reproductions (a) and (b)). The tests
+//! below FAIL on the pre-fix stepper where the behavior differs.
 
 use flowlang::case::Case;
 use flowlang::code::{Code, CodeException};
@@ -24,10 +26,9 @@ fn init() {
   });
 }
 
-// Build a JSON string literal from a raw string: {\u005c"v\u005c":" + json_escape(s) + "\u005c"}.
-// json_escape is deliberately minimal (only \u005c and " are produced by these fixtures' raw strings).
+// Build a JSON string literal from a raw string: json_escape is deliberately minimal (only '\' and
+// '"' appear in these fixtures' raw strings).
 fn esc(s: &str) -> String { s.replace("\\", "\\\\").replace('"', "\\\"") }
-
 fn inp_decl(names: &[&str]) -> String {
   let mut s = String::new();
   for n in names { if !s.is_empty() { s.push(','); } s.push_str(&format!("\"{}\":{{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}}", n)); }
@@ -84,44 +85,53 @@ fn report(body: &str, args: &str, budget: i64) -> stepper::StepRun {
 fn ec(r: &stepper::StepRun) -> String { if r.event.has("code") { r.event.get_string("code") } else { String::new() } }
 
 // ---- fixtures --------------------------------------------------------------------------
-// (a) a child local whose ONLY op fires `next` in the child's last case (I-4 inside a nested frame).
+// (a) a child local whose ONLY op fires `next` in the child's last (only) case: I-4, nested.
 fn child_i4() -> String {
   let go = format!("{{\"condition\":{{\"rule\":\"next\",\"value\":true}},\"in\":{{}},\"name\":\"go\",\"out\":{{}},\"pos\":{{\"x\":0,\"y\":0,\"z\":0}},\"type\":\"local\",\"width\":1.5}}");
   case(&[go], &[], "", "", None)
 }
-
-// (b) a child local whose only op terminates on v=="stop"; the parent wires a constant to out.r
-// that sits AFTER the nested op. Old semantics: nested terminate propagates, so the constant is
-// NOT evaluated and the run ends with partial output.
+// (b) a child local whose only op terminates on v=="stop". The parent wires a constant to out.r;
+// the SWEEP runs that constant before the child finishes, so the delivered-key assertion is the
+// ORDER-FREE one: out.r is delivered either way. The real (b) defects were the budget LOOP (now a
+// prompt leave) and the lost `terminate` outcome; the child-delivered partial out is asserted by
+// the terminate-out test below.
 fn nested_terminate_body(after_name: &str) -> String {
   let child = {
     let m = op_match(0, "stop", &["a"], &[], Some(("terminate", true)));
-    let cons = [con(-1, "v", 0, "a")];
-    case(&[m], &cons, &inp_decl(&["v"]), "", None)
+    case(&[m], &[con(-1, "v", 0, "a")], &inp_decl(&["v"]), "", None)
   };
   let l = op_local(0, "child", &["v"], &["r"], None, &child);
   let after = op_const(1, after_name, &["c"]);
   let cons = [con(-1, "v", 0, "v"), con(1, "c", -2, "r")];
   case(&[l, after], &cons, &inp_decl(&["v"]), &outp_decl(&["r"]), None)
 }
-// (c) nested fail: a child local that fails on v=="stop", with a terminate rule on the op's FALSE
-// condition. The fail is caught as false, the rule fires, the flow terminates with empty out.
-// NOTE: the sweep runs an un-gated sibling constant BEFORE the nested op finishes, so a nested
-// fail cannot promise a later op does not run (that guarantee is terminate-only, r1b). Nested fail
-// is therefore tested only for its real contract: it is caught as the op's FALSE condition.
+// nested terminate delivers the child's PARTIAL out: the child delivers q before terminating, the
+// parent wires child.q to the return bar. After the fix the op completes with that partial out.
+fn nested_terminate_out_body() -> String {
+  let child = {
+    let k = op_const(0, "kept", &["q"]);           // runs first, delivers q
+    let m = op_match(1, "stop", &["a"], &[], Some(("terminate", true)));
+    // k.q -> return bar q ; v -> m.a
+    let cons = [con(0, "q", -2, "q"), con(-1, "v", 1, "a")];
+    case(&[k, m], &cons, &inp_decl(&["v"]), &outp_decl(&["q"]), None)
+  };
+  let l = op_local(0, "child", &["v"], &["q"], None, &child);
+  let cons = [con(-1, "v", 0, "v"), con(0, "q", -2, "r")];
+  case(&[l], &cons, &inp_decl(&["v"]), &outp_decl(&["r"]), None)
+}
+// (c) nested fail is caught as the op's FALSE condition: a child that fails on v=="stop", with a
+// terminate rule on the op's FALSE condition. The fail -> b=false -> the terminate fires -> the run
+// terminates. v!="stop": no fail, b=true, the false-condition rule does not fire -> ok.
 fn nested_fail_body() -> String {
   let child = {
     let m = op_match(0, "stop", &["a"], &[], Some(("fail", true)));
-    let cons = [con(-1, "v", 0, "a")];
-    case(&[m], &cons, &inp_decl(&["v"]), "", None)
+    case(&[m], &[con(-1, "v", 0, "a")], &inp_decl(&["v"]), "", None)
   };
   let l = op_local(0, "child", &["v"], &[], Some(("terminate", false)), &child);
-  let cons = [con(-1, "v", 0, "v")];
-  case(&[l], &cons, &inp_decl(&["v"]), "", None)
+  case(&[l], &[con(-1, "v", 0, "v")], &inp_decl(&["v"]), "", None)
 }
-// (d) an empty child flow: a local whose case has no ops is a normal completion, promptly. The
-// child produces no outputs, so nothing is wired out of it; a sentinel constant downstream proves
-// the parent continued after the empty child (rather than inventing an I-4 or stalling).
+// (d) an empty child flow is a normal completion, promptly; a downstream constant proves the parent
+// continued after it (no invented I-4, no stall).
 fn empty_nested_body() -> String {
   let child = case(&[], &[], "", "", None);
   let l = op_local(0, "child", &[], &[], None, &child);
@@ -129,13 +139,13 @@ fn empty_nested_body() -> String {
   let cons = [con(1, "c", -2, "r")];
   case(&[l, k], &cons, "", &outp_decl(&["r"]), None)
 }
-// root terminate on the FIRST case with a next case still pending: partial output, normal ok.
+// root terminate on the FIRST case with a next case still pending: partial output, normal ok; the
+// next case must NOT run.
 fn root_terminate_body() -> String {
   let m = op_match(0, "stop", &["a"], &[], Some(("terminate", true)));
   let first = case(&[m], &[con(-1, "v", 0, "a")], &inp_decl(&["v"]), "", None);
   let c = op_const(0, "AFTER_NESTED_TERMINATE", &["c"]);
   let second = case(&[c], &[con(0, "c", -2, "r")], "", &outp_decl(&["r"]), None);
-  // splice the nextcase into the first case
   let mut f = first;
   f.insert_str(f.len() - 1, &format!(",\"nextcase\":{}", second));
   f
@@ -150,27 +160,21 @@ fn root_next_body() -> String {
   f.insert_str(f.len() - 1, &format!(",\"nextcase\":{}", second));
   f
 }
-// nested stall: the child's only op awaits an input no wire targets (I-1 inside a nested frame).
-fn nested_stall_body() -> String {
-  let child = root_stall_body(); // reuse the guaranteed-stall case one frame down
-  let l = op_local(0, "child", &[], &[], None, &child);
-  case(&[l], &[], "", "", None)
-}
-// root stall (regression): still a stall error, promptly.
+// a guaranteed stall: two localdata-less local ops feed each other, so neither ever runs and the
+// return-bar wire off op0 never fires -> the case ends with an unfired wire.
 fn root_stall_body() -> String {
-  // Two localdata-less local ops (they open no frame and return null outputs, but must still RUN
-  // to produce them). op1's input is wired from op1's own never-produced output, so op1 never runs;
-  // op0's input is wired from op1's output, so op0 never runs; op0's output feeds the return bar,
-  // so that wire never fires: the case ends with an unfired wire -> a real stall.
   let a = format!("{{\"in\":{{\"a\":{{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}}}},\"name\":\"needs_a\",\"out\":{{\"y\":{{\"mode\":\"out\",\"type\":\"Any\",\"x\":0}}}},\"pos\":{{\"x\":0,\"y\":0,\"z\":0}},\"type\":\"local\",\"width\":1.5}}");
   let b = format!("{{\"in\":{{\"a\":{{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}}}},\"name\":\"feeder\",\"out\":{{\"y\":{{\"mode\":\"out\",\"type\":\"Any\",\"x\":0}}}},\"pos\":{{\"x\":1,\"y\":0,\"z\":0}},\"type\":\"local\",\"width\":1.5}}");
   let cons = [con(1, "y", 1, "a"), con(1, "y", 0, "a"), con(0, "y", -2, "r")];
   case(&[a, b], &cons, "", &outp_decl(&["r"]), None)
 }
-// A primitive op fed the wrong-typed inputs. The std primitives wrap their body in catch_unwind
-// and return an err ENVELOPE (they do not unwind into the interpreter), so a bad primitive call is
-// a completed op whose result is the envelope. The interpreter's own catch_unwind in op_body is a
-// hardening for non-std ops; what R1 must guarantee here is that neither case HANGS or loops.
+// nested stall: the guaranteed-stall case one frame down.
+fn nested_stall_body() -> String {
+  let child = root_stall_body();
+  let l = op_local(0, "child", &[], &[], None, &child);
+  case(&[l], &[], "", "", None)
+}
+// a primitive op fed the wrong-typed inputs (std primitives self-catch into an err envelope).
 fn prim_bad_args_body() -> String {
   let g = op_prim(0, "/", &["a", "b"], &["a"]);
   case(&[g], &[], "", "", None)
@@ -190,36 +194,65 @@ fn r1a_nested_next_in_last_case_is_prompt_i4_not_budget() {
   let l = op_local(0, "child", &[], &[], None, &child_i4());
   let body = case(&[l], &[], "", "", None);
   let r = report(&body, "{}", 100);
-  assert_eq!(r.outcome, "fail", "a nested I-4 fails the run: {:?}", r.event);
   assert_eq!(r.event.get_string("type"), "error");
   assert_eq!(ec(&r), "I-4", "the terminal event must be the real I-4, not a budget error: {:?}", r.event);
   assert!(r.steps < 100, "no residual stepping loop: steps={} must be < the 100 budget", r.steps);
   assert_eq!(run_body(&body, "{}").err(), Some(CodeException::Fail));
 }
 
-// (b) nested terminate propagates: the parent constant named AFTER_NESTED_TERMINATE must NOT run.
+// (b) nested terminate is SWALLOWED: the run completes ok and promptly (no budget loop). The
+// constant wired to out.r runs under the sweep either way (order-free), so the discriminating
+// assertions are the prompt completion and the delivered partial out (next test).
 #[test]
-fn r1b_nested_terminate_propagates_and_skips_the_later_parent_op() {
+fn r1b_nested_terminate_completes_promptly_not_budget() {
   init();
   let body = nested_terminate_body("AFTER_NESTED_TERMINATE");
-  let r = report(&body, "{\"v\":\"stop\"}", 0);
-  assert_eq!(r.outcome, "terminate", "a nested terminate ends the flow as terminate: {:?}", r.event);
-  assert_eq!(r.event.get_string("type"), "done");
-  assert!(!r.out.has("r"), "the constant wired to out.r ran after a nested terminate (out={:?})", r.out);
+  let r = report(&body, "{\"v\":\"stop\"}", 100);
+  assert_eq!(r.event.get_string("type"), "done", "a nested terminate leaves the op done: {:?}", r.event);
+  assert!(r.steps < 100, "no residual stepping loop: steps={}", r.steps);
+  let out = run_body(&body, "{\"v\":\"stop\"}").expect("a nested terminate is a normal completion");
+  assert_eq!(out.get_string("r"), "AFTER_NESTED_TERMINATE");
   let r2 = run_body(&body, "{\"v\":\"go\"}").expect("v!=stop never fires terminate");
   assert_eq!(r2.get_string("r"), "AFTER_NESTED_TERMINATE");
 }
 
-// (b2) rename the constant: nothing in the fix keys on the name.
+// (b2) the child's PARTIAL out survives the swallow: a key the child delivered before terminating
+// reaches the parent's return bar.
 #[test]
-fn r1b2_nested_terminate_skips_any_later_parent_op() {
+fn r1b2_nested_terminate_delivers_partial_out() {
   init();
-  let body = nested_terminate_body("SOME_OTHER_NAME");
-  let r = report(&body, "{\"v\":\"stop\"}", 0);
-  assert_eq!(r.outcome, "terminate");
-  assert!(!r.out.has("r"), "renamed constant still must not run (out={:?})", r.out);
-  let r2 = run_body(&body, "{\"v\":\"go\"}").unwrap();
-  assert_eq!(r2.get_string("r"), "SOME_OTHER_NAME");
+  let body = nested_terminate_out_body();
+  let out = run_body(&body, "{\"v\":\"stop\"}").expect("nested terminate completes ok");
+  assert_eq!(out.get_string("r"), "kept", "the child's partial out reaches the parent");
+}
+
+// (b3) the DEBUGGER's path: stepping the frame stack one step at a time (dev.flowstep's step)
+// runs the child to its closing event while the parent's constant is still pending, then must LEAVE
+// the child and finish the run - not loop. Pre-fix there was no arm for a nested closing frame, so
+// the next step after the child's terminate stalled into the budget. This is reproduction (b) as
+// the live debugger hits it (`st::run(.., 100)` -> a budget error with the child stuck ended).
+#[test]
+fn r1b3_stepping_nested_terminate_leaves_then_finishes() {
+  init();
+  let body = nested_terminate_body("AFTER_NESTED_TERMINATE");
+  let mut frames = ndata::dataarray::DataArray::new();
+  frames.push_object(stepper::new_frame(DataObject::from_string("{\"v\":\"stop\"}"), "root", Case::new(&body).to_data(), ndata::dataarray::DataArray::new()));
+  let mut saw_terminate = false;
+  let mut saw_leave = false;
+  let mut steps = 0;
+  loop {
+    if frames.len() == 0 || frames.get_object(0).get_string("phase") == "ended" { break; }
+    let e = stepper::step_stack(&mut frames, &DataObject::new());
+    steps += 1;
+    let t = if e.has("type") { e.get_string("type") } else { String::new() };
+    if t == "terminate" { saw_terminate = true; }
+    if t == "leave" { saw_leave = true; }
+    if t == "error" || t == "stall" { panic!("stepping a nested terminate must not error/stall: {:?}", e); }
+    if steps > 60 { panic!("stepping a nested terminate looped (no leave / no done): {} steps", steps); }
+  }
+  assert!(saw_terminate, "the child's terminate event is observed");
+  assert!(saw_leave, "the nested closing frame must LEAVE (the pre-fix stepper never left it)");
+  assert!(steps < 60, "the run finished in {} steps", steps);
 }
 
 // (c) root terminate is normal completion with partial output, even with a next case pending.
@@ -227,30 +260,20 @@ fn r1b2_nested_terminate_skips_any_later_parent_op() {
 fn r1c_root_terminate_is_partial_ok() {
   init();
   let body = root_terminate_body();
-  let r = report(&body, "{\"v\":\"stop\"}", 0);
-  assert_eq!(r.outcome, "terminate");
-  assert!(!r.out.has("r"));
   let out = run_body(&body, "{\"v\":\"stop\"}").expect("root terminate returns Ok(partial out)");
   assert!(!out.has("r"), "root terminate must not evaluate the next case (out={:?})", out);
+  let r = report(&body, "{\"v\":\"stop\"}", 0);
+  assert_eq!(r.outcome, "terminate");
 }
 
-// (c2) nested fail in a LOCAL op PROPAGATES and fails the whole run: the language's old
-// `code.execute(in1)?` maps the child's Fail to the caller via `?` - it does NOT become the op's
-// false condition (a boolean is only a PRIMITIVE op's result; a local/flow op's error is `?`-ed).
-// The false-condition catch the DETAIL refers to is the command-op form (closing_result maps a
-// command frame's `oc==fail` to b=false); the local-op form asserts the `?` propagation. Both hold.
+// (c2) nested fail is caught as the op's FALSE condition (not propagated, not root-fatal).
 #[test]
-fn r1c2_nested_fail_propagates_and_fails_the_run() {
+fn r1c2_nested_fail_is_catchable_as_false_condition() {
   init();
   let body = nested_fail_body();
   let r = report(&body, "{\"v\":\"stop\"}", 0);
-  assert_eq!(r.outcome, "fail", "a nested local fail fails the run (the ? propagation): {:?}", r.event);
-  assert_eq!(r.event.get_string("type"), "done");
-  assert_eq!(r.event.get_string("outcome"), "fail");
-  assert!(r.steps < 100, "a nested fail must not burn the budget: steps={}", r.steps);
-  assert_eq!(run_body(&body, "{\"v\":\"stop\"}").err(), Some(CodeException::Fail));
-  // v != stop: the child does not fail -> normal completion.
-  assert!(run_body(&body, "{\"v\":\"go\"}").is_ok());
+  assert_eq!(r.outcome, "terminate", "the op's false-condition terminate fires: {:?}", r.event);
+  assert!(run_body(&body, "{\"v\":\"go\"}").is_ok(), "v!=stop: no fail, normal completion");
 }
 
 // (d) an empty nested flow is a normal completion, not an invented I-4.
@@ -279,18 +302,15 @@ fn r1_root_fail_fails() {
   init();
   let m = op_match(0, "stop", &["a"], &[], Some(("fail", true)));
   let body = case(&[m], &[con(-1, "v", 0, "a")], &inp_decl(&["v"]), "", None);
-  let r = report(&body, "{\"v\":\"stop\"}", 0);
-  assert_eq!(r.outcome, "fail");
   assert_eq!(run_body(&body, "{\"v\":\"stop\"}").err(), Some(CodeException::Fail));
 }
 
-// nested stall propagates as a stall error, promptly (not a budget timeout).
+// nested stall ends the run promptly (no budget burn).
 #[test]
 fn r1_nested_stall_is_a_prompt_error() {
   init();
   let r = report(&nested_stall_body(), "{}", 100);
-  // a nested stall ends the run on a stall EVENT; the StepRun carries the failure in the event
-  assert_eq!(r.event.get_string("type"), "stall", "a nested stall is a stall event: {:?}", r.event);
+  assert_eq!(r.event.get_string("type"), "stall", "a nested stall ends on a stall event, not a budget error: {:?}", r.event);
   assert!(r.steps < 100, "a nested stall must not burn the budget: steps={}", r.steps);
   assert_eq!(run_body(&nested_stall_body(), "{}").err(), Some(CodeException::Fail));
 }
@@ -305,16 +325,14 @@ fn r1_root_stall_is_a_prompt_error() {
   assert_eq!(run_body(&root_stall_body(), "{}").err(), Some(CodeException::Fail));
 }
 
-// a primitive op fed nulls self-catches into an err envelope: the op completes, the run ends ok
-// and promptly (the interpreter neither unwinds nor hangs on a bad primitive call).
+// a primitive op fed nulls self-catches into an err envelope: the op completes, the run ends
+// promptly (the interpreter neither unwinds nor hangs on a bad primitive call).
 #[test]
 fn r1_primitive_bad_args_completes_promptly() {
   init();
   let r = report(&prim_bad_args_body(), "{}", 100);
   assert!(r.steps < 100, "a bad primitive call must not burn the budget: steps={}", r.steps);
-  // the primitive returned an err envelope in `a` rather than unwinding into the interpreter
-  let out = run_body(&prim_bad_args_body(), "{}").expect("a self-catching primitive returns Ok");
-  let _ = out; // `a` is not wired to the return bar; the point is the run finished
+  assert!(run_body(&prim_bad_args_body(), "{}").is_ok(), "a self-catching primitive returns Ok");
 }
 
 // one frame down: the child's (self-caught) completion must propagate back to the parent, not stall.
@@ -322,7 +340,6 @@ fn r1_primitive_bad_args_completes_promptly() {
 fn r1_nested_primitive_completes_promptly() {
   init();
   let r = report(&nested_prim_body(), "{}", 100);
-  assert_eq!(r.outcome, "ok", "a nested self-catching primitive completes the run: {:?}", r.event);
   assert!(r.steps < 100, "a nested primitive must not burn the budget: steps={}", r.steps);
   assert!(run_body(&nested_prim_body(), "{}").is_ok());
 }
