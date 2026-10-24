@@ -753,13 +753,28 @@ pub fn step_stack(frames: &mut DataArray, pick: &DataObject) -> DataObject {
   }
   if phase == "closing" {
     let oc = f.get_string("outcome");
+    // A nested frame that closed LEAVES to the enclosing op with its outcome; `closing_result`
+    // applies the per-outcome contract (spec 1.5.4 Frames / early exit): `terminate` completes the
+    // op with the child's partial `out` and success TRUE (it does NOT end the parent); `fail`
+    // becomes the op's FALSE condition (an empty result and b=false) so the op's own condition
+    // decides; `ok` is a normal completion. A nested `next`-with-no-next-case (I-4) never reaches
+    // here - the child's own `pending` arm ends it with an `error` event first (a fatal, not an
+    // outcome), and `run` stops on that event (below). At the root, closing is `done`.
     if n > 1 { return leave(frames, &oc, DataArray::new()); }
     let mut e = ev("done", &f);
     e.put_string("outcome", &oc); put_copy(&mut e, "out", f.get_property("out")); e.put_boolean("fail", oc == "fail");
     f.put_string("phase", "ended");
     return e;
   }
-  if phase == "ended" { return err_ev(&mut f, "ended", "the run has already ended".to_string(), None); }
+  if phase == "ended" {
+    // Terminal frame-stack invariant: `run` and every debugger `step` must end the run HERE, never
+    // resume an ended frame. A nested frame that ended normally was already popped by `leave`, so
+    // the only way to reach an ended frame as the TOP is (a) the run is over (the root ended) or
+    // (b) the frames below are a residual stack left by an error/stall that `run` did not drain.
+    // Either way the run is over: end the ROOT too so no sibling frame is left live.
+    if n > 1 { frames.get_object(0).put_string("phase", "ended"); }
+    return err_ev(&mut f, "ended", "the run has already ended".to_string(), None);
+  }
   let cidx = f.get_int("case");
   let case = match case_at(&body, cidx) { Some(c) => c, None => { return err_ev(&mut f, "panic", format!("case {} is not in the chain", cidx), None); } };
   if phase == "seed" {
@@ -844,6 +859,19 @@ pub fn run(frames: &mut DataArray, budget: i64) -> StepRun {
     let e = step_stack(frames, &pick);
     steps += 1;
     if (frames.len() as i64) > max_depth { max_depth = frames.len() as i64; }
+    // Terminal-event break: a fatal event (error / stall) is terminal for the whole run even when
+    // it was emitted from a NESTED frame that still has live siblings below it. `Code::execute`
+    // always starts from a single root (such a nested error already ended the root), but a
+    // debugger-driven `continue` (dev.flowstep, run with `run`) can hold a stack whose nested frame
+    // errored while its ancestors are still open - without this break the loop steps a sibling
+    // until the budget, which is exactly R1 reproduction (a). The event stays the PLAIN stepper
+    // event; the terminal frame-stack invariant (step_stack's ended arm) ends the root next pass.
+    let et = if e.has("type") { e.get_string("type") } else { String::new() };
+    if frames.get_object(0).get_string("phase") != "ended" && (et == "error" || et == "stall") {
+      let mut out = DataObject::new();
+      out.put_string("outcome", "fail");
+      return StepRun { out, outcome: "fail".to_string(), event: e, steps, max_depth };
+    }
     last = e;
   }
   let root = frames.get_object(0);
@@ -856,3 +884,15 @@ pub fn run(frames: &mut DataArray, budget: i64) -> StepRun {
   if et == "terminate" { outcome = "terminate".to_string(); }
   StepRun { out: root.get_object("out"), outcome, event: last, steps, max_depth }
 }
+
+/// Run a whole case chain from a JSON body to its end and report the terminal event: the
+/// test/debugger view of `run`. Where `Code::execute` collapses every failure to
+/// `Err(CodeException::Fail)`, this keeps the stepper's terminal event (type + code) so a caller
+/// can tell a nested I-4 from a stall from a panic, and can see that a bounded run did NOT spend
+/// its budget on a residual stepping loop (R1).
+pub fn run_report(body: DataObject, args: DataObject, budget: i64) -> StepRun {
+  let mut frames = DataArray::new();
+  frames.push_object(new_frame(args, "root", body, DataArray::new()));
+  run(&mut frames, budget)
+}
+
