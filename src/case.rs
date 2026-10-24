@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use ndata::data::*;
 use ndata::dataobject::*;
+use ndata::dataarray::*;
 #[cfg(feature="serde_support")]
 use serde::*;
 
@@ -171,6 +172,13 @@ impl Condition {
     }
   }
 
+  pub fn to_data(&self) -> DataObject {
+    let mut o = DataObject::new();
+    o.put_boolean("value", self.value);
+    o.put_string("rule", &self.rule);
+    o
+  }
+
   pub fn duplicate(&self) -> Condition {
     Condition {
       value: self.value,
@@ -309,6 +317,18 @@ impl Node {
     }
   }
 
+  /// Serialize back to the JSON shape `from_data` parses (mode/type/x, optional list/loop).
+  /// Runtime state (`val`, `done`) is not part of the graph.
+  pub fn to_data(&self) -> DataObject {
+    let mut o = DataObject::new();
+    o.put_string("mode", &self.mode);
+    o.put_string("type", &self.cmd_type);
+    o.put_float("x", self.x as f64);
+    if let Some(l) = &self.list { o.put_string("list", l); }
+    if let Some(l) = &self.looop { o.put_string("loop", l); }
+    o
+  }
+
   pub fn duplicate(&self) -> Node {
     let mode = self.mode.to_owned();
     let cmd_type = self.cmd_type.to_owned();
@@ -335,6 +355,59 @@ impl Node {
       list: list,
       looop: looop,
     }
+  }
+}
+
+impl Dest {
+  /// A terminal is [index, name].
+  pub fn to_data(&self) -> DataArray {
+    let mut a = DataArray::new();
+    a.push_int(self.index);
+    a.push_string(&self.name);
+    a
+  }
+}
+
+impl Connection {
+  pub fn to_data(&self) -> DataObject {
+    let mut o = DataObject::new();
+    o.put_array("src", self.src.to_data());
+    o.put_array("dest", self.dest.to_data());
+    o
+  }
+}
+
+impl Synchro {
+  pub fn to_data(&self) -> DataObject {
+    let mut o = DataObject::new();
+    o.put_int("src", self.src);
+    o.put_int("dest", self.dest);
+    o
+  }
+}
+
+impl Operation {
+  /// Serialize back to the JSON shape `from_data` parses. Runtime state (`result`, `done`,
+  /// `finish`) is not part of the graph.
+  pub fn to_data(&self) -> DataObject {
+    let mut o = DataObject::new();
+    let mut input = DataObject::new();
+    for (k, n) in &self.input { input.put_object(k, n.to_data()); }
+    let mut output = DataObject::new();
+    for (k, n) in &self.output { output.put_object(k, n.to_data()); }
+    o.put_object("in", input);
+    o.put_object("out", output);
+    let mut pos = DataObject::new();
+    pos.put_float("x", self.pos.x); pos.put_float("y", self.pos.y); pos.put_float("z", self.pos.z);
+    o.put_object("pos", pos);
+    o.put_string("name", &self.name);
+    o.put_float("width", self.width);
+    o.put_string("type", &self.cmd_type);
+    if let Some(c) = &self.ctype { o.put_string("ctype", c); }
+    if let Some(c) = &self.cmd { o.put_string("cmd", c); }
+    if let Some(ld) = &self.localdata { o.put_object("localdata", ld.to_data()); }
+    if let Some(c) = &self.condition { o.put_object("condition", c.to_data()); }
+    o
   }
 }
 
@@ -394,6 +467,31 @@ impl Case {
     }
   }
   
+  /// Serialize the whole case (chain included) back to the JSON shape `from_data` parses.
+  /// `syncs` is written only when non-empty, so a pre-synchro body round-trips unchanged.
+  pub fn to_data(&self) -> DataObject {
+    let mut o = DataObject::new();
+    let mut input = DataObject::new();
+    for (k, n) in &self.input { input.put_object(k, n.to_data()); }
+    let mut output = DataObject::new();
+    for (k, n) in &self.output { output.put_object(k, n.to_data()); }
+    o.put_object("input", input);
+    o.put_object("output", output);
+    let mut cmds = DataArray::new();
+    for c in &self.cmds { cmds.push_object(c.to_data()); }
+    o.put_array("cmds", cmds);
+    let mut cons = DataArray::new();
+    for c in &self.cons { cons.push_object(c.to_data()); }
+    o.put_array("cons", cons);
+    if !self.syncs.is_empty() {
+      let mut syncs = DataArray::new();
+      for s in &self.syncs { syncs.push_object(s.to_data()); }
+      o.put_array("syncs", syncs);
+    }
+    if let Some(nx) = &self.nextcase { o.put_object("nextcase", nx.to_data()); }
+    o
+  }
+
   pub fn duplicate(&self) -> Case {
     let mut input = HashMap::<String, Node>::new();
     let mut output = HashMap::<String, Node>::new();

@@ -18,6 +18,7 @@ pub mod x25519;
 pub mod blake2b;
 pub mod aes;
 pub mod mcp;
+pub mod stepper;
 
 pub mod cmdinit;
 
