@@ -265,6 +265,18 @@ cargo build --features java_runtime        # loads a JVM via JNI
   directory is on `sys.path`. A `venv` is configured once, at interpreter
   start (its `sys.path` and `.pth` files, so editable installs work).
 
+  Generated command functions are annotated from the declared types —
+  `def add(a: "int", items: "NDataArray") -> "Mapping[str, Any]":` — and
+  flowb writes type stubs for `ndata_py` and `flowlang` (`ndata_py.pyi`,
+  `flowlang.pyi`) into the package root next to the generated sources, so
+  pyright, mypy and editors check and complete command bodies. Declared
+  types map as String → `str`, Integer → `int`, Float/Double → `float`,
+  Boolean → `bool`, JSONObject → `NDataObject`, JSONArray → `NDataArray`,
+  InputStream → `NDataBytes`, anything else → `Any`; return types accept
+  what a command may return (`Mapping[str, Any]` for JSONObject and FLAT,
+  `Sequence[Any]` for JSONArray). The annotations are strings, never
+  evaluated at runtime.
+
   Output from Python commands is labelled with the command and written as
   complete lines straight to the process's streams, so it appears
   immediately and in order with the server's own output, even when stdout

@@ -210,3 +210,50 @@ a += a
 assert len(a) == 8
 "#);
 }
+
+#[test]
+fn stubs_match_the_runtime_modules() {
+  // src/ndata_py.pyi and src/flowlang.pyi (which flowb ships next to
+  // generated commands) declare exactly what the runtime modules provide.
+  let dir = env!("CARGO_MANIFEST_DIR");
+  check(&format!(r#"
+import ast, flowlang
+import collections.abc as cabc
+problems = []
+for modname, mod in (('ndata_py', ndata_py), ('flowlang', flowlang)):
+    tree = ast.parse(open('{dir}/src/%s.pyi' % modname).read())
+    top = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            top.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            top.add(node.name)
+            cls = getattr(mod, node.name, None)
+            if cls is None:
+                continue
+            declared = {{n.name for n in node.body if isinstance(n, ast.FunctionDef)}}
+            declared |= {{n.target.id for n in node.body if isinstance(n, ast.AnnAssign)}}
+            inherited = set()
+            for base in node.bases:
+                b = base.value if isinstance(base, ast.Subscript) else base
+                if isinstance(b, ast.Name) and hasattr(cabc, b.id):
+                    inherited |= set(dir(getattr(cabc, b.id)))
+                elif isinstance(b, ast.Name) and b.id == 'Exception':
+                    inherited |= set(dir(Exception))
+            for n in declared - {{'__init__', '__hash__'}}:
+                if not hasattr(cls, n):
+                    problems.append('%s.%s.%s: in the stub, not at runtime' % (modname, node.name, n))
+            if cls.__hash__ is not None and '__hash__' in declared:
+                problems.append('%s.%s is hashable at runtime' % (modname, node.name))
+            for n in dir(cls):
+                if not n.startswith('_') and n not in declared and n not in inherited:
+                    problems.append('%s.%s.%s: at runtime, not in the stub' % (modname, node.name, n))
+    for n in top:
+        if not hasattr(mod, n):
+            problems.append('%s.%s: in the stub, not at runtime' % (modname, n))
+    for n in dir(mod):
+        if not n.startswith('_') and n not in top:
+            problems.append('%s.%s: at runtime, not in the stub' % (modname, n))
+assert not problems, '\n'.join(sorted(problems))
+"#, dir = dir));
+}

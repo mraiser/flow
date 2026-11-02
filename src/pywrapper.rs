@@ -791,7 +791,6 @@ pub(crate) fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NDataObjectPy>()?;
     m.add_class::<NDataArrayPy>()?;
     m.add_class::<NDataBytesPy>()?;
-    m.add_class::<NDataPyIterator>()?;
 
     Ok(())
 }
