@@ -2,7 +2,8 @@
 
 use pyo3::prelude::*;
 use pyo3::create_exception;
-use pyo3::types::{PyBool, PyByteArray, PyBytes, PyDict, PyFloat, PyList, PyLong, PySlice, PyString, PyTuple};
+use pyo3::types::{PyBool, PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PySlice, PyString, PyTuple};
+use pyo3::IntoPyObjectExt;
 
 // Import the ndata types we will be wrapping.
 // Corrected to use `ndata::` prefix as it's an external crate dependency.
@@ -84,19 +85,19 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
     if py_any.is_none() { return Ok(Data::DNull); }
     // bool before int: bool is a subclass of int.
     if py_any.is_instance_of::<PyBool>() { return Ok(Data::DBoolean(py_any.extract::<bool>()?)); }
-    if py_any.is_instance_of::<PyLong>() { return int_to_data(py_any); }
+    if py_any.is_instance_of::<PyInt>() { return int_to_data(py_any); }
     if py_any.is_instance_of::<PyFloat>() { return Ok(Data::DFloat(py_any.extract::<f64>()?)); }
     if py_any.is_instance_of::<PyString>() { return Ok(Data::DString(py_any.extract::<String>()?)); }
-    if let Ok(py_bytes) = py_any.downcast::<PyBytes>() {
+    if let Ok(py_bytes) = py_any.cast::<PyBytes>() {
         return Ok(Data::DBytes(DataBytes::from_bytes(&py_bytes.as_bytes().to_vec()).data_ref));
     }
-    if let Ok(py_bytearray) = py_any.downcast::<PyByteArray>() {
+    if let Ok(py_bytearray) = py_any.cast::<PyByteArray>() {
         return Ok(Data::DBytes(DataBytes::from_bytes(&py_bytearray.to_vec()).data_ref));
     }
-    if let Ok(dict) = py_any.downcast::<PyDict>() {
+    if let Ok(dict) = py_any.cast::<PyDict>() {
         let obj = DataObject::new();
         for (key, value) in dict.iter() {
-            let key_str: String = match key.downcast::<PyString>() {
+            let key_str: String = match key.cast::<PyString>() {
                 Ok(k) => k.to_str()?.to_string(),
                 Err(_) => return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                     "dict keys must be str to convert to ndata, got {} key {}",
@@ -109,7 +110,7 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
     }
     if py_any.is_instance_of::<PyList>() || py_any.is_instance_of::<PyTuple>() {
         let arr = DataArray::new();
-        for item in py_any.iter()? {
+        for item in py_any.try_iter()? {
             arr.clone().push_property(py_any_to_data(&item?)?);
         }
         return Ok(Data::DArray(arr.data_ref));
@@ -118,9 +119,9 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
     // fractions.Fraction) register with the numbers ABCs. Decimal registers
     // only as numbers.Number, so it falls through to the TypeError below
     // rather than being rounded to a float.
-    let numbers = py_any.py().import_bound("numbers")?;
+    let numbers = py_any.py().import("numbers")?;
     if py_any.is_instance(&numbers.getattr("Integral")?)? {
-        let as_int = py_any.py().import_bound("operator")?.call_method1("index", (py_any,))?;
+        let as_int = py_any.py().import("operator")?.call_method1("index", (py_any,))?;
         return int_to_data(&as_int);
     }
     if py_any.is_instance(&numbers.getattr("Real")?)? {
@@ -158,16 +159,16 @@ fn int_to_data(py_int: &Bound<'_, PyAny>) -> PyResult<Data> {
 }
 
 /// Converts an `ndata::Data` enum variant into a Python object.
-pub(crate) fn data_to_py_any(py: Python, data: Data) -> PyObject {
+pub(crate) fn data_to_py_any(py: Python<'_>, data: Data) -> PyResult<Py<PyAny>> {
     match data {
-        Data::DObject(r) => NDataObjectPy(DataObject::get(r)).into_py(py),
-        Data::DArray(r) => NDataArrayPy(DataArray::get(r)).into_py(py),
-        Data::DBytes(r) => NDataBytesPy(DataBytes::get(r)).into_py(py),
-        Data::DString(s) => s.into_py(py),
-        Data::DInt(i) => i.into_py(py),
-        Data::DFloat(f) => f.into_py(py),
-        Data::DBoolean(b) => b.into_py(py),
-        Data::DNull => py.None(),
+        Data::DObject(r) => NDataObjectPy(DataObject::get(r)).into_py_any(py),
+        Data::DArray(r) => NDataArrayPy(DataArray::get(r)).into_py_any(py),
+        Data::DBytes(r) => NDataBytesPy(DataBytes::get(r)).into_py_any(py),
+        Data::DString(s) => s.into_py_any(py),
+        Data::DInt(i) => i.into_py_any(py),
+        Data::DFloat(f) => f.into_py_any(py),
+        Data::DBoolean(b) => b.into_py_any(py),
+        Data::DNull => Ok(py.None()),
     }
 }
 
@@ -262,10 +263,9 @@ impl NDataObjectPy {
     fn __len__(&self) -> usize { self.0.get_keys().len() } // Assumes DataObject::get_keys().len() is efficient enough
     fn __contains__(&self, key: &str) -> bool { self.0.has(key) }
 
-    fn __getitem__(&self, key: &str, py: Python) -> PyResult<PyObject> {
-        self.0.try_get_property(key)
-            .map(|data| data_to_py_any(py, data))
-            .map_err(to_py_err_object)
+    fn __getitem__(&self, key: &str, py: Python) -> PyResult<Py<PyAny>> {
+        let data = self.0.try_get_property(key).map_err(to_py_err_object)?;
+        data_to_py_any(py, data)
     }
 
     fn __setitem__(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -286,14 +286,14 @@ impl NDataObjectPy {
 // --- Custom Iterator for NDataArrayPy ---
 #[pyclass]
 struct NDataPyIterator {
-    items: Vec<PyObject>,
+    items: Vec<Py<PyAny>>,
     index: usize,
 }
 
 #[pymethods]
 impl NDataPyIterator {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> { slf }
-    fn __next__(&mut self, py: Python) -> Option<PyObject> {
+    fn __next__(&mut self, py: Python) -> Option<Py<PyAny>> {
         if self.index < self.items.len() {
             let item = self.items[self.index].clone_ref(py);
             self.index += 1;
@@ -326,21 +326,21 @@ impl NDataArrayPy {
             self.0.clone().join(other_array.0.clone());
             return Ok(());
         }
-        for item_result in iterable.iter()? {
+        for item_result in iterable.try_iter()? {
             self.append(&item_result?)?;
         }
         Ok(())
     }
 
     #[pyo3(signature = (index = -1))]
-    fn pop(&self, index: isize, py: Python) -> PyResult<PyObject> {
+    fn pop(&self, index: isize, py: Python) -> PyResult<Py<PyAny>> {
         let len = self.0.len();
         if len == 0 { return Err(pyo3::exceptions::PyIndexError::new_err("pop from empty list")); }
         let py_idx = normalize_index(index, len)?; // Use normalize_index
         // pop_property in Rust panics on out of bounds, ensure index is valid.
         // normalize_index already checks this.
         let data = self.0.clone().pop_property(py_idx);
-        Ok(data_to_py_any(py, data))
+        data_to_py_any(py, data)
     }
 
     fn __str__(&self) -> String { self.0.to_string() }
@@ -349,21 +349,20 @@ impl NDataArrayPy {
 
     fn __iter__(slf: PyRef<'_, Self>, py: Python) -> PyResult<Py<NDataPyIterator>> {
         let items_data = slf.0.objects();
-        let items_py: Vec<PyObject> = items_data.into_iter().map(|d| data_to_py_any(py, d)).collect();
+        let items_py = items_data.into_iter().map(|d| data_to_py_any(py, d)).collect::<PyResult<Vec<_>>>()?;
         Py::new(py, NDataPyIterator { items: items_py, index: 0 })
     }
 
-    fn __getitem__(&self, index_or_slice: &Bound<'_, PyAny>, py: Python) -> PyResult<PyObject> {
+    fn __getitem__(&self, index_or_slice: &Bound<'_, PyAny>, py: Python) -> PyResult<Py<PyAny>> {
         if let Ok(index) = index_or_slice.extract::<isize>() {
             let len = self.0.len();
             let py_idx = normalize_index(index, len)?; // Use normalize_index
-            return self.0.try_get_property(py_idx)
-                .map(|data| data_to_py_any(py, data))
-                .map_err(to_py_err_array);
+            let data = self.0.try_get_property(py_idx).map_err(to_py_err_array)?;
+            return data_to_py_any(py, data);
         }
-        if let Ok(slice) = index_or_slice.downcast::<PySlice>() {
+        if let Ok(slice) = index_or_slice.cast::<PySlice>() {
              // PySlice::indices can return an error if step is 0
-            let indices = slice.indices(self.0.len() as i64)?; // Use isize for len
+            let indices = slice.indices(self.0.len() as isize)?;
             let new_array = DataArray::new();
             // Ensure indices.start, indices.stop, indices.step are valid
             if indices.step == 0 {
@@ -376,7 +375,7 @@ impl NDataArrayPy {
                     Err(_) => return Err(pyo3::exceptions::PyIndexError::new_err("slice index out of bounds during construction"))
                 }
             }
-            return Ok(NDataArrayPy(new_array).into_py(py));
+            return NDataArrayPy(new_array).into_py_any(py);
         }
         Err(pyo3::exceptions::PyTypeError::new_err("NDataArray indices must be integers or slices"))
     }
@@ -411,7 +410,7 @@ impl NDataBytesPy {
     // Changed return type to Py<PyBytes>
     fn get_data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyBytes>> {
         self.0.try_get_data()
-            .map(|d| PyBytes::new_bound(py, d.as_slice()).into())
+            .map(|d| PyBytes::new(py, d.as_slice()).unbind())
             .map_err(to_py_err_bytes)
     }
 
@@ -422,7 +421,7 @@ impl NDataBytesPy {
     // Changed return type to Py<PyBytes>
     fn read(&mut self, n: usize, py: Python) -> PyResult<Py<PyBytes>> { // Changed to &mut self
         self.0.clone().try_read(n)
-            .map(|d| PyBytes::new_bound(py, d.as_slice()).into())
+            .map(|d| PyBytes::new(py, d.as_slice()).unbind())
             .map_err(to_py_err_bytes)
     }
 
@@ -458,24 +457,27 @@ impl NDataBytesPy {
 
 
 // --- Main Python Module Definition ---
+// `init` initializes the ndata heaps, `gc` runs a collection - the same
+// calls the old `#[pyfn]` versions made.
+#[pyfunction(name = "init")]
+fn ndata_init() {
+    ndata::dataobject::DataObject::init();
+    ndata::dataarray::DataArray::init();
+    ndata::databytes::DataBytes::init();
+}
+
+#[pyfunction(name = "gc")]
+fn ndata_gc() {
+    ndata::dataobject::DataObject::gc();
+    ndata::dataarray::DataArray::gc();
+    ndata::databytes::DataBytes::gc();
+}
+
 #[pymodule]
-fn ndata_py(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    #[pyfn(m)]
-    fn init(_py: Python) {
-        // Corrected to use ndata:: prefixes
-        ndata::dataobject::DataObject::init();
-        ndata::dataarray::DataArray::init();
-        ndata::databytes::DataBytes::init();
-    }
-
-    #[pyfn(m)]
-    fn gc(_py: Python) {
-        ndata::dataobject::DataObject::gc();
-        ndata::dataarray::DataArray::gc();
-        ndata::databytes::DataBytes::gc();
-    }
-
-    m.add("NDataPyError", _py.get_type_bound::<NDataPyError>())?;
+fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(ndata_init, m)?)?;
+    m.add_function(wrap_pyfunction!(ndata_gc, m)?)?;
+    m.add("NDataPyError", m.py().get_type::<NDataPyError>())?;
     m.add_class::<NDataObjectPy>()?;
     m.add_class::<NDataArrayPy>()?;
     m.add_class::<NDataBytesPy>()?;

@@ -226,7 +226,7 @@ Language engines are feature-gated so the base crate stays light. Enable the
 ones your flows need:
 
 ```bash
-cargo build --features python_runtime      # embeds Python 3 via PyO3
+cargo build --features python_runtime      # embeds Python 3.10-3.14 via PyO3
 cargo build --features javascript_runtime  # embeds V8 via deno_core
 cargo build --features java_runtime        # loads a JVM via JNI
 ```

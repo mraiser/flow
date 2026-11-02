@@ -1,0 +1,29 @@
+name: python
+
+# Python commands across the supported interpreters, in both execution modes:
+# embedded (python_runtime, PyO3) and subprocess (no python_runtime).
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-commands:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and embed this Python
+        run: |
+          echo "PYO3_PYTHON=$(which python)" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')" >> "$GITHUB_ENV"
+      - name: Embedded (python_runtime)
+        run: cargo test --release --features=serde_support,python_runtime --test python_commands
+      - name: Subprocess (no python_runtime)
+        run: cargo test --release --features=serde_support --test python_commands

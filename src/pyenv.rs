@@ -4,7 +4,8 @@ use ndata::dataobject::DataObject;
 use ndata::data::Data;
 use std::sync::{Once, RwLock};
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
+use pyo3::sync::PyOnceLock;
+use std::ffi::CString;
 use pyo3::types::{PyDict, PyList, PyModule};
 use std::path::Path;
 use crate::DataStore;
@@ -14,9 +15,9 @@ use crate::pywrapper::NDataObjectPy;
 
 static START: Once = Once::new();
 static PYENV: RwLock<Option<PyEnv>> = RwLock::new(None);
-// The error-report helpers. A GILOnceCell, not a lazy import: concurrent
+// The error-report helpers. A PyOnceLock, not a lazy import: concurrent
 // callers would otherwise see the module half-initialized.
-static SUPPORT: GILOnceCell<Py<PyModule>> = GILOnceCell::new();
+static SUPPORT: PyOnceLock<Py<PyModule>> = PyOnceLock::new();
 
 pub struct PyEnv;
 
@@ -43,7 +44,7 @@ impl PyEnv {
     /// converted return value, or the error report (exception, location in
     /// the command body, traceback) - see `pycmd` for the envelope.
     pub fn execute(&self, call: &PyCall) -> Result<Data, String> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             self.execute_inner(py, call).map_err(|e| format_error(py, &e, call))
         })
     }
@@ -52,7 +53,7 @@ impl PyEnv {
         let base_path = call.base_dir.display().to_string();
         let file_path = call.file.display().to_string();
         {
-            let sys_module = py.import_bound("sys")?;
+            let sys_module = py.import("sys")?;
             // --- VOODO PATH BS ---
             if let Ok(venv_path) = std::env::var("VIRTUAL_ENV") {
                 // 1. Synchronize the sys.path from the real CLI to handle Nix store paths
@@ -64,11 +65,9 @@ impl PyEnv {
                 {
                     if output.status.success() {
                         if let Ok(path_json) = String::from_utf8(output.stdout) {
-                            let _ = py.run_bound(
-                                &format!("import sys, json; sys.path = json.loads('{}')", path_json.trim()),
-                                None,
-                                None
-                            );
+                            if let Ok(code) = CString::new(format!("import sys, json; sys.path = json.loads('{}')", path_json.trim())) {
+                                let _ = py.run(&code, None, None);
+                            }
                         }
                     }
                 }
@@ -80,13 +79,13 @@ impl PyEnv {
                     venv_path, py_version.major, py_version.minor
                 );
 
-                if let Ok(site) = py.import_bound("site") {
+                if let Ok(site) = py.import("site") {
                     let _ = site.call_method1("addsitedir", (&site_packages,));
                 }
             }
             // --------------------------------
             let binding = sys_module.getattr("path")?;
-            let sys_path: &Bound<'_, PyList> = binding.downcast()?;
+            let sys_path: &Bound<'_, PyList> = binding.cast()?;
 
             // Still insert base_path for your generated pycmd files
             if !sys_path.contains(&base_path)? {
@@ -110,19 +109,19 @@ impl PyEnv {
 
         }
 
-        let module = py.import_bound(call.module.as_str())?;
+        let module = py.import(call.module.as_str())?;
         let function = module.getattr(call.func.as_str())?;
 
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         for (key, data_value) in call.args.objects() {
-            kwargs.set_item(key, crate::pywrapper::data_to_py_any(py, data_value.clone()))?;
+            kwargs.set_item(key, crate::pywrapper::data_to_py_any(py, data_value.clone())?)?;
         }
         let result = function.call((), Some(&kwargs))?;
 
         // FLAT: the command returns the whole response object itself.
         if call.returntype == "FLAT"
             && result.extract::<PyRef<NDataObjectPy>>().is_err()
-            && result.downcast::<PyDict>().is_err()
+            && result.cast::<PyDict>().is_err()
         {
             return Err(pyo3::exceptions::PyTypeError::new_err(format!(
                 "a FLAT command must return a dict or NDataObject, got {}",
@@ -130,7 +129,7 @@ impl PyEnv {
             )));
         }
         crate::pywrapper::py_any_to_data(&result).map_err(|e| {
-            let msg = format!("return value of {} could not be converted: {}", call.label, e.value_bound(py));
+            let msg = format!("return value of {} could not be converted: {}", call.label, e.value(py));
             if e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
                 pyo3::exceptions::PyOverflowError::new_err(msg)
             } else {
@@ -145,13 +144,14 @@ fn format_error(py: Python<'_>, err: &PyErr, call: &PyCall) -> String {
     let report = (|| -> PyResult<String> {
         let support = SUPPORT
             .get_or_try_init(py, || {
-                PyModule::from_code_bound(py, PY_SUPPORT, "flowlang_pysupport.py", "flowlang_pysupport")
+                let code = CString::new(PY_SUPPORT).expect("PY_SUPPORT has no NUL bytes");
+                PyModule::from_code(py, &code, c"flowlang_pysupport.py", c"flowlang_pysupport")
                     .map(|m| m.unbind())
             })?
             .bind(py);
         // Before 3.12 the traceback may be held by the PyErr only.
-        let value = err.value_bound(py);
-        if let Some(tb) = err.traceback_bound(py) {
+        let value = err.value(py);
+        if let Some(tb) = err.traceback(py) {
             let _ = value.setattr("__traceback__", tb);
         }
         support
