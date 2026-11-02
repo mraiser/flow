@@ -25,6 +25,6 @@ jobs:
           echo "PYO3_PYTHON=$(which python)" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')" >> "$GITHUB_ENV"
       - name: Embedded (python_runtime)
-        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols
+        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols --test python_output
       - name: Subprocess (no python_runtime)
-        run: cargo test --release --features=serde_support --test python_commands
+        run: cargo test --release --features=serde_support --test python_commands --test python_output

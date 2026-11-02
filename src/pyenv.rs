@@ -35,6 +35,11 @@ impl PyEnv {
             if let Err(e) = configure_sys_path(py, venv_path) {
                 eprintln!("Python: could not configure sys.path (venv {:?}): {}", venv_path, e);
             }
+            // print(), sys.stderr and logging: complete lines, labelled with
+            // the command, straight to the process's stdout (1) / stderr (2).
+            if let Err(e) = support(py).and_then(|m| m.call_method1("install_output", (1, 2)).map(|_| ())) {
+                eprintln!("Python: could not install the command output streams: {}", e);
+            }
         });
         PyEnv
     }
@@ -78,7 +83,11 @@ impl PyEnv {
         for (key, data_value) in call.args.objects() {
             kwargs.set_item(key, crate::pywrapper::data_to_py_any(py, data_value.clone())?)?;
         }
-        let result = function.call((), Some(&kwargs))?;
+        let support = support(py)?;
+        let token = support.call_method1("begin_call", (call.label.as_str(),))?;
+        let result = function.call((), Some(&kwargs));
+        support.call_method1("end_call", (token,))?;
+        let result = result?;
 
         // FLAT: the command returns the whole response object itself.
         if call.returntype == "FLAT"

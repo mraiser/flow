@@ -265,6 +265,23 @@ cargo build --features java_runtime        # loads a JVM via JNI
   directory is on `sys.path`. A `venv` is configured once, at interpreter
   start (its `sys.path` and `.pth` files, so editable installs work).
 
+  Output from Python commands is labelled with the command and written as
+  complete lines straight to the process's streams, so it appears
+  immediately and in order with the server's own output, even when stdout
+  is not a terminal:
+
+  ```
+  [py testflow:testflow:report] building totals
+  [py testflow:testflow:report] WARNING mylib.db: slow query (2.3 s)
+  ```
+
+  `print()` goes to stdout; `sys.stderr` and `logging` go to stderr (in
+  subprocess mode, everything goes to stderr: the child's stdout carries the
+  result). Unless a command configures logging itself, the root logger gets
+  a `LEVEL name: message` handler at Python's default WARNING level; set
+  `FLOWLANG_PYTHON_LOG_LEVEL=INFO` (or `DEBUG`, …) to change it. Threads a
+  command starts write with a plain `[py]` label.
+
   Python commands hot-reload: when a command's generated file changes
   (`flowb`, or newbound's `dev.code` edits, regenerate it), the next call
   reloads the module in place (`importlib.reload`) before running it — no

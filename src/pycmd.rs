@@ -384,6 +384,104 @@ def _import_new(module, base):
         raise
 
 
+# ---- output: print(), sys.stderr and logging ----------------------------------
+#
+# sys.stdout / sys.stderr are replaced by line writers: each complete line is
+# written straight to the process's file descriptor (one os.write, so it
+# cannot interleave with another writer's line, and nothing waits in a
+# block buffer when stdout is not a terminal), prefixed with the command that
+# wrote it - "[py lib:ctl:cmd] ...". Threads a command starts do not inherit
+# its label and write "[py] ...".
+
+import contextvars as _contextvars
+import io as _io
+
+_label = _contextvars.ContextVar("flowlang_command_label", default=None)
+
+
+class _CommandOutput(_io.TextIOBase):
+    def __init__(self, fd, name):
+        self._fd = fd
+        self._name = name
+        self._lock = _threading.Lock()
+        self._partial = {}   # thread ident -> unfinished line
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def encoding(self):
+        return "utf-8"
+
+    @property
+    def errors(self):
+        return "backslashreplace"
+
+    def writable(self):
+        return True
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        return self._fd
+
+    def write(self, s):
+        if not isinstance(s, str):
+            raise TypeError("write() argument must be str, not %s" % type(s).__name__)
+        tid = _threading.get_ident()
+        with self._lock:
+            *lines, rest = (self._partial.pop(tid, "") + s).split("\n")
+            if rest:
+                self._partial[tid] = rest
+        if lines:
+            self._emit(lines)
+        return len(s)
+
+    def flush(self):
+        with self._lock:
+            rest = self._partial.pop(_threading.get_ident(), "")
+        if rest:
+            self._emit([rest])
+
+    def _emit(self, lines):
+        label = _label.get()
+        prefix = "[py %s] " % label if label else "[py] "
+        data = "".join(prefix + line + "\n" for line in lines).encode("utf-8", "backslashreplace")
+        while data:
+            data = data[_os.write(self._fd, data):]
+
+
+def install_output(out_fd, err_fd):
+    # Once per interpreter. The root logger gets a stderr handler unless one
+    # is configured already; FLOWLANG_PYTHON_LOG_LEVEL sets its level
+    # (default: Python's WARNING).
+    import logging
+    _sys.stdout = _CommandOutput(out_fd, "<stdout>")
+    _sys.stderr = _CommandOutput(err_fd, "<stderr>")
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler(_sys.stderr)
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        root.addHandler(handler)
+    level = _os.environ.get("FLOWLANG_PYTHON_LOG_LEVEL")
+    if level:
+        root.setLevel(level.strip().upper())
+
+
+def begin_call(label):
+    return _label.set(label)
+
+
+def end_call(token):
+    # A partial line the command left belongs to it, not to the next writer.
+    for stream in (_sys.stdout, _sys.stderr):
+        if isinstance(stream, _CommandOutput):
+            stream.flush()
+    _label.reset(token)
+
+
 def _hint(type_name):
     if type_name in ("set", "frozenset"):
         return " - convert it explicitly, e.g. sorted(x) or list(x)"
@@ -462,6 +560,9 @@ def _main():
     base, module, func, rtype, path, label = _sys.argv[1:7]
     result_fd = _os.dup(1)
     _os.dup2(2, 1)
+    # Both streams go to stderr here: the process's stdout carries the result.
+    install_output(2, 2)
+    token = begin_call(label)
     try:
         args = json.load(_sys.stdin)
         # As in the embedded runtime: no current-directory entry ('' from
@@ -475,7 +576,7 @@ def _main():
         out = json.dumps({"ok": True, "value": to_json(result)}, allow_nan=False)
     except BaseException as e:
         out = json.dumps({"ok": False, "msg": format_error(e, path, func, label)})
-    _sys.stdout.flush()
+    end_call(token)
     with _os.fdopen(result_fd, "w", encoding="utf-8") as f:
         f.write(out)
 
