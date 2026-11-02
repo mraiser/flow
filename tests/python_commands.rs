@@ -369,7 +369,8 @@ fn returned_containers_survive_a_concurrent_gc() {
   });
   let dict_cmd = command("", &[], "return {'k': [1, {'z': 3}], 'b': b'x'}", "Any", DataObject::new());
   let nd_body = if EMBEDDED {
-    "import ndata_py\no = ndata_py.NDataObject()\no['k'] = [1, {'z': 3}]\nreturn o"
+    // built in Python, stored in an array, popped back out, returned
+    "import ndata_py\no = ndata_py.NDataObject()\no['k'] = [1, {'z': 3}]\na = ndata_py.NDataArray()\na.append(o)\ndel o\nreturn a.pop()"
   } else {
     "return {'k': [1, {'z': 3}]}"
   };
@@ -383,4 +384,13 @@ fn returned_containers_survive_a_concurrent_gc() {
   }
   stop.store(true, Ordering::SeqCst);
   gc.join().unwrap();
+}
+
+#[test]
+fn ndata_array_pop() {
+  if !EMBEDDED { return; }
+  let r = ret("import ndata_py\na = ndata_py.NDataArray()\na.append({'k': 1})\na.append('s')\nlast = a.pop()\nfirst = a.pop(0)\nreturn [len(a), last, first['k']]").unwrap();
+  assert_eq!(json(&r), r#"{"v":[0,"s",1]}"#);
+  let e = ret("import ndata_py\nreturn ndata_py.NDataArray().pop()").unwrap_err();
+  assert!(e.starts_with("IndexError: pop from empty list"), "{}", e);
 }

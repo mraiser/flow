@@ -20,6 +20,8 @@
 use std::path::PathBuf;
 
 use ndata::data::Data;
+use ndata::dataarray::DataArray;
+use ndata::databytes::DataBytes;
 use ndata::dataobject::DataObject;
 
 use crate::code::CodeException;
@@ -126,10 +128,67 @@ pub fn run(call: &PyCall) -> Result<DataObject, String> {
   return subprocess::call(call);
 }
 
+/// An owned ndata value: a container is held as its handle, never as a bare
+/// `Data` reference. Values cross the Python boundary only in this form, and
+/// are stored only through ndata's handle-taking methods (`put_object`,
+/// `push_array`, ...), which take over the handle's reference. A bare
+/// `Data::DObject` holds no reference, so passing one around after its last
+/// handle is dropped lets a concurrent ndata GC free it first.
+pub enum Value {
+  Object(DataObject),
+  Array(DataArray),
+  Bytes(DataBytes),
+  /// String, Integer, Float, Boolean or Null - never a container.
+  Scalar(Data),
+}
+
+impl Value {
+  /// Takes a handle on `d`'s container through ndata's own accessors. `d`
+  /// must come from an ndata getter on a container that is still alive.
+  pub fn from_data(d: Data) -> Value {
+    match d {
+      Data::DObject(_) => Value::Object(d.object()),
+      Data::DArray(_) => Value::Array(d.array()),
+      Data::DBytes(_) => Value::Bytes(d.bytes()),
+      scalar => Value::Scalar(scalar),
+    }
+  }
+
+  /// Stores the value under `key`.
+  pub fn put(self, target: &mut DataObject, key: &str) {
+    match self {
+      Value::Object(o) => target.put_object(key, o),
+      Value::Array(a) => target.put_array(key, a),
+      Value::Bytes(b) => target.put_bytes(key, b),
+      Value::Scalar(d) => target.set_property(key, d),
+    }
+  }
+
+  /// Appends the value.
+  pub fn push(self, target: &mut DataArray) {
+    match self {
+      Value::Object(o) => target.push_object(o),
+      Value::Array(a) => target.push_array(a),
+      Value::Bytes(b) => target.push_bytes(b),
+      Value::Scalar(d) => target.push_property(d),
+    }
+  }
+
+  /// Replaces the value at `index`.
+  pub fn put_at(self, target: &mut DataArray, index: usize) {
+    match self {
+      Value::Object(o) => target.put_object(index, o),
+      Value::Array(a) => target.put_array(index, a),
+      Value::Bytes(b) => target.put_bytes(index, b),
+      Value::Scalar(d) => target.set_property(index, d),
+    }
+  }
+}
+
 /// `{"a": value}` - what a generated Rust wrapper returns on success.
-pub fn ok_envelope(value: Data) -> DataObject {
+pub fn ok_envelope(value: Value) -> DataObject {
   let mut o = DataObject::new();
-  o.set_property("a", value);
+  value.put(&mut o, "a");
   o
 }
 
@@ -380,7 +439,7 @@ _main()
         format!("{} exited with {} without a result for {}", exe, output.status, call.label)
       })?;
       if reply.has("ok") && reply.get_boolean("ok") {
-        return Ok(super::ok_envelope(reply.get_property("value")));
+        return Ok(super::ok_envelope(super::Value::from_data(reply.get_property("value"))));
       }
       return Err(reply.get_string("msg"));
     }

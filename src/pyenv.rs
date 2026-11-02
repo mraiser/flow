@@ -87,7 +87,7 @@ impl PyEnv {
                 crate::pywrapper::type_name(&result)
             )));
         }
-        let value = crate::pywrapper::py_any_to_data(&result).map_err(|e| {
+        let value = crate::pywrapper::py_any_to_value(&result).map_err(|e| {
             let msg = format!("return value of {} could not be converted: {}", call.label, e.value(py));
             if e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
                 pyo3::exceptions::PyOverflowError::new_err(msg)
@@ -95,8 +95,7 @@ impl PyEnv {
                 pyo3::exceptions::PyTypeError::new_err(msg)
             }
         })?;
-        // Stored while `value` (and `result`) still own it.
-        Ok(crate::pycmd::ok_envelope(value.data()))
+        Ok(crate::pycmd::ok_envelope(value))
     }
 }
 
