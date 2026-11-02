@@ -2,7 +2,7 @@
 
 use pyo3::prelude::*;
 use pyo3::create_exception;
-use pyo3::types::{PyDict, PyList, PyBytes, PySlice}; // Corrected PySequence import, added PySlice
+use pyo3::types::{PyBool, PyByteArray, PyBytes, PyDict, PyFloat, PyList, PyLong, PySlice, PyString, PyTuple};
 
 // Import the ndata types we will be wrapping.
 // Corrected to use `ndata::` prefix as it's an external crate dependency.
@@ -51,7 +51,26 @@ fn normalize_index(index: isize, len: usize) -> PyResult<usize> {
 // --- Conversion Helpers & Error Mapping ---
 
 /// Converts any supported Python object into an `ndata::Data` enum variant.
-#[allow(clippy::needless_return)] // Allow explicit returns for clarity in match-like structure
+///
+/// The mapping is exact and lossless, or it is an error - never a silent
+/// change of type or value:
+///
+/// | Python                                   | ndata      |
+/// |------------------------------------------|------------|
+/// | `NDataObject` / `NDataArray` / `NDataBytes` | the same handle (no copy) |
+/// | `None`                                   | `DNull`    |
+/// | `bool`                                   | `DBoolean` |
+/// | `int` (incl. `IntEnum`, numpy ints)      | `DInt`; outside i64 -> `OverflowError` |
+/// | `float` (incl. numpy floats, `Fraction`) | `DFloat`   |
+/// | `str` (incl. `StrEnum`)                  | `DString`  |
+/// | `bytes`, `bytearray`                     | `DBytes`   |
+/// | `dict` with `str` keys                   | `DObject`  |
+/// | `list`, `tuple`                          | `DArray`   |
+///
+/// Anything else (`set`, `Decimal`, `datetime`, plain `Enum`, arbitrary
+/// objects) raises `TypeError` naming the type and an explicit conversion.
+/// In particular a list of small ints is a list, not bytes, and a big int is
+/// an error, not a float.
 pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
     if let Ok(obj) = py_any.extract::<PyRef<NDataObjectPy>>() {
         return Ok(Data::DObject(obj.0.clone().data_ref));
@@ -63,36 +82,79 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
         return Ok(Data::DBytes(bytes_obj.0.clone().data_ref));
     }
     if py_any.is_none() { return Ok(Data::DNull); }
-    if let Ok(s) = py_any.extract::<String>() { return Ok(Data::DString(s)); }
-    if let Ok(b) = py_any.extract::<bool>() { return Ok(Data::DBoolean(b)); }
-    if let Ok(i) = py_any.extract::<i64>() { return Ok(Data::DInt(i)); }
-    if let Ok(f) = py_any.extract::<f64>() { return Ok(Data::DFloat(f)); }
+    // bool before int: bool is a subclass of int.
+    if py_any.is_instance_of::<PyBool>() { return Ok(Data::DBoolean(py_any.extract::<bool>()?)); }
+    if py_any.is_instance_of::<PyLong>() { return int_to_data(py_any); }
+    if py_any.is_instance_of::<PyFloat>() { return Ok(Data::DFloat(py_any.extract::<f64>()?)); }
+    if py_any.is_instance_of::<PyString>() { return Ok(Data::DString(py_any.extract::<String>()?)); }
     if let Ok(py_bytes) = py_any.downcast::<PyBytes>() {
-        let rust_bytes: Vec<u8> = py_bytes.as_bytes().to_vec();
-        return Ok(Data::DBytes(DataBytes::from_bytes(&rust_bytes).data_ref));
+        return Ok(Data::DBytes(DataBytes::from_bytes(&py_bytes.as_bytes().to_vec()).data_ref));
     }
-    if let Ok(bytes_vec) = py_any.extract::<Vec<u8>>() {
-         return Ok(Data::DBytes(DataBytes::from_bytes(&bytes_vec).data_ref));
+    if let Ok(py_bytearray) = py_any.downcast::<PyByteArray>() {
+        return Ok(Data::DBytes(DataBytes::from_bytes(&py_bytearray.to_vec()).data_ref));
     }
     if let Ok(dict) = py_any.downcast::<PyDict>() {
         let obj = DataObject::new();
         for (key, value) in dict.iter() {
-            let key_str: String = key.extract()?;
+            let key_str: String = match key.downcast::<PyString>() {
+                Ok(k) => k.to_str()?.to_string(),
+                Err(_) => return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "dict keys must be str to convert to ndata, got {} key {}",
+                    type_name(&key), key.repr()?
+                ))),
+            };
             obj.clone().set_property(&key_str, py_any_to_data(&value)?);
         }
         return Ok(Data::DObject(obj.data_ref));
     }
-    if let Ok(list) = py_any.downcast::<PyList>() {
+    if py_any.is_instance_of::<PyList>() || py_any.is_instance_of::<PyTuple>() {
         let arr = DataArray::new();
-        for item in list.iter() {
-            arr.clone().push_property(py_any_to_data(&item)?);
+        for item in py_any.iter()? {
+            arr.clone().push_property(py_any_to_data(&item?)?);
         }
         return Ok(Data::DArray(arr.data_ref));
     }
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
-        "Unsupported Python type for conversion to ndata: {}",
-        py_any.get_type().name()?
+    // Numeric types that are not int/float subclasses (numpy scalars,
+    // fractions.Fraction) register with the numbers ABCs. Decimal registers
+    // only as numbers.Number, so it falls through to the TypeError below
+    // rather than being rounded to a float.
+    let numbers = py_any.py().import_bound("numbers")?;
+    if py_any.is_instance(&numbers.getattr("Integral")?)? {
+        let as_int = py_any.py().import_bound("operator")?.call_method1("index", (py_any,))?;
+        return int_to_data(&as_int);
+    }
+    if py_any.is_instance(&numbers.getattr("Real")?)? {
+        return Ok(Data::DFloat(py_any.extract::<f64>()?));
+    }
+    let type_name = type_name(py_any);
+    let hint = match type_name.as_str() {
+        "set" | "frozenset" => " - convert it explicitly, e.g. sorted(x) or list(x)",
+        "Decimal" => " - convert it explicitly with str(x) (exact) or float(x) (rounded)",
+        "datetime" | "date" | "time" => " - convert it explicitly, e.g. x.isoformat()",
+        _ => " - convert it to str, int, float, bool, None, bytes, dict, list or tuple",
+    };
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "cannot convert Python {} to ndata{}", type_name, hint
     )))
+}
+
+/// The plain type name (`list`, `Decimal`), as Python's own messages use it.
+pub(crate) fn type_name(obj: &Bound<'_, PyAny>) -> String {
+    obj.get_type()
+        .getattr("__name__")
+        .and_then(|n| n.extract::<String>())
+        .unwrap_or_else(|_| "object".to_string())
+}
+
+/// An int that fits in i64, else OverflowError (never a lossy float).
+fn int_to_data(py_int: &Bound<'_, PyAny>) -> PyResult<Data> {
+    match py_int.extract::<i64>() {
+        Ok(i) => Ok(Data::DInt(i)),
+        Err(_) => Err(pyo3::exceptions::PyOverflowError::new_err(format!(
+            "int {} does not fit in a 64-bit signed integer (ndata Integer); convert it explicitly, e.g. str(n)",
+            py_int.repr()?
+        ))),
+    }
 }
 
 /// Converts an `ndata::Data` enum variant into a Python object.

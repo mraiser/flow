@@ -1,0 +1,245 @@
+//! Python commands: the result envelope, the value conversion rules and the
+//! error reports. Every test here runs in BOTH execution modes:
+//!
+//!   cargo test --test python_commands                              # subprocess (python3)
+//!   cargo test --test python_commands --features=python_runtime    # embedded (PyO3)
+//!
+//! A Python command must look exactly like a Rust command to its callers:
+//! `{"a": value}` on success, `{"a": {"status": "err", "msg"}}` on failure.
+//! Before this contract, a Python command returned `{"status", "msg"|"data"}`
+//! (or merged a returned dict into the top level), so a flow's command op
+//! faulted with "the callee's result lacks 'a'", and errors used
+//! `status: "error"`, which callers checking for "err" read as success.
+
+use flowlang::case::Case;
+use flowlang::code::Code;
+use flowlang::command::Command;
+use flowlang::pycmd::{run, PyCall};
+use ndata::data::Data;
+use ndata::dataobject::DataObject;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+static SEQ: AtomicUsize = AtomicUsize::new(0);
+
+fn init() {
+  INIT.call_once(|| { flowlang::init("data"); });
+}
+
+const EMBEDDED: bool = cfg!(feature = "python_runtime");
+
+/// Writes a command module laid out exactly as `flowb` generates it
+/// (imports, `execute`, then the user's body indented under `def <func>`),
+/// in a fresh package so the interpreter's module cache never interferes.
+fn command(imports: &str, params: &[&str], body: &str, returntype: &str, args: DataObject) -> PyCall {
+  init();
+  let n = SEQ.fetch_add(1, Ordering::SeqCst);
+  let lib = format!("pytest{}_{}", std::process::id(), n);
+  let base = std::env::temp_dir().join("flowlang_python_commands");
+  let dir = base.join(&lib).join("ctl");
+  std::fs::create_dir_all(&dir).unwrap();
+  let func = "cmd";
+  let mut src = String::new();
+  src.push_str(imports);
+  src.push_str("\n\n");
+  let extract: Vec<String> = params.iter().map(|p| format!("args['{}']", p)).collect();
+  src.push_str(&format!("def execute(args):\n    return {}({})\n\n", func, extract.join(", ")));
+  src.push_str(&format!("def {}({}):\n", func, params.join(", ")));
+  for line in body.lines() { src.push_str(&format!("    {}\n", line)); }
+  src.push_str("\n\nif __name__ == \"__main__\":\n    import sys\n    import json\n    print(json.dumps(execute(json.loads(sys.argv[1]))))\n");
+  let file: PathBuf = dir.join(format!("{}.py", func));
+  std::fs::write(&file, src).unwrap();
+  PyCall {
+    label: format!("{}:ctl:{}", lib, func),
+    base_dir: base,
+    module: format!("{}.ctl.{}", lib, func),
+    file,
+    func: func.to_string(),
+    returntype: returntype.to_string(),
+    args,
+  }
+}
+
+fn ret(body: &str) -> Result<Data, String> {
+  init();
+  run(&command("", &[], body, "Any", DataObject::new()))
+}
+fn ret_imports(imports: &str, body: &str) -> Result<Data, String> {
+  init();
+  run(&command(imports, &[], body, "Any", DataObject::new()))
+}
+fn json(d: &Data) -> String {
+  let mut o = DataObject::new();
+  o.set_property("v", d.clone());
+  o.to_string()
+}
+
+// ---- conversion: exact, or an error -----------------------------------------------------
+
+#[test]
+fn list_of_small_ints_is_a_list_not_bytes() {
+  // Was "01 02 03": a list of ints 0..=255 extracted as Vec<u8>.
+  assert_eq!(json(&ret("return [1, 2, 3]").unwrap()), r#"{"v":[1,2,3]}"#);
+  assert_eq!(json(&ret("return {'scores': [10, 20, 30]}").unwrap()), r#"{"v":{"scores":[10,20,30]}}"#);
+}
+
+#[test]
+fn tuple_is_an_array() {
+  // Was "01 02".
+  assert_eq!(json(&ret("return (1, 2)").unwrap()), r#"{"v":[1,2]}"#);
+  assert_eq!(json(&ret("return {'t': ('x', 2, None)}").unwrap()), r#"{"v":{"t":["x",2,null]}}"#);
+}
+
+#[test]
+fn scalars_keep_their_types() {
+  assert_eq!(json(&ret("return True").unwrap()), r#"{"v":true}"#);
+  assert_eq!(json(&ret("return 0").unwrap()), r#"{"v":0}"#);
+  assert_eq!(json(&ret("return 1.5").unwrap()), r#"{"v":1.5}"#);
+  assert_eq!(json(&ret("return 'hi'").unwrap()), r#"{"v":"hi"}"#);
+  assert_eq!(json(&ret("return None").unwrap()), r#"{"v":null}"#);
+  assert_eq!(json(&ret(&format!("return {}", i64::MAX)).unwrap()), format!(r#"{{"v":{}}}"#, i64::MAX));
+  assert_eq!(json(&ret(&format!("return {}", i64::MIN)).unwrap()), format!(r#"{{"v":{}}}"#, i64::MIN));
+}
+
+#[test]
+fn int_and_str_subclasses_and_numeric_abcs_convert() {
+  assert_eq!(json(&ret_imports("import enum", "class E(enum.IntEnum):\n    X = 7\nreturn E.X").unwrap()), r#"{"v":7}"#);
+  assert_eq!(json(&ret_imports("import fractions", "return fractions.Fraction(1, 4)").unwrap()), r#"{"v":0.25}"#);
+}
+
+#[test]
+fn bytes_and_bytearray_are_bytes() {
+  let d = ret("return b'Hi'").unwrap();
+  let d2 = ret("return bytearray(b'Hi')").unwrap();
+  if EMBEDDED {
+    assert!(matches!(d, Data::DBytes(_)), "bytes -> DBytes, got {:?}", d);
+    assert!(matches!(d2, Data::DBytes(_)), "bytearray -> DBytes, got {:?}", d2);
+  } else {
+    // By value over JSON: ndata's JSON form of DBytes.
+    assert_eq!(json(&d), r#"{"v":"48 69"}"#);
+    assert_eq!(json(&d2), r#"{"v":"48 69"}"#);
+  }
+}
+
+#[test]
+fn int_outside_i64_is_an_overflow_error_not_a_float() {
+  // Was 9.223372036854776e+18.
+  let e = ret("return 2**63").unwrap_err();
+  assert!(e.starts_with("OverflowError: "), "{}", e);
+  assert!(e.contains("9223372036854775808"), "{}", e);
+  let e = ret("return {'big': -(2**70)}").unwrap_err();
+  assert!(e.starts_with("OverflowError: "), "{}", e);
+}
+
+#[test]
+fn unsupported_types_are_type_errors_with_a_hint() {
+  // Decimal was silently rounded to a float.
+  let e = ret_imports("import decimal", "return decimal.Decimal('1.10')").unwrap_err();
+  assert!(e.starts_with("TypeError: ") && e.contains("Decimal") && e.contains("str(x)"), "{}", e);
+  let e = ret("return {1, 2}").unwrap_err();
+  assert!(e.starts_with("TypeError: ") && e.contains("set") && e.contains("sorted(x)"), "{}", e);
+  let e = ret_imports("import datetime", "return datetime.date(2026, 1, 2)").unwrap_err();
+  assert!(e.starts_with("TypeError: ") && e.contains("isoformat"), "{}", e);
+  let e = ret("return {1: 'a'}").unwrap_err();
+  assert!(e.starts_with("TypeError: ") && e.contains("dict keys must be str"), "{}", e);
+}
+
+#[test]
+fn flat_requires_a_dict() {
+  init();
+  let ok = run(&command("", &[], "return {'status': 'ok', 'x': 1}", "FLAT", DataObject::new())).unwrap();
+  assert_eq!(json(&ok), r#"{"v":{"status":"ok","x":1}}"#);
+  let e = run(&command("", &[], "return [1]", "FLAT", DataObject::new())).unwrap_err();
+  assert!(e.starts_with("TypeError: a FLAT command must return a dict or NDataObject, got list"), "{}", e);
+}
+
+// ---- arguments ---------------------------------------------------------------------------
+
+#[test]
+fn arguments_arrive_by_name() {
+  init();
+  let mut args = DataObject::new();
+  args.put_string("name", "world");
+  args.put_int("n", 3);
+  let mut o = DataObject::new();
+  o.put_string("k", "v");
+  args.put_object("obj", o);
+  let call = command("", &["name", "n", "obj"], "return [name, n * 2, obj['k']]", "JSONArray", args);
+  assert_eq!(json(&run(&call).unwrap()), r#"{"v":["world",6,"v"]}"#);
+}
+
+#[test]
+fn print_does_not_touch_the_result() {
+  let d = ret("print('noise on stdout')\nimport sys\nsys.stdout.write('more\\n')\nreturn 'clean'").unwrap();
+  assert_eq!(json(&d), r#"{"v":"clean"}"#);
+}
+
+// ---- error reports -----------------------------------------------------------------------
+
+#[test]
+fn exception_reports_body_line_and_traceback() {
+  init();
+  let call = command("import math", &[], "x = 1\ndef inner():\n    return 1 / 0\nreturn inner()", "Any", DataObject::new());
+  let e = run(&call).unwrap_err();
+  let head = e.lines().next().unwrap();
+  assert_eq!(head, format!("ZeroDivisionError: division by zero ({}, body line 3)", call.label));
+  assert!(e.contains("Traceback (most recent call last):"), "{}", e);
+  assert!(e.contains("[body line 4]"), "the calling frame is annotated too: {}", e);
+  assert!(e.contains("[body line 3]"), "{}", e);
+}
+
+#[test]
+fn syntax_error_reports_body_line() {
+  init();
+  let call = command("", &[], "x = 1\nreturn (", "Any", DataObject::new());
+  let e = run(&call).unwrap_err();
+  let head = e.lines().next().unwrap();
+  assert!(head.starts_with("SyntaxError: "), "{}", e);
+  assert!(head.ends_with(&format!("({}, body line 2)", call.label)), "{}", e);
+}
+
+#[test]
+fn import_error_reports_imports_line() {
+  init();
+  let call = command("import json\nimport no_such_module_xyz", &[], "return 1", "Any", DataObject::new());
+  let e = run(&call).unwrap_err();
+  let head = e.lines().next().unwrap();
+  assert!(head.starts_with("ModuleNotFoundError: No module named 'no_such_module_xyz'"), "{}", e);
+  assert!(head.ends_with(&format!("({}, imports line 2)", call.label)), "{}", e);
+}
+
+// ---- the envelope, through Command and through a flow ------------------------------------
+
+#[test]
+fn command_result_uses_the_rust_envelope() {
+  init();
+  let mut args = DataObject::new();
+  args.put_string("a", "world");
+  let r = Command::lookup("testflow", "testflow", "test_python").execute(args).unwrap();
+  assert_eq!(r.to_string(), r#"{"a":"Hello world from python"}"#);
+}
+
+#[test]
+fn missing_parameter_is_an_err_envelope() {
+  init();
+  let r = Command::lookup("testflow", "testflow", "test_python").execute(DataObject::new()).unwrap();
+  let a = r.get_object("a");
+  assert_eq!(a.get_string("status"), "err");
+  assert_eq!(a.get_string("msg"), "missing required parameter: a");
+}
+
+#[test]
+fn python_command_runs_as_a_flow_op() {
+  // Was a fault: "the callee's result lacks 'a'".
+  init();
+  let op = r#"{"cmd":"testflow:zplvxj1802d5739aco1a:ovgzjp1822699e1d1w19","in":{"a":{"mode":"regular","type":"Any","x":0}},"name":"test_python","out":{"r":{"mode":"regular","type":"Any","x":0}},"pos":{"x":0,"y":0,"z":0},"type":"command","width":1.5}"#;
+  let body = format!(
+    r#"{{"cmds":[{}],"cons":[{{"dest":[0,"a"],"src":[-1,"v"]}},{{"dest":[-2,"r"],"src":[0,"r"]}}],"input":{{"v":{{"mode":"in","type":"Any","x":0}}}},"output":{{"r":{{"mode":"out","type":"Any","x":0}}}}}}"#,
+    op
+  );
+  let mut code = Code::new(Case::new(&body));
+  let out = code.execute(DataObject::from_string(r#"{"v":"flow"}"#)).unwrap();
+  assert_eq!(out.get_string("r"), "Hello flow from python");
+}

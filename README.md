@@ -234,9 +234,34 @@ cargo build --features java_runtime        # loads a JVM via JNI
 - **Python** — commands run in a persistent embedded interpreter. Arguments
   arrive as `NDataObject` / `NDataArray` / `NDataBytes`, thin Python wrappers
   around the underlying Rust data — no serialization on the boundary, and
-  Python mutates the same data Rust sees. Returning a plain value (string,
-  int, dict, …) wraps it into a `DataObject` automatically. If a `venv`
-  directory exists next to `data/`, it is activated automatically.
+  Python mutates the same data Rust sees. If a `venv` directory exists next
+  to `data/`, it is activated automatically. A Python command returns
+  exactly what a Rust command returns — `{"a": value}`, or
+  `{"a": {"status": "err", "msg": ...}}` on failure — so it works anywhere a
+  Rust command does, including as a flow op. The return value converts
+  exactly or not at all:
+
+  | Python | ndata |
+  |---|---|
+  | `None`, `bool`, `str` | `DNull`, `DBoolean`, `DString` |
+  | `int` (incl. `IntEnum`, numpy ints) | `DInt`; outside 64-bit range is an `OverflowError` |
+  | `float` (incl. numpy floats, `Fraction`) | `DFloat` |
+  | `bytes`, `bytearray` | `DBytes` |
+  | `dict` with `str` keys | `DObject` |
+  | `list`, `tuple` | `DArray` |
+  | `NDataObject` / `NDataArray` / `NDataBytes` | the same handle |
+
+  Anything else (`set`, `Decimal`, `datetime`, …) is a `TypeError` that
+  names an explicit conversion. A `FLAT` command must return a `dict` or
+  `NDataObject`. An exception's `msg` names the exception, its location in
+  the command body (`body line N`, or `imports line N`), and the full
+  traceback. A declared parameter missing from the call is an error.
+
+  Without `python_runtime`, Python commands run in a `python3` subprocess
+  (the `venv` interpreter if present) with the same envelope, conversion
+  rules and error reports; the difference is that data crosses by value as
+  JSON — arguments arrive as plain `dict`/`list`, and bytes as ndata's hex
+  string.
 - **JavaScript** — commands run in a Deno/V8 isolate, with `serde_v8`
   bridging `DataObject` to V8 values.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`
