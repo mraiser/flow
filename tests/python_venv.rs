@@ -60,12 +60,17 @@ fn venv_is_configured_once_and_its_packages_import() {
   std::fs::write(editable.join("edmod.py"), "VALUE = 'from editable'\n").unwrap();
   std::fs::write(sp.join("_edmod.pth"), format!("{}\n", editable.display())).unwrap();
 
-  // Count every launch of the venv's python.
+  // Count every launch of the venv's python: move the launcher aside (still
+  // inside bin/, so it still finds pyvenv.cfg) and put a counting wrapper in
+  // its place. The wrapper must not exec bin/python3 - when the venv was
+  // made by an interpreter invoked as `python`, python3 is a symlink to
+  // python, i.e. to the wrapper itself.
   let counter = root.join("launches");
   let launcher = venv.join("bin").join("python");
-  std::fs::remove_file(&launcher).unwrap();
+  let real = venv.join("bin").join("python-real");
+  std::fs::rename(&launcher, &real).unwrap();
   std::fs::write(&launcher, format!(
-    "#!/bin/sh\necho launch >> '{}'\nexec \"$(dirname \"$0\")/python3\" \"$@\"\n", counter.display()
+    "#!/bin/sh\necho launch >> '{}'\nexec '{}' \"$@\"\n", counter.display(), real.display()
   )).unwrap();
   std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
 
