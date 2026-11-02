@@ -314,10 +314,20 @@ cargo build --features java_runtime        # loads a JVM via JNI
   o["total"] = flowlang.call("testflow", "testflow", "test_add", a=300, b=120)
   ```
 
-  `flowlang.call(lib, ctl, cmd, **kwargs)` runs any command — Rust, Python,
-  flow, JavaScript or Java — with arguments cast to the declared parameter
-  types, and returns its value (a flow's single output, or all of its outputs
-  as an `NDataObject`). It raises `LookupError` for an unknown command,
+  `flowlang.call(lib, ctl, cmd, *args, **kwargs)` runs any command — Rust,
+  Python, flow, JavaScript or Java — with arguments cast to the declared
+  parameter types (positional arguments in declared order), and returns its
+  value (a flow's single output, or all of its outputs as an `NDataObject`).
+  `flowlang.api.<lib>.<ctl>.<cmd>(...)` is the same call as an attribute
+  path, mirroring the Rust `api` (names with `-` are written with `_`):
+
+  ```python
+  flowlang.api.testflow.testflow.test_add(300, 120)   # "300+120=420"
+  ```
+
+  flowb types the whole tree in `flowlang.pyi` from the libraries in
+  `data/`, so editors complete every command and type checkers check its
+  arguments and result. It raises `LookupError` for an unknown command,
   `TypeError` for an argument that cannot be cast, and `flowlang.CommandError`
   when the command fails — including a result whose `status` is `"err"`. The
   interpreter lock is released while the command runs. In subprocess mode

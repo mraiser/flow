@@ -384,6 +384,44 @@ def _import_new(module, base):
         raise
 
 
+# ---- flowlang.api: every command as an attribute path -------------------------
+#
+#   flowlang.api.testflow.testflow.test_add(300, 120)
+#     == flowlang.call("testflow", "testflow", "test_add", 300, 120)
+#
+# Names resolve as call() resolves them (exact, or with `-` read as `_`).
+# flowb's flowlang.pyi types this tree from the libraries in data/.
+
+class _ApiNode:
+    __slots__ = ("_call", "_path")
+
+    def __init__(self, call, path):
+        self._call = call
+        self._path = path
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return _ApiNode(self._call, self._path + (name,))
+
+    def __call__(self, *args, **kwargs):
+        if len(self._path) != 3:
+            raise TypeError("flowlang.api.%s is not a command: use flowlang.api.<lib>.<ctl>.<cmd>(...)"
+                            % ".".join(self._path))
+        return self._call(*self._path, *args, **kwargs)
+
+    def __repr__(self):
+        return "<flowlang.api%s>" % "".join("." + p for p in self._path)
+
+
+def make_api(call):
+    return _ApiNode(call, ())
+
+
+def install_api():
+    _sys.modules["flowlang"].api = make_api(_sys.modules["flowlang"].call)
+
+
 # ---- output: print(), sys.stderr and logging ----------------------------------
 #
 # sys.stdout / sys.stderr are replaced by line writers: each complete line is
@@ -543,7 +581,7 @@ def _install_flowlang_stub():
     class CommandError(Exception):
         pass
 
-    def call(lib, ctl, cmd, /, **kwargs):
+    def call(lib, ctl, cmd, /, *args, **kwargs):
         raise RuntimeError(
             "flowlang.call(%r, %r, %r) needs the embedded Python runtime; "
             "build flowlang with --features=python_runtime" % (lib, ctl, cmd)
@@ -551,6 +589,7 @@ def _install_flowlang_stub():
 
     m.CommandError = CommandError
     m.call = call
+    m.api = make_api(call)
     _sys.modules["flowlang"] = m
 
 

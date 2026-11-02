@@ -32,6 +32,9 @@ impl PyEnv {
             if let Err(e) = crate::pywrapper::register_modules(py) {
                 eprintln!("Python: could not register the ndata_py and flowlang modules: {}", e);
             }
+            if let Err(e) = support(py).and_then(|m| m.call_method0("install_api").map(|_| ())) {
+                eprintln!("Python: could not install flowlang.api: {}", e);
+            }
             if let Err(e) = configure_sys_path(py, venv_path) {
                 eprintln!("Python: could not configure sys.path (venv {:?}): {}", venv_path, e);
             }

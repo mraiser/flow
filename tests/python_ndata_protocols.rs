@@ -226,6 +226,8 @@ for modname, mod in (('ndata_py', ndata_py), ('flowlang', flowlang)):
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             top.add(node.name)
+        elif isinstance(node, ast.AnnAssign):
+            top.add(node.target.id)
         elif isinstance(node, ast.ClassDef):
             top.add(node.name)
             cls = getattr(mod, node.name, None)
@@ -249,7 +251,7 @@ for modname, mod in (('ndata_py', ndata_py), ('flowlang', flowlang)):
                 if not n.startswith('_') and n not in declared and n not in inherited:
                     problems.append('%s.%s.%s: at runtime, not in the stub' % (modname, node.name, n))
     for n in top:
-        if not hasattr(mod, n):
+        if not n.startswith('_') and not hasattr(mod, n):
             problems.append('%s.%s: in the stub, not at runtime' % (modname, n))
     for n in dir(mod):
         if not n.startswith('_') and n not in top:

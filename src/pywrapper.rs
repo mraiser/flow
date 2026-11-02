@@ -798,44 +798,70 @@ pub(crate) fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 // --- The `flowlang` module: calling other commands from Python ---
 
-/// `flowlang.call(lib, ctl, cmd, /, **kwargs)` runs any command - Rust,
+/// `flowlang.call(lib, ctl, cmd, /, *args, **kwargs)` runs any command - Rust,
 /// Python, flow, JavaScript or Java - and returns its value:
 ///
 /// - a non-flow command's return value (its `a`);
 /// - a flow's single output, or all of its outputs as an `NDataObject` when it
 ///   has several.
 ///
-/// Raises `LookupError` for an unknown command, `TypeError` when an argument
-/// cannot be cast to the parameter's declared type, and
-/// `flowlang.CommandError` when the command fails: it raises or panics, or
-/// returns an object whose `status` is `"err"` (the error envelope every
-/// command wrapper uses). The interpreter lock is released while the command
-/// runs, so other Python commands are not blocked by a slow callee.
+/// Positional arguments map onto the declared parameters in order. Names
+/// resolve exactly, or with `-` read as `_` (as in the Rust `api`), so
+/// `flowlang.api.my_lib.my_ctl.my_cmd` reaches `my-lib:my-ctl:my-cmd`.
+///
+/// Raises `LookupError` for an unknown command, `TypeError` for arguments
+/// that do not fit the declared parameters, and `flowlang.CommandError` when
+/// the command fails: it raises or panics, or returns an object whose
+/// `status` is `"err"` (the error envelope every command wrapper uses). The
+/// interpreter lock is released while the command runs, so other Python
+/// commands are not blocked by a slow callee.
 #[pyfunction]
-#[pyo3(signature = (lib, ctl, cmd, /, **kwargs))]
-fn call(py: Python<'_>, lib: &str, ctl: &str, cmd: &str, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
-    let args = DataObject::new();
+#[pyo3(signature = (lib, ctl, cmd, /, *args, **kwargs))]
+fn call(py: Python<'_>, lib: &str, ctl: &str, cmd: &str, args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+    let (l, c, m) = (lib.to_string(), ctl.to_string(), cmd.to_string());
+    let target = py.detach(move || resolve_command(&l, &c, &m)).map_err(pyo3::exceptions::PyLookupError::new_err)?;
+    let mut values = DataObject::new();
+    if args.len() > target.params.len() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "{} takes {} argument(s) ({}) but {} positional were given",
+            target.label, target.params.len(), target.params.join(", "), args.len()
+        )));
+    }
+    let convert = |name: &str, v: &Bound<'_, PyAny>| py_any_to_value(v)
+        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("argument {}: {}", name, e.value(py))));
+    for (name, v) in target.params.iter().zip(args.iter()) {
+        convert(name, &v)?.put(&mut values, name);
+    }
     if let Some(kw) = kwargs {
         for (k, v) in kw.iter() {
             let k: String = k.extract()?;
-            py_any_to_value(&v)
-                .map_err(|e| pyo3::exceptions::PyTypeError::new_err(format!("argument {}: {}", k, e.value(py))))?
-                .put(&mut args.clone(), &k);
+            if values.has(&k) {
+                return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                    "{} got multiple values for argument '{}'", target.label, k
+                )));
+            }
+            convert(&k, &v)?.put(&mut values, &k);
         }
     }
-    let (lib, ctl, cmd) = (lib.to_string(), ctl.to_string(), cmd.to_string());
-    match py.detach(move || run_command(&lib, &ctl, &cmd, args)) {
+    match py.detach(move || run_command(&target, values)) {
         Ok(value) => value_to_py(py, value),
-        Err(CallFailure::NotFound(m)) => Err(pyo3::exceptions::PyLookupError::new_err(m)),
         Err(CallFailure::BadArgs(m)) => Err(pyo3::exceptions::PyTypeError::new_err(m)),
         Err(CallFailure::Failed(m)) => Err(CommandError::new_err(m)),
     }
 }
 
 enum CallFailure {
-    NotFound(String),
     BadArgs(String),
     Failed(String),
+}
+
+/// A resolved command: its library, id, `lib:ctl:cmd` label and declared
+/// parameter names in order.
+struct Target {
+    lib: String,
+    id: String,
+    label: String,
+    params: Vec<String>,
 }
 
 fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
@@ -844,12 +870,56 @@ fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
     else { "unknown panic".to_string() }
 }
 
-/// Runs a command and returns its value as an owned `Value`.
-fn run_command(lib: &str, ctl: &str, cmd: &str, args: DataObject) -> Result<Value, CallFailure> {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+fn resolve_command(lib: &str, ctl: &str, cmd: &str) -> Result<Target, String> {
     let label = format!("{}:{}:{}", lib, ctl, cmd);
-    let command = catch_unwind(AssertUnwindSafe(|| crate::command::Command::lookup(lib, ctl, cmd)))
-        .map_err(|p| CallFailure::NotFound(format!("no command {}: {}", label, panic_text(&p))))?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| resolve_inner(lib, ctl, cmd)))
+        .unwrap_or_else(|p| Err(panic_text(&p)))
+        .map_err(|why| format!("no command {}: {}", label, why))
+}
+
+fn resolve_inner(lib: &str, ctl: &str, cmd: &str) -> Result<Target, String> {
+    let store = crate::DataStore::new();
+    let safe = |s: &str| s.replace('-', "_");
+    // An exact name first, then one whose `-`s read as `_`.
+    fn pick(names: Vec<(String, String)>, want: &str, safe: &dyn Fn(&str) -> String) -> Option<(String, String)> {
+        names.iter().find(|(n, _)| n == want).cloned()
+            .or_else(|| names.iter().find(|(n, _)| safe(n) == want).cloned())
+    }
+    let libs: Vec<(String, String)> = std::fs::read_dir(&store.root).map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| store.exists(n, "controls"))
+        .map(|n| (n.clone(), n))
+        .collect();
+    let (lib_name, _) = pick(libs, lib, &safe).ok_or("no such library")?;
+    let entries = |list: ndata::dataarray::DataArray| -> Vec<(String, String)> {
+        list.objects().into_iter().map(|d| {
+            let o = d.object();
+            (o.get_string("name"), o.get_string("id"))
+        }).collect()
+    };
+    let controls = store.get_data(&lib_name, "controls").get_object("data").get_array("list");
+    let (ctl_name, ctl_id) = pick(entries(controls), ctl, &safe).ok_or("no such control")?;
+    let ctl_data = store.get_data(&lib_name, &ctl_id).get_object("data");
+    if !ctl_data.has("cmd") {
+        return Err("the control has no commands".to_string());
+    }
+    let (cmd_name, cmd_id) = pick(entries(ctl_data.get_array("cmd")), cmd, &safe).ok_or("no such command")?;
+    let command = crate::command::Command::new(&lib_name, &cmd_id);
+    Ok(Target {
+        label: format!("{}:{}:{}", lib_name, ctl_name, cmd_name),
+        params: command.params.iter().map(|p| p.0.clone()).collect(),
+        lib: lib_name,
+        id: cmd_id,
+    })
+}
+
+/// Runs a resolved command and returns its value as an owned `Value`.
+fn run_command(target: &Target, args: DataObject) -> Result<Value, CallFailure> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    let label = &target.label;
+    let command = catch_unwind(AssertUnwindSafe(|| crate::command::Command::new(&target.lib, &target.id)))
+        .map_err(|p| CallFailure::Failed(format!("{} could not be loaded: {}", label, panic_text(&p))))?;
     let a2 = args.clone();
     catch_unwind(AssertUnwindSafe(|| command.cast_params(a2))).map_err(|p| {
         CallFailure::BadArgs(format!("arguments for {} do not match its declared parameter types: {}", label, panic_text(&p)))

@@ -312,10 +312,15 @@ fn flowlang_call_runs_every_kind_of_command() {
     ("flowlang.call('testflow', 'testflow', 'test_loop', a=3)", r#"{"a":4,"b":[4]}"#),
     // a declared type is cast, as for an HTTP call
     ("flowlang.call('testflow', 'testflow', 'test_add', a='2', b=3)", r#""2+3=5""#),
+    // positional arguments, in declared order, and the api tree
+    ("flowlang.call('testflow', 'testflow', 'test_add', 2, b=3)", r#""2+3=5""#),
+    ("flowlang.api.testflow.testflow.test_add(300, 120)", r#""300+120=420""#),
+    ("flowlang.api.flowlang.string.trim('  x  ')", r#""x""#),
+    ("repr(flowlang.api.testflow.testflow.test_add)", r#""<flowlang.api.testflow.testflow.test_add>""#),
   ];
   for (expr, want) in cases {
     let r = ret(&call_body(expr));
-    if EMBEDDED {
+    if EMBEDDED || expr.starts_with("repr(") {  // repr calls nothing: same in both modes
       assert_eq!(json(&r.unwrap()), format!(r#"{{"v":{}}}"#, want), "{}", expr);
     } else {
       let got = json(&r.unwrap());
@@ -331,7 +336,15 @@ fn flowlang_call_errors() {
     ("flowlang.call('testflow', 'testflow', 'test_python')",
      "CommandError: testflow:testflow:test_python: missing required parameter: a"),
     ("flowlang.call('testflow', 'testflow', 'no_such_cmd')",
-     "LookupError: no command testflow:testflow:no_such_cmd: No such command testflow:testflow:no_such_cmd"),
+     "LookupError: no command testflow:testflow:no_such_cmd: no such command"),
+    ("flowlang.call('no_such_lib', 'testflow', 'test_add')",
+     "LookupError: no command no_such_lib:testflow:test_add: no such library"),
+    ("flowlang.call('testflow', 'testflow', 'test_add', 1, 2, 3)",
+     "TypeError: testflow:testflow:test_add takes 2 argument(s) (a, b) but 3 positional were given"),
+    ("flowlang.call('testflow', 'testflow', 'test_add', 1, a=2)",
+     "TypeError: testflow:testflow:test_add got multiple values for argument 'a'"),
+    ("flowlang.api.testflow.testflow(1)",
+     "TypeError: flowlang.api.testflow.testflow is not a command"),
     ("flowlang.call('testflow', 'testflow', 'test_add', a='abc', b=1)",
      "TypeError: arguments for testflow:testflow:test_add do not match its declared parameter types: "),
     ("flowlang.call('testflow', 'testflow', 'test_add', a={1, 2}, b=1)",
