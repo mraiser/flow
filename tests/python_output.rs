@@ -91,7 +91,9 @@ return 1"#);
   assert!(e.lines().any(|l| l == format!("{}INFO mylog: an info", t)), "{}", e);
   assert!(e.lines().any(|l| l == format!("{}WARNING root: a warning", t)), "{}", e);
   assert!(lines_with(e, "a debug").is_empty(), "debug is below the INFO level:\n{}", e);
-  assert!(o.lines().any(|l| l == "[py] from a thread"), "{}", o);
+  // A thread the command starts: "[py]", or the command's own label where
+  // new threads inherit the context (free-threaded 3.14's default).
+  assert!(o.lines().any(|l| l == "[py] from a thread" || l == format!("{}from a thread", t)), "{}", o);
   // A partial line is flushed with the command that wrote it.
   assert!(o.lines().any(|l| l == format!("{}unfinished", t)), "{}", o);
   assert!(o.lines().any(|l| l == "[py next:ctl:cmd] next command"), "{}", o);

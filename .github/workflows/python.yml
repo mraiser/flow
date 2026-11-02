@@ -13,7 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # 3.14t: free-threaded CPython - Python commands run in parallel
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,6 +30,6 @@ jobs:
       - name: Generated Python sources (type hints, stubs)
         run: cargo test --release --features=serde_support --lib builder::python
       - name: Embedded (python_runtime)
-        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols --test python_output --test python_pytest --test python_exists --test python_check --test python_records --test python_output_protocol
+        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols --test python_output --test python_pytest --test python_exists --test python_check --test python_records --test python_output_protocol --test python_parallel
       - name: Subprocess (no python_runtime)
         run: cargo test --release --features=serde_support --test python_commands --test python_output --test python_pytest --test python_exists --test python_check --test python_records --test python_output_protocol

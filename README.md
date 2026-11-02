@@ -316,7 +316,19 @@ cargo build --features java_runtime        # loads a JVM via JNI
   result). Unless a command configures logging itself, the root logger gets
   a `LEVEL name: message` handler at Python's default WARNING level; set
   `FLOWLANG_PYTHON_LOG_LEVEL=INFO` (or `DEBUG`, …) to change it. Threads a
-  command starts write with a plain `[py]` label.
+  command starts write with a plain `[py]` label (or the command's, where
+  new threads inherit the context — free-threaded 3.14's default).
+
+  Concurrency: with a standard CPython, Python commands share the GIL —
+  CPU-bound commands run one at a time (the lock is released while
+  `flowlang.call` runs another command, so a slow callee blocks no one).
+  Built against a free-threaded CPython (3.13t/3.14t:
+  `PYO3_PYTHON=python3.14t cargo build --features python_runtime`), Python
+  commands run in parallel: `ndata_py` and `flowlang` declare that they do
+  not need the GIL, and four CPU-bound commands on four cores finish about
+  3.6× faster than one after another. A third-party extension module that
+  does not support free-threading re-enables the GIL when imported (Python
+  warns when it does).
 
   Python commands hot-reload: when a command's generated file changes
   (`flowb`, or newbound's `dev.code` edits, regenerate it), the next call
