@@ -44,6 +44,8 @@ fn no_object_outlives_its_last_handle() {
     ("pop", "a = ndata_py.NDataArray()\nfor _ in range(200):\n    a.append(ndata_py.NDataObject())\n    a.pop()\nreturn None"),
     ("setitem", "o = ndata_py.NDataObject()\nfor i in range(200):\n    o['k'] = {'n': i}\nreturn None"),
     ("convert", "return [{'n': i} for i in range(200)]"),
+    ("list_ops", "a = ndata_py.NDataArray()\nfor i in range(50):\n    a.append({'n': i})\n    a.insert(0, [i])\na.reverse()\nb = a[::-1]\nc = a.copy()\nwhile len(a) > 2:\n    a.remove(a[1])\na.clear()\nreturn None"),
+    ("dict_ops", "o = ndata_py.NDataObject()\nfor i in range(50):\n    o.update({'k%d' % i: {'n': i}})\n    o.setdefault('s%d' % i, [i])\nd = o.to_dict()\nc = o.copy()\nfor i in range(20):\n    o.pop('k%d' % i, None)\n    o.popitem()\no.clear()\nreturn None"),
   ];
   for (name, body) in cases {
     let call = command(&base, &format!("rc_{}", name), body);

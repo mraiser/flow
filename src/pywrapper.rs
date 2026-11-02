@@ -252,7 +252,6 @@ impl NDataObjectPy {
     fn to_json(&self) -> String { self.0.to_string() }
     fn shallow_copy(&self) -> Self { NDataObjectPy(self.0.shallow_copy()) }
     fn deep_copy(&self) -> Self { NDataObjectPy(self.0.deep_copy()) }
-    fn keys(&self) -> Vec<String> { self.0.get_keys() }
 
     fn get_string(&self, key: &str) -> PyResult<String> { self.0.try_get_string(key).map_err(to_py_err_object) }
     fn get_int(&self, key: &str) -> PyResult<i64> { self.0.try_get_int(key).map_err(to_py_err_object) }
@@ -272,13 +271,138 @@ impl NDataObjectPy {
     fn put_null(&self, key: &str) { self.0.clone().put_null(key); }
 
     fn __str__(&self) -> String { self.0.to_string() }
-    fn __repr__(&self) -> String { format!("<NDataObject ref={}>", self.0.data_ref) }
-    fn __len__(&self) -> usize { self.0.get_keys().len() } // Assumes DataObject::get_keys().len() is efficient enough
-    fn __contains__(&self, key: &str) -> bool { self.0.has(key) }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!("NDataObject({})", self.to_dict(py)?.bind(py).repr()?))
+    }
+    fn __len__(&self) -> usize { self.0.get_keys().len() }
+    fn __contains__(&self, key: &Bound<'_, PyAny>) -> bool {
+        match key.extract::<String>() { Ok(k) => self.0.has(&k), Err(_) => false }
+    }
 
-    fn __getitem__(&self, key: &str, py: Python) -> PyResult<Py<PyAny>> {
-        let data = self.0.try_get_property(key).map_err(to_py_err_object)?;
+    fn __getitem__(&self, key: &Bound<'_, PyAny>, py: Python) -> PyResult<Py<PyAny>> {
+        let k = key.extract::<String>().map_err(|_| pyo3::exceptions::PyKeyError::new_err(key.clone().unbind()))?;
+        let data = self.0.try_get_property(&k).map_err(to_py_err_object)?;
         data_to_py_any(py, data)
+    }
+
+    // ---- the dict protocol (collections.abc.MutableMapping) ----
+
+    /// Iterates over a snapshot of the keys.
+    fn __iter__(&self, py: Python<'_>) -> PyResult<Py<NDataPyIterator>> {
+        let items = self.0.get_keys().into_iter().map(|k| k.into_py_any(py)).collect::<PyResult<Vec<_>>>()?;
+        Py::new(py, NDataPyIterator { items, index: 0 })
+    }
+
+    /// Live views, as dict's: `collections.abc.KeysView(self)` etc.
+    fn keys(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> { abc_view(slf.as_any(), "KeysView") }
+    fn values(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> { abc_view(slf.as_any(), "ValuesView") }
+    fn items(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> { abc_view(slf.as_any(), "ItemsView") }
+
+    #[pyo3(signature = (key, default = None))]
+    fn get(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+        match key.extract::<String>().ok().and_then(|k| self.0.try_get_property(&k).ok()) {
+            Some(data) => data_to_py_any(py, data),
+            None => Ok(default.unwrap_or_else(|| py.None())),
+        }
+    }
+
+    #[pyo3(signature = (key, *default))]
+    fn pop(&self, py: Python<'_>, key: &Bound<'_, PyAny>, default: &Bound<'_, PyTuple>) -> PyResult<Py<PyAny>> {
+        if default.len() > 1 {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!("pop expected at most 2 arguments, got {}", default.len() + 1)));
+        }
+        if let Ok(k) = key.extract::<String>() {
+            if let Ok(data) = self.0.try_get_property(&k) {
+                let item = Value::from_data(data);
+                self.0.clone().remove_property(&k);
+                return value_to_py(py, item);
+            }
+        }
+        match default.get_item(0) {
+            Ok(d) => Ok(d.unbind()),
+            Err(_) => Err(pyo3::exceptions::PyKeyError::new_err(key.clone().unbind())),
+        }
+    }
+
+    fn popitem(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let k = match self.0.get_keys().pop() {
+            Some(k) => k,
+            None => return Err(pyo3::exceptions::PyKeyError::new_err("popitem(): NDataObject is empty")),
+        };
+        let item = Value::from_data(self.0.get_property(&k));
+        self.0.clone().remove_property(&k);
+        (k, value_to_py(py, item)?).into_py_any(py)
+    }
+
+    #[pyo3(signature = (key, default = None))]
+    fn setdefault(&self, py: Python<'_>, key: &str, default: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
+        if !self.0.has(key) {
+            match default {
+                Some(d) => py_any_to_value(d)?.put(&mut self.0.clone(), key),
+                None => self.0.clone().put_null(key),
+            }
+        }
+        data_to_py_any(py, self.0.get_property(key))
+    }
+
+    /// `update(mapping_or_pairs=(), **kwargs)`, as dict's.
+    #[pyo3(signature = (other = None, **kwargs))]
+    fn update(&self, other: Option<&Bound<'_, PyAny>>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+        let mut target = self.0.clone();
+        if let Some(other) = other {
+            if other.hasattr("keys")? {
+                for k in other.call_method0("keys")?.try_iter()? {
+                    let k = k?;
+                    let key: String = k.extract().map_err(|_| dict_key_error(&k))?;
+                    py_any_to_value(&other.get_item(&k)?)?.put(&mut target, &key);
+                }
+            } else {
+                for pair in other.try_iter()? {
+                    let (k, v): (Bound<'_, PyAny>, Bound<'_, PyAny>) = pair?.extract()?;
+                    let key: String = k.extract().map_err(|_| dict_key_error(&k))?;
+                    py_any_to_value(&v)?.put(&mut target, &key);
+                }
+            }
+        }
+        if let Some(kw) = kwargs {
+            for (k, v) in kw.iter() {
+                py_any_to_value(&v)?.put(&mut target, &k.extract::<String>()?);
+            }
+        }
+        Ok(())
+    }
+
+    fn clear(&self) {
+        let mut target = self.0.clone();
+        for k in self.0.get_keys() { target.remove_property(&k); }
+    }
+
+    /// A shallow copy: a new object sharing the nested containers, as dict.copy().
+    fn copy(&self) -> Self { NDataObjectPy(self.0.shallow_copy()) }
+
+    /// A deep copy as native Python values: dict, list, bytes, str, int, float,
+    /// bool, None. Use it to hand data to code that requires a real dict.
+    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { to_native(py, Value::Object(self.0.clone())) }
+
+    /// Equal to a dict, Mapping or NDataObject with equal keys and values.
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let mine = self.to_dict(py)?;
+        let theirs = if let Ok(o) = other.extract::<PyRef<NDataObjectPy>>() {
+            o.to_dict(py)?.into_bound(py)
+        } else if other.is_instance_of::<PyDict>() {
+            other.clone()
+        } else if other.is_instance(&py.import("collections.abc")?.getattr("Mapping")?)? {
+            py.get_type::<PyDict>().call1((other,))?
+        } else {
+            return Ok(py.NotImplemented());
+        };
+        mine.bind(py).eq(theirs)?.into_py_any(py)
+    }
+
+    fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let eq = self.__eq__(py, other)?;
+        if eq.is(&py.NotImplemented()) { return Ok(eq); }
+        (!eq.bind(py).is_truthy()?).into_py_any(py)
     }
 
     fn __setitem__(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -286,13 +410,65 @@ impl NDataObjectPy {
         Ok(())
     }
 
-    fn __delitem__(&self, key: &str) -> PyResult<()> {
-        if !self.0.has(key) {
-            return Err(pyo3::exceptions::PyKeyError::new_err(key.to_string()));
+    fn __delitem__(&self, key: &Bound<'_, PyAny>) -> PyResult<()> {
+        match key.extract::<String>() {
+            Ok(k) if self.0.has(&k) => { self.0.clone().remove_property(&k); Ok(()) }
+            _ => Err(pyo3::exceptions::PyKeyError::new_err(key.clone().unbind())),
         }
-        self.0.clone().remove_property(key);
-        Ok(())
     }
+}
+
+fn dict_key_error(k: &Bound<'_, PyAny>) -> PyErr {
+    let r = k.repr().map(|r| r.to_string()).unwrap_or_default();
+    pyo3::exceptions::PyTypeError::new_err(format!("NDataObject keys must be str, got {} key {}", type_name(k), r))
+}
+
+fn abc_view(mapping: &Bound<'_, PyAny>, view: &str) -> PyResult<Py<PyAny>> {
+    Ok(mapping.py().import("collections.abc")?.getattr(view)?.call1((mapping,))?.unbind())
+}
+
+/// Deep conversion to native Python values (dict, list, bytes, scalars).
+fn to_native(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
+    match value {
+        Value::Object(o) => {
+            let d = PyDict::new(py);
+            for k in o.get_keys() {
+                d.set_item(&k, to_native(py, Value::from_data(o.get_property(&k)))?)?;
+            }
+            d.into_py_any(py)
+        }
+        Value::Array(a) => {
+            let items = a.objects().into_iter().map(|d| to_native(py, Value::from_data(d))).collect::<PyResult<Vec<_>>>()?;
+            PyList::new(py, items)?.into_py_any(py)
+        }
+        Value::Bytes(b) => {
+            let data = b.try_get_data().map_err(to_py_err_bytes)?;
+            PyBytes::new(py, &data).into_py_any(py)
+        }
+        scalar => value_to_py(py, scalar),
+    }
+}
+
+/// `ndata_py.to_py(x)`: a deep native copy of an ndata value - and of any
+/// dict/list/tuple containing them - for code that needs real dicts and
+/// lists, e.g. `json.dumps(x, default=ndata_py.to_py)`. Anything else is
+/// returned as is.
+#[pyfunction]
+fn to_py(py: Python<'_>, x: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    if let Ok(o) = x.extract::<PyRef<NDataObjectPy>>() { return to_native(py, Value::Object(o.0.clone())); }
+    if let Ok(a) = x.extract::<PyRef<NDataArrayPy>>() { return to_native(py, Value::Array(a.0.clone())); }
+    if let Ok(b) = x.extract::<PyRef<NDataBytesPy>>() { return to_native(py, Value::Bytes(b.0.clone())); }
+    if let Ok(d) = x.cast::<PyDict>() {
+        let out = PyDict::new(py);
+        for (k, v) in d.iter() { out.set_item(k, to_py(py, &v)?)?; }
+        return out.into_py_any(py);
+    }
+    if x.is_instance_of::<PyList>() || x.is_instance_of::<PyTuple>() {
+        let items = x.try_iter()?.map(|i| to_py(py, &i?)).collect::<PyResult<Vec<_>>>()?;
+        if x.is_instance_of::<PyTuple>() { return PyTuple::new(py, items)?.into_py_any(py); }
+        return PyList::new(py, items)?.into_py_any(py);
+    }
+    Ok(x.clone().unbind())
 }
 
 // --- Custom Iterator for NDataArrayPy ---
@@ -358,13 +534,105 @@ impl NDataArrayPy {
     }
 
     fn __str__(&self) -> String { self.0.to_string() }
-    fn __repr__(&self) -> String { format!("<NDataArray ref={}>", self.0.data_ref) }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!("NDataArray({})", self.to_list(py)?.bind(py).repr()?))
+    }
     fn __len__(&self) -> usize { self.0.len() }
+
+    // ---- the list protocol (collections.abc.MutableSequence) ----
+
+    fn __contains__(&self, py: Python<'_>, x: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(self.position(py, x, 0, self.0.len())?.is_some())
+    }
+
+    #[pyo3(signature = (x, start = 0, stop = None))]
+    fn index(&self, py: Python<'_>, x: &Bound<'_, PyAny>, start: isize, stop: Option<isize>) -> PyResult<usize> {
+        let len = self.0.len() as isize;
+        let clamp = |i: isize| (if i < 0 { i + len } else { i }).clamp(0, len) as usize;
+        let (from, to) = (clamp(start), clamp(stop.unwrap_or(len)));
+        self.position(py, x, from, to)?
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("value is not in NDataArray"))
+    }
+
+    fn count(&self, py: Python<'_>, x: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let mut n = 0;
+        for d in self.0.objects() {
+            if data_to_py_any(py, d)?.bind(py).eq(x)? { n += 1; }
+        }
+        Ok(n)
+    }
+
+    fn remove(&self, py: Python<'_>, x: &Bound<'_, PyAny>) -> PyResult<()> {
+        match self.position(py, x, 0, self.0.len())? {
+            Some(i) => { self.0.clone().remove_property(i); Ok(()) }
+            None => Err(pyo3::exceptions::PyValueError::new_err("NDataArray.remove(x): x not in NDataArray")),
+        }
+    }
+
+    /// Inserts before `index`, as list.insert (out-of-range indices clamp).
+    fn insert(&self, index: isize, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let v = py_any_to_value(value)?;
+        let len = self.0.len();
+        let at = (if index < 0 { index + len as isize } else { index }).clamp(0, len as isize) as usize;
+        let mut arr = self.0.clone();
+        // ndata has no insert: lift the tail off (as handles), push, put it back.
+        let tail: Vec<Value> = (at..len).map(|k| Value::from_data(arr.get_property(k))).collect();
+        for _ in at..len { arr.remove_property(at); }
+        v.push(&mut arr);
+        for t in tail { t.push(&mut arr); }
+        Ok(())
+    }
+
+    fn reverse(&self) {
+        let mut arr = self.0.clone();
+        let items: Vec<Value> = arr.objects().into_iter().map(Value::from_data).collect();
+        while arr.len() > 0 { arr.remove_property(arr.len() - 1); }
+        for v in items.into_iter().rev() { v.push(&mut arr); }
+    }
+
+    fn clear(&self) {
+        let mut arr = self.0.clone();
+        while arr.len() > 0 { arr.remove_property(arr.len() - 1); }
+    }
+
+    /// A shallow copy, as list.copy().
+    fn copy(&self) -> Self { NDataArrayPy(self.0.shallow_copy()) }
+
+    /// A deep copy as native Python values (list, dict, bytes, scalars).
+    fn to_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> { to_native(py, Value::Array(self.0.clone())) }
+
+    fn __iadd__(&self, other: &Bound<'_, PyAny>) -> PyResult<()> { self.extend(other) }
+
+    /// Equal to a list or NDataArray with equal items.
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let mine = self.to_list(py)?;
+        let theirs = if let Ok(a) = other.extract::<PyRef<NDataArrayPy>>() {
+            a.to_list(py)?.into_bound(py)
+        } else if other.is_instance_of::<PyList>() {
+            other.clone()
+        } else {
+            return Ok(py.NotImplemented());
+        };
+        mine.bind(py).eq(theirs)?.into_py_any(py)
+    }
+
+    fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let eq = self.__eq__(py, other)?;
+        if eq.is(&py.NotImplemented()) { return Ok(eq); }
+        (!eq.bind(py).is_truthy()?).into_py_any(py)
+    }
 
     fn __iter__(slf: PyRef<'_, Self>, py: Python) -> PyResult<Py<NDataPyIterator>> {
         let items_data = slf.0.objects();
         let items_py = items_data.into_iter().map(|d| data_to_py_any(py, d)).collect::<PyResult<Vec<_>>>()?;
         Py::new(py, NDataPyIterator { items: items_py, index: 0 })
+    }
+
+    /// Iterates over a snapshot, last item first.
+    fn __reversed__(slf: PyRef<'_, Self>, py: Python) -> PyResult<Py<NDataPyIterator>> {
+        let mut items = slf.0.objects().into_iter().map(|d| data_to_py_any(py, d)).collect::<PyResult<Vec<_>>>()?;
+        items.reverse();
+        Py::new(py, NDataPyIterator { items, index: 0 })
     }
 
     fn __getitem__(&self, index_or_slice: &Bound<'_, PyAny>, py: Python) -> PyResult<Py<PyAny>> {
@@ -376,18 +644,14 @@ impl NDataArrayPy {
         }
         if let Ok(slice) = index_or_slice.cast::<PySlice>() {
              // PySlice::indices can return an error if step is 0
-            let indices = slice.indices(self.0.len() as isize)?;
-            let new_array = DataArray::new();
-            // Ensure indices.start, indices.stop, indices.step are valid
-            if indices.step == 0 {
-                return Err(pyo3::exceptions::PyValueError::new_err("slice step cannot be zero"));
-            }
-            for i in (indices.start..indices.stop).step_by(indices.step as usize) {
-                 // get_property panics on error, use try_get_property
-                match self.0.try_get_property(i as usize) {
-                    Ok(data) => new_array.clone().push_property(data),
-                    Err(_) => return Err(pyo3::exceptions::PyIndexError::new_err("slice index out of bounds during construction"))
-                }
+            // indices() rejects a zero step. Walk slicelength items from start
+            // by step - a negative step included (a[::-1] was empty: the
+            // step was cast to usize).
+            let ind = slice.indices(self.0.len() as isize)?;
+            let mut new_array = DataArray::new();
+            for k in 0..ind.slicelength {
+                let i = (ind.start + k as isize * ind.step) as usize;
+                Value::from_data(self.0.get_property(i)).push(&mut new_array);
             }
             return NDataArrayPy(new_array).into_py_any(py);
         }
@@ -406,6 +670,16 @@ impl NDataArrayPy {
         let py_idx = normalize_index(index, len)?; // Use normalize_index
         self.0.clone().remove_property(py_idx); // remove_property in Rust panics on out of bounds
         Ok(())
+    }
+}
+
+impl NDataArrayPy {
+    /// The first index in from..to whose item == x.
+    fn position(&self, py: Python<'_>, x: &Bound<'_, PyAny>, from: usize, to: usize) -> PyResult<Option<usize>> {
+        for i in from..to.min(self.0.len()) {
+            if data_to_py_any(py, self.0.get_property(i))?.bind(py).eq(x)? { return Ok(Some(i)); }
+        }
+        Ok(None)
     }
 }
 
@@ -466,6 +740,28 @@ impl NDataBytesPy {
         format!("<NDataBytes ref={} len={}>", self.0.data_ref, len)
     }
     fn __len__(&self) -> PyResult<usize> { self.current_len() }
+
+    fn __bytes__<'py>(&self, py: Python<'py>) -> PyResult<Py<PyBytes>> { self.get_data(py) }
+
+    /// Equal to bytes, bytearray or NDataBytes with the same content.
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let theirs: Vec<u8> = if let Ok(b) = other.extract::<PyRef<NDataBytesPy>>() {
+            b.0.try_get_data().map_err(to_py_err_bytes)?
+        } else if let Ok(b) = other.cast::<PyBytes>() {
+            b.as_bytes().to_vec()
+        } else if let Ok(b) = other.cast::<PyByteArray>() {
+            b.to_vec()
+        } else {
+            return Ok(py.NotImplemented());
+        };
+        (self.0.try_get_data().map_err(to_py_err_bytes)? == theirs).into_py_any(py)
+    }
+
+    fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let eq = self.__eq__(py, other)?;
+        if eq.is(&py.NotImplemented()) { return Ok(eq); }
+        (!eq.bind(py).is_truthy()?).into_py_any(py)
+    }
 }
 
 
@@ -490,6 +786,7 @@ fn ndata_gc() {
 pub(crate) fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ndata_init, m)?)?;
     m.add_function(wrap_pyfunction!(ndata_gc, m)?)?;
+    m.add_function(wrap_pyfunction!(to_py, m)?)?;
     m.add("NDataPyError", m.py().get_type::<NDataPyError>())?;
     m.add_class::<NDataObjectPy>()?;
     m.add_class::<NDataArrayPy>()?;
@@ -597,7 +894,13 @@ pub(crate) fn flowlang(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Called once, when the interpreter is set up (pyenv).
 pub(crate) fn register_modules(py: Python<'_>) -> PyResult<()> {
     let modules = py.import("sys")?.getattr("modules")?;
-    modules.set_item("ndata_py", pyo3::wrap_pymodule!(ndata_py)(py))?;
+    let nd = pyo3::wrap_pymodule!(ndata_py)(py);
+    // isinstance(o, Mapping) / isinstance(a, MutableSequence) hold, so code
+    // that accepts any mapping or sequence accepts these.
+    let abc = py.import("collections.abc")?;
+    abc.getattr("MutableMapping")?.call_method1("register", (nd.bind(py).getattr("NDataObject")?,))?;
+    abc.getattr("MutableSequence")?.call_method1("register", (nd.bind(py).getattr("NDataArray")?,))?;
+    modules.set_item("ndata_py", nd)?;
     modules.set_item("flowlang", pyo3::wrap_pymodule!(flowlang)(py))?;
     Ok(())
 }

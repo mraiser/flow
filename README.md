@@ -285,6 +285,26 @@ cargo build --features java_runtime        # loads a JVM via JNI
   `ndata_py` is absent and `flowlang.call` raises a `RuntimeError` saying the
   embedded runtime is required.
 
+  The wrappers behave like the built-in types they stand for, while
+  reading and writing the shared ndata store directly:
+
+  - `NDataObject` is a `MutableMapping` (registered with `collections.abc`):
+    `[]`, `in`, `len`, iteration over keys, live `keys()`/`values()`/`items()`
+    views, `get`, `pop`, `popitem`, `setdefault`, `update`, `clear`, `copy`
+    (shallow), and `==` with any `dict` or mapping. Keys must be `str`.
+  - `NDataArray` is a `MutableSequence`: indexing and slicing (including
+    negative steps), `in`, `index`, `count`, `append`, `extend`, `+=`,
+    `insert`, `remove`, `pop`, `reverse`, `reversed()`, `clear`, `copy`, and
+    `==` with any `list`.
+  - `NDataBytes` supports `bytes(b)` and `==` with `bytes`/`bytearray`.
+  - `to_dict()` / `to_list()` / `ndata_py.to_py(x)` make deep native copies,
+    for code that requires a real `dict` or `list`. `json.dumps` accepts only
+    real dicts and lists, so serialize with
+    `json.dumps(x, default=ndata_py.to_py)` (or `x.to_json()`, ndata's own
+    JSON, which also encodes bytes).
+  - Like `dict` and `list`, the wrappers are unhashable, and their `repr`
+    shows the contents: `NDataObject({'a': 1})`.
+
   Without `python_runtime`, Python commands run in a `python3` subprocess
   (the `venv` interpreter if present) with the same envelope, conversion
   rules and error reports; the difference is that data crosses by value as
