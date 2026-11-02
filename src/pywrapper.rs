@@ -15,6 +15,12 @@ use ndata::data::Data;
 
 // --- Python Exception Definition ---
 create_exception!(ndata_py, NDataPyError, pyo3::exceptions::PyException);
+create_exception!(
+    flowlang,
+    CommandError,
+    pyo3::exceptions::PyException,
+    "A command run by flowlang.call failed: it raised or panicked, or returned {\"status\": \"err\", ...}. str(e) is its message."
+);
 
 // --- PyO3 Wrapper Structs ---
 
@@ -72,27 +78,27 @@ fn normalize_index(index: isize, len: usize) -> PyResult<usize> {
 /// objects) raises `TypeError` naming the type and an explicit conversion.
 /// In particular a list of small ints is a list, not bytes, and a big int is
 /// an error, not a float.
-pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
+pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Converted> {
     if let Ok(obj) = py_any.extract::<PyRef<NDataObjectPy>>() {
-        return Ok(Data::DObject(obj.0.clone().data_ref));
+        return Ok(Converted::object(obj.0.clone()));
     }
     if let Ok(arr) = py_any.extract::<PyRef<NDataArrayPy>>() {
-        return Ok(Data::DArray(arr.0.clone().data_ref));
+        return Ok(Converted::array(arr.0.clone()));
     }
     if let Ok(bytes_obj) = py_any.extract::<PyRef<NDataBytesPy>>() {
-        return Ok(Data::DBytes(bytes_obj.0.clone().data_ref));
+        return Ok(Converted::bytes(bytes_obj.0.clone()));
     }
-    if py_any.is_none() { return Ok(Data::DNull); }
+    if py_any.is_none() { return Ok(Converted::value(Data::DNull)); }
     // bool before int: bool is a subclass of int.
-    if py_any.is_instance_of::<PyBool>() { return Ok(Data::DBoolean(py_any.extract::<bool>()?)); }
-    if py_any.is_instance_of::<PyInt>() { return int_to_data(py_any); }
-    if py_any.is_instance_of::<PyFloat>() { return Ok(Data::DFloat(py_any.extract::<f64>()?)); }
-    if py_any.is_instance_of::<PyString>() { return Ok(Data::DString(py_any.extract::<String>()?)); }
+    if py_any.is_instance_of::<PyBool>() { return Ok(Converted::value(Data::DBoolean(py_any.extract::<bool>()?))); }
+    if py_any.is_instance_of::<PyInt>() { return int_to_data(py_any).map(Converted::value); }
+    if py_any.is_instance_of::<PyFloat>() { return Ok(Converted::value(Data::DFloat(py_any.extract::<f64>()?))); }
+    if py_any.is_instance_of::<PyString>() { return Ok(Converted::value(Data::DString(py_any.extract::<String>()?))); }
     if let Ok(py_bytes) = py_any.cast::<PyBytes>() {
-        return Ok(Data::DBytes(DataBytes::from_bytes(&py_bytes.as_bytes().to_vec()).data_ref));
+        return Ok(Converted::bytes(DataBytes::from_bytes(&py_bytes.as_bytes().to_vec())));
     }
     if let Ok(py_bytearray) = py_any.cast::<PyByteArray>() {
-        return Ok(Data::DBytes(DataBytes::from_bytes(&py_bytearray.to_vec()).data_ref));
+        return Ok(Converted::bytes(DataBytes::from_bytes(&py_bytearray.to_vec())));
     }
     if let Ok(dict) = py_any.cast::<PyDict>() {
         let obj = DataObject::new();
@@ -104,16 +110,18 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
                     type_name(&key), key.repr()?
                 ))),
             };
-            obj.clone().set_property(&key_str, py_any_to_data(&value)?);
+            let v = py_any_to_data(&value)?;
+            obj.clone().set_property(&key_str, v.data());
         }
-        return Ok(Data::DObject(obj.data_ref));
+        return Ok(Converted::object(obj));
     }
     if py_any.is_instance_of::<PyList>() || py_any.is_instance_of::<PyTuple>() {
         let arr = DataArray::new();
         for item in py_any.try_iter()? {
-            arr.clone().push_property(py_any_to_data(&item?)?);
+            let v = py_any_to_data(&item?)?;
+            arr.clone().push_property(v.data());
         }
-        return Ok(Data::DArray(arr.data_ref));
+        return Ok(Converted::array(arr));
     }
     // Numeric types that are not int/float subclasses (numpy scalars,
     // fractions.Fraction) register with the numbers ABCs. Decimal registers
@@ -122,10 +130,10 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
     let numbers = py_any.py().import("numbers")?;
     if py_any.is_instance(&numbers.getattr("Integral")?)? {
         let as_int = py_any.py().import("operator")?.call_method1("index", (py_any,))?;
-        return int_to_data(&as_int);
+        return int_to_data(&as_int).map(Converted::value);
     }
     if py_any.is_instance(&numbers.getattr("Real")?)? {
-        return Ok(Data::DFloat(py_any.extract::<f64>()?));
+        return Ok(Converted::value(Data::DFloat(py_any.extract::<f64>()?)));
     }
     let type_name = type_name(py_any);
     let hint = match type_name.as_str() {
@@ -137,6 +145,35 @@ pub(crate) fn py_any_to_data(py_any: &Bound<'_, PyAny>) -> PyResult<Data> {
     Err(pyo3::exceptions::PyTypeError::new_err(format!(
         "cannot convert Python {} to ndata{}", type_name, hint
     )))
+}
+
+/// A converted value. For a container it also owns a handle, so the container
+/// stays alive until the caller has stored `data()` somewhere (which takes
+/// that store's own reference). A bare `Data::DObject(ref)` holds no
+/// reference: dropping a handle queues a decrement, and an ndata GC on any
+/// thread (Command::new runs one) applies it - so a container whose last
+/// handle was dropped before the caller stored it could be freed first
+/// ("Heap::incr: Invalid index").
+pub struct Converted {
+    data: Data,
+    _owner: Owner,
+}
+
+#[allow(dead_code)] // the handles are held, never read: holding them is the point
+enum Owner {
+    None,
+    Object(DataObject),
+    Array(DataArray),
+    Bytes(DataBytes),
+}
+
+impl Converted {
+    /// The value, to store while `self` is still alive.
+    pub fn data(&self) -> Data { self.data.clone() }
+    fn value(data: Data) -> Self { Converted { data, _owner: Owner::None } }
+    fn object(o: DataObject) -> Self { Converted { data: Data::DObject(o.data_ref), _owner: Owner::Object(o) } }
+    fn array(a: DataArray) -> Self { Converted { data: Data::DArray(a.data_ref), _owner: Owner::Array(a) } }
+    fn bytes(b: DataBytes) -> Self { Converted { data: Data::DBytes(b.data_ref), _owner: Owner::Bytes(b) } }
 }
 
 /// The plain type name (`list`, `Decimal`), as Python's own messages use it.
@@ -269,8 +306,8 @@ impl NDataObjectPy {
     }
 
     fn __setitem__(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let data = py_any_to_data(value)?;
-        self.0.clone().set_property(key, data);
+        let v = py_any_to_data(value)?;
+        self.0.clone().set_property(key, v.data());
         Ok(())
     }
 
@@ -316,8 +353,8 @@ impl NDataArrayPy {
     fn deep_copy(&self) -> Self { NDataArrayPy(self.0.deep_copy()) }
 
     fn append(&self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let data = py_any_to_data(value)?;
-        self.0.clone().push_property(data);
+        let v = py_any_to_data(value)?;
+        self.0.clone().push_property(v.data());
         Ok(())
     }
 
@@ -383,8 +420,8 @@ impl NDataArrayPy {
     fn __setitem__(&self, index: isize, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let len = self.0.len();
         let py_idx = normalize_index(index, len)?; // Use normalize_index
-        let data = py_any_to_data(value)?;
-        self.0.clone().set_property(py_idx, data);
+        let v = py_any_to_data(value)?;
+        self.0.clone().set_property(py_idx, v.data());
         Ok(())
     }
 
@@ -474,7 +511,7 @@ fn ndata_gc() {
 }
 
 #[pymodule]
-fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ndata_init, m)?)?;
     m.add_function(wrap_pyfunction!(ndata_gc, m)?)?;
     m.add("NDataPyError", m.py().get_type::<NDataPyError>())?;
@@ -483,5 +520,112 @@ fn ndata_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NDataBytesPy>()?;
     m.add_class::<NDataPyIterator>()?;
 
+    Ok(())
+}
+
+
+// --- The `flowlang` module: calling other commands from Python ---
+
+/// `flowlang.call(lib, ctl, cmd, /, **kwargs)` runs any command - Rust,
+/// Python, flow, JavaScript or Java - and returns its value:
+///
+/// - a non-flow command's return value (its `a`);
+/// - a flow's single output, or all of its outputs as an `NDataObject` when it
+///   has several.
+///
+/// Raises `LookupError` for an unknown command, `TypeError` when an argument
+/// cannot be cast to the parameter's declared type, and
+/// `flowlang.CommandError` when the command fails: it raises or panics, or
+/// returns an object whose `status` is `"err"` (the error envelope every
+/// command wrapper uses). The interpreter lock is released while the command
+/// runs, so other Python commands are not blocked by a slow callee.
+#[pyfunction]
+#[pyo3(signature = (lib, ctl, cmd, /, **kwargs))]
+fn call(py: Python<'_>, lib: &str, ctl: &str, cmd: &str, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
+    let args = DataObject::new();
+    if let Some(kw) = kwargs {
+        for (k, v) in kw.iter() {
+            let k: String = k.extract()?;
+            let d = py_any_to_data(&v).map_err(|e| {
+                pyo3::exceptions::PyTypeError::new_err(format!("argument {}: {}", k, e.value(py)))
+            })?;
+            args.clone().set_property(&k, d.data());
+        }
+    }
+    let (lib, ctl, cmd) = (lib.to_string(), ctl.to_string(), cmd.to_string());
+    match py.detach(move || run_command(&lib, &ctl, &cmd, args)) {
+        Ok((value, _keepalive)) => data_to_py_any(py, value),
+        Err(CallFailure::NotFound(m)) => Err(pyo3::exceptions::PyLookupError::new_err(m)),
+        Err(CallFailure::BadArgs(m)) => Err(pyo3::exceptions::PyTypeError::new_err(m)),
+        Err(CallFailure::Failed(m)) => Err(CommandError::new_err(m)),
+    }
+}
+
+enum CallFailure {
+    NotFound(String),
+    BadArgs(String),
+    Failed(String),
+}
+
+fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
+    else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
+    else { "unknown panic".to_string() }
+}
+
+/// Runs a command; the value plus the result object that owns it, which the
+/// caller keeps alive until the value is converted (a concurrent ndata GC
+/// could otherwise collect it in between).
+fn run_command(lib: &str, ctl: &str, cmd: &str, args: DataObject) -> Result<(Data, DataObject), CallFailure> {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    let label = format!("{}:{}:{}", lib, ctl, cmd);
+    let command = catch_unwind(AssertUnwindSafe(|| crate::command::Command::lookup(lib, ctl, cmd)))
+        .map_err(|p| CallFailure::NotFound(format!("no command {}: {}", label, panic_text(&p))))?;
+    let a2 = args.clone();
+    catch_unwind(AssertUnwindSafe(|| command.cast_params(a2))).map_err(|p| {
+        CallFailure::BadArgs(format!("arguments for {} do not match its declared parameter types: {}", label, panic_text(&p)))
+    })?;
+    let result = match catch_unwind(AssertUnwindSafe(|| command.execute(args))) {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return Err(CallFailure::Failed(format!("{} failed: {:?}", label, e))),
+        Err(p) => return Err(CallFailure::Failed(format!("{} panicked: {}", label, panic_text(&p)))),
+    };
+    let value = if command.lang == "flow" {
+        let keys = result.clone().keys();
+        if keys.len() == 1 { result.get_property(&keys[0]) } else { Data::DObject(result.data_ref) }
+    } else if result.has("a") {
+        result.get_property("a")
+    } else {
+        Data::DObject(result.data_ref)
+    };
+    if let Data::DObject(r) = &value {
+        let o = DataObject::get(*r);
+        if let Ok(Data::DString(status)) = o.try_get_property("status") {
+            if status == "err" {
+                let msg = match o.try_get_property("msg") {
+                    Ok(Data::DString(m)) => m,
+                    Ok(other) => format!("{:?}", other),
+                    Err(_) => "(no msg)".to_string(),
+                };
+                return Err(CallFailure::Failed(format!("{}: {}", label, msg)));
+            }
+        }
+    }
+    Ok((value, result))
+}
+
+#[pymodule]
+pub(crate) fn flowlang(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(call, m)?)?;
+    m.add("CommandError", m.py().get_type::<CommandError>())?;
+    Ok(())
+}
+
+/// Makes `ndata_py` and `flowlang` importable in the embedded interpreter.
+/// Called once, when the interpreter is set up (pyenv).
+pub(crate) fn register_modules(py: Python<'_>) -> PyResult<()> {
+    let modules = py.import("sys")?.getattr("modules")?;
+    modules.set_item("ndata_py", pyo3::wrap_pymodule!(ndata_py)(py))?;
+    modules.set_item("flowlang", pyo3::wrap_pymodule!(flowlang)(py))?;
     Ok(())
 }

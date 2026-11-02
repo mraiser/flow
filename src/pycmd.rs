@@ -61,7 +61,7 @@ impl PyCmd {
       Err(msg) => return Ok(err_envelope(&msg)),
     };
     Ok(match run(&call) {
-      Ok(value) => ok_envelope(value),
+      Ok(envelope) => envelope,
       Err(msg) => {
         eprintln!("Python command {} failed: {}", call.label, msg);
         err_envelope(&msg)
@@ -116,9 +116,10 @@ impl PyCmd {
 }
 
 /// Runs a prepared call in this build's mode: the embedded interpreter with
-/// `python_runtime`, else a subprocess. Returns the converted return value or
-/// the error report.
-pub fn run(call: &PyCall) -> Result<Data, String> {
+/// `python_runtime`, else a subprocess. Returns the success envelope
+/// `{"a": value}` - an owning object, never a bare `Data` whose referent
+/// nothing holds - or the error report.
+pub fn run(call: &PyCall) -> Result<DataObject, String> {
   #[cfg(feature = "python_runtime")]
   return crate::pyenv::call(call);
   #[cfg(not(feature = "python_runtime"))]
@@ -226,10 +227,11 @@ def import_command(module, base):
         if taken is not None:
             origin = getattr(taken, "__file__", None) or next(iter(getattr(taken, "__path__", None) or []), None)
         root = _os.path.realpath(base) + _os.sep
-        if origin and not _os.path.realpath(origin).startswith(root):
+        if taken is not None and not (origin and _os.path.realpath(origin).startswith(root)):
+            where = ("the Python module at %s" % origin) if origin else ("the built-in module %r" % top)
             raise ImportError(
-                "library %r cannot be imported as a Python package: that name is taken by the "
-                "Python module at %s; rename the library or the conflicting module" % (top, origin)
+                "library %r cannot be imported as a Python package: that name is taken by "
+                "%s; rename the library or the conflicting module" % (top, where)
             ) from e
         raise
 
@@ -278,7 +280,6 @@ def to_json(v):
 mod subprocess {
   use super::{PyCall, PY_SUPPORT};
   use crate::DataStore;
-  use ndata::data::Data;
   use ndata::dataobject::DataObject;
   use std::io::Write;
   use std::process::{Command, Stdio};
@@ -287,8 +288,29 @@ mod subprocess {
   // The result goes to a private dup of the original stdout; fd 1 itself is
   // pointed at stderr, so print() (even from C extensions) cannot corrupt it.
   const PY_RUNNER: &str = r#"
+def _install_flowlang_stub():
+    # flowlang.call needs the server process; a subprocess cannot call back
+    # into it. Same names as the embedded module, with a clear error.
+    import types
+    m = types.ModuleType("flowlang")
+
+    class CommandError(Exception):
+        pass
+
+    def call(lib, ctl, cmd, /, **kwargs):
+        raise RuntimeError(
+            "flowlang.call(%r, %r, %r) needs the embedded Python runtime; "
+            "build flowlang with --features=python_runtime" % (lib, ctl, cmd)
+        )
+
+    m.CommandError = CommandError
+    m.call = call
+    _sys.modules["flowlang"] = m
+
+
 def _main():
     import json
+    _install_flowlang_stub()
     base, module, func, rtype, path, label = _sys.argv[1:7]
     result_fd = _os.dup(1)
     _os.dup2(2, 1)
@@ -328,7 +350,7 @@ _main()
     v
   }
 
-  pub(super) fn call(call: &PyCall) -> Result<Data, String> {
+  pub(super) fn call(call: &PyCall) -> Result<DataObject, String> {
     let script = format!("{}\n{}", PY_SUPPORT, PY_RUNNER);
     let mut last_err = String::new();
     for exe in interpreters() {
@@ -358,7 +380,7 @@ _main()
         format!("{} exited with {} without a result for {}", exe, output.status, call.label)
       })?;
       if reply.has("ok") && reply.get_boolean("ok") {
-        return Ok(reply.get_property("value"));
+        return Ok(super::ok_envelope(reply.get_property("value")));
       }
       return Err(reply.get_string("msg"));
     }

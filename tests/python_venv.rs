@@ -75,7 +75,7 @@ fn venv_is_configured_once_and_its_packages_import() {
   for _ in 0..25 {
     let d = run(&call).unwrap();
     let mut o = DataObject::new();
-    o.set_property("v", d);
+    o.set_property("v", d.get_property("a"));
     assert_eq!(o.to_string(), r#"{"v":["from venv","from editable"]}"#);
   }
   let launches = std::fs::read_to_string(&counter).unwrap_or_default().lines().count();
@@ -83,7 +83,7 @@ fn venv_is_configured_once_and_its_packages_import() {
 
   // The venv's '' (from `python -c`) did not come back.
   let paths = run(&command(&base, "pathlib2x", "import sys\nreturn [p for p in sys.path if isinstance(p, str)]")).unwrap();
-  let paths: Vec<String> = paths.array().objects().iter().map(|p| p.string()).collect();
+  let paths: Vec<String> = paths.get_array("a").objects().iter().map(|p| p.string()).collect();
   assert!(!paths.iter().any(|p| p.is_empty() || p == "."), "{:?}", paths);
   let _ = std::fs::remove_dir_all(&root);
 }

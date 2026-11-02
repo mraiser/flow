@@ -65,17 +65,19 @@ fn command_in(lib: &str, imports: &str, params: &[&str], body: &str, returntype:
   }
 }
 
-fn ret(body: &str) -> Result<Data, String> {
+fn ret(body: &str) -> Result<DataObject, String> {
   init();
   run(&command("", &[], body, "Any", DataObject::new()))
 }
-fn ret_imports(imports: &str, body: &str) -> Result<Data, String> {
+fn ret_imports(imports: &str, body: &str) -> Result<DataObject, String> {
   init();
   run(&command(imports, &[], body, "Any", DataObject::new()))
 }
-fn json(d: &Data) -> String {
+/// The envelope's value as `{"v": ...}`. Read from the envelope while it is
+/// alive: the envelope owns the value.
+fn json(env: &DataObject) -> String {
   let mut o = DataObject::new();
-  o.set_property("v", d.clone());
+  o.set_property("v", env.get_property("a"));
   o.to_string()
 }
 
@@ -117,8 +119,8 @@ fn bytes_and_bytearray_are_bytes() {
   let d = ret("return b'Hi'").unwrap();
   let d2 = ret("return bytearray(b'Hi')").unwrap();
   if EMBEDDED {
-    assert!(matches!(d, Data::DBytes(_)), "bytes -> DBytes, got {:?}", d);
-    assert!(matches!(d2, Data::DBytes(_)), "bytearray -> DBytes, got {:?}", d2);
+    assert!(matches!(d.get_property("a"), Data::DBytes(_)), "bytes -> DBytes, got {:?}", d.get_property("a"));
+    assert!(matches!(d2.get_property("a"), Data::DBytes(_)), "bytearray -> DBytes, got {:?}", d2.get_property("a"));
   } else {
     // By value over JSON: ndata's JSON form of DBytes.
     assert_eq!(json(&d), r#"{"v":"48 69"}"#);
@@ -256,7 +258,7 @@ fn sys_path_has_no_cwd_or_command_dir() {
   init();
   let call = command("import sys", &[], "return [p for p in sys.path if isinstance(p, str)]", "Any", DataObject::new());
   let d = run(&call).unwrap();
-  let paths: Vec<String> = d.array().objects().iter().map(|p| p.string()).collect();
+  let paths: Vec<String> = d.get_array("a").objects().iter().map(|p| p.string()).collect();
   let cwd = std::env::current_dir().unwrap().display().to_string();
   let cmd_dir = call.file.parent().unwrap().display().to_string();
   for bad in ["", ".", cwd.as_str(), cmd_dir.as_str()] {
@@ -278,4 +280,107 @@ fn library_named_like_a_stdlib_module() {
   assert!(head.starts_with("ImportError: library 'colorsys' cannot be imported as a Python package: that name is taken by the Python module at "), "{}", e);
   let other = ret("import colorsys\nreturn list(colorsys.rgb_to_hsv(1.0, 0.0, 0.0))").unwrap();
   assert_eq!(json(&other), r#"{"v":[0.0,1.0,1.0]}"#);
+}
+
+// ---- the ndata_py and flowlang modules -------------------------------------------------
+
+#[test]
+fn ndata_py_builds_objects() {
+  // Was: ModuleNotFoundError - the #[pymodule] was never registered.
+  let r = ret("import ndata_py\no = ndata_py.NDataObject()\no['x'] = 1\na = ndata_py.NDataArray()\na.append('y')\no['arr'] = a\nreturn o");
+  if EMBEDDED {
+    assert_eq!(json(&r.unwrap()), r#"{"v":{"arr":["y"],"x":1}}"#);
+  } else {
+    let e = r.unwrap_err();
+    assert!(e.starts_with("ModuleNotFoundError: No module named 'ndata_py'"), "{}", e);
+  }
+}
+
+fn call_body(expr: &str) -> String {
+  format!("import flowlang\ntry:\n    return {}\nexcept Exception as e:\n    return '%s: %s' % (type(e).__name__, e)", expr)
+}
+
+#[test]
+fn flowlang_call_runs_every_kind_of_command() {
+  let cases = [
+    // Python -> Rust -> Python: the lock is released and re-taken.
+    ("flowlang.call('testflow', 'testflow', 'test_python', a='nested')", r#""Hello nested from python""#),
+    ("flowlang.call('testflow', 'testflow', 'test_rust', a='x')", r#""Hello x from rust""#),
+    // a flow with one output returns that value
+    ("flowlang.call('testflow', 'testflow', 'test_add', a=300, b=120)", r#""300+120=420""#),
+    // a flow with several outputs returns them all
+    ("flowlang.call('testflow', 'testflow', 'test_loop', a=3)", r#"{"a":4,"b":[4]}"#),
+    // a declared type is cast, as for an HTTP call
+    ("flowlang.call('testflow', 'testflow', 'test_add', a='2', b=3)", r#""2+3=5""#),
+  ];
+  for (expr, want) in cases {
+    let r = ret(&call_body(expr));
+    if EMBEDDED {
+      assert_eq!(json(&r.unwrap()), format!(r#"{{"v":{}}}"#, want), "{}", expr);
+    } else {
+      let got = json(&r.unwrap());
+      assert!(got.contains("RuntimeError: flowlang.call(") && got.contains("--features=python_runtime"), "{}", got);
+    }
+  }
+}
+
+#[test]
+fn flowlang_call_errors() {
+  if !EMBEDDED { return; } // the subprocess stub raises RuntimeError for every call (above)
+  let cases = [
+    ("flowlang.call('testflow', 'testflow', 'test_python')",
+     "CommandError: testflow:testflow:test_python: missing required parameter: a"),
+    ("flowlang.call('testflow', 'testflow', 'no_such_cmd')",
+     "LookupError: no command testflow:testflow:no_such_cmd: No such command testflow:testflow:no_such_cmd"),
+    ("flowlang.call('testflow', 'testflow', 'test_add', a='abc', b=1)",
+     "TypeError: arguments for testflow:testflow:test_add do not match its declared parameter types: "),
+    ("flowlang.call('testflow', 'testflow', 'test_add', a={1, 2}, b=1)",
+     "TypeError: argument a: cannot convert Python set to ndata"),
+  ];
+  for (expr, want) in cases {
+    let got = ret(&call_body(expr)).unwrap().get_string("a");
+    assert!(got.starts_with(want), "{}\n  got:  {}\n  want: {}", expr, got, want);
+  }
+  // CommandError is a real exception class, importable by name.
+  let r = ret("from flowlang import CommandError\nreturn issubclass(CommandError, Exception)").unwrap();
+  assert_eq!(json(&r), r#"{"v":true}"#);
+}
+
+#[test]
+fn library_named_flowlang_is_reported_as_taken() {
+  if !EMBEDDED { return; }
+  let call = command_in("flowlang", "", &[], "return 1", "Any", DataObject::new());
+  let e = run(&call).unwrap_err();
+  assert!(e.starts_with("ImportError: library 'flowlang' cannot be imported as a Python package: that name is taken by the built-in module 'flowlang'"), "{}", e);
+}
+
+#[test]
+fn returned_containers_survive_a_concurrent_gc() {
+  // A container built by the conversion (or by Python via ndata_py) was
+  // handed back as a bare reference after its last handle was dropped; a GC
+  // on another thread in between freed it ("Heap::incr: Invalid index").
+  init();
+  use std::sync::atomic::AtomicBool;
+  use std::sync::Arc;
+  let stop = Arc::new(AtomicBool::new(false));
+  let s2 = stop.clone();
+  let gc = std::thread::spawn(move || {
+    while !s2.load(Ordering::SeqCst) { flowlang::datastore::DataStore::gc(); }
+  });
+  let dict_cmd = command("", &[], "return {'k': [1, {'z': 3}], 'b': b'x'}", "Any", DataObject::new());
+  let nd_body = if EMBEDDED {
+    "import ndata_py\no = ndata_py.NDataObject()\no['k'] = [1, {'z': 3}]\nreturn o"
+  } else {
+    "return {'k': [1, {'z': 3}]}"
+  };
+  let nd_cmd = command("", &[], nd_body, "Any", DataObject::new());
+  let rounds = if EMBEDDED { 300 } else { 20 }; // a subprocess per call is slow
+  for _ in 0..rounds {
+    let d = run(&dict_cmd).unwrap();
+    assert_eq!(d.get_object("a").get_array("k").get_object(1).get_int("z"), 3);
+    let d = run(&nd_cmd).unwrap();
+    assert_eq!(json(&d), r#"{"v":{"k":[1,{"z":3}]}}"#);
+  }
+  stop.store(true, Ordering::SeqCst);
+  gc.join().unwrap();
 }

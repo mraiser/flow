@@ -265,6 +265,26 @@ cargo build --features java_runtime        # loads a JVM via JNI
   directory is on `sys.path`. A `venv` is configured once, at interpreter
   start (its `sys.path` and `.pth` files, so editable installs work).
 
+  The embedded interpreter provides two modules, mirroring the Rust crates:
+
+  ```python
+  import ndata_py   # NDataObject, NDataArray, NDataBytes, NDataPyError, init, gc
+  import flowlang   # call, CommandError
+
+  o = ndata_py.NDataObject()
+  o["total"] = flowlang.call("testflow", "testflow", "test_add", a=300, b=120)
+  ```
+
+  `flowlang.call(lib, ctl, cmd, **kwargs)` runs any command — Rust, Python,
+  flow, JavaScript or Java — with arguments cast to the declared parameter
+  types, and returns its value (a flow's single output, or all of its outputs
+  as an `NDataObject`). It raises `LookupError` for an unknown command,
+  `TypeError` for an argument that cannot be cast, and `flowlang.CommandError`
+  when the command fails — including a result whose `status` is `"err"`. The
+  interpreter lock is released while the command runs. In subprocess mode
+  `ndata_py` is absent and `flowlang.call` raises a `RuntimeError` saying the
+  embedded runtime is required.
+
   Without `python_runtime`, Python commands run in a `python3` subprocess
   (the `venv` interpreter if present) with the same envelope, conversion
   rules and error reports; the difference is that data crosses by value as

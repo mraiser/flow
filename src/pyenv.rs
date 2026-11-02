@@ -1,7 +1,6 @@
 // pyenv.rs
 
 use ndata::dataobject::DataObject;
-use ndata::data::Data;
 use std::sync::{Once, RwLock};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -30,6 +29,9 @@ impl PyEnv {
             PyEnv::activate_venv(path);
         }
         Python::attach(|py| {
+            if let Err(e) = crate::pywrapper::register_modules(py) {
+                eprintln!("Python: could not register the ndata_py and flowlang modules: {}", e);
+            }
             if let Err(e) = configure_sys_path(py, venv_path) {
                 eprintln!("Python: could not configure sys.path (venv {:?}): {}", venv_path, e);
             }
@@ -48,13 +50,13 @@ impl PyEnv {
     /// Runs one Python command in the embedded interpreter. Returns the
     /// converted return value, or the error report (exception, location in
     /// the command body, traceback) - see `pycmd` for the envelope.
-    pub fn execute(&self, call: &PyCall) -> Result<Data, String> {
+    pub fn execute(&self, call: &PyCall) -> Result<DataObject, String> {
         Python::attach(|py| {
             self.execute_inner(py, call).map_err(|e| format_error(py, &e, call))
         })
     }
 
-    fn execute_inner(&self, py: Python<'_>, call: &PyCall) -> PyResult<Data> {
+    fn execute_inner(&self, py: Python<'_>, call: &PyCall) -> PyResult<DataObject> {
         // The command's package root goes at the END of sys.path: a library
         // named like a stdlib or installed module (email, html, ...) must not
         // shadow that module for every other import. A library whose name is
@@ -85,14 +87,16 @@ impl PyEnv {
                 crate::pywrapper::type_name(&result)
             )));
         }
-        crate::pywrapper::py_any_to_data(&result).map_err(|e| {
+        let value = crate::pywrapper::py_any_to_data(&result).map_err(|e| {
             let msg = format!("return value of {} could not be converted: {}", call.label, e.value(py));
             if e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
                 pyo3::exceptions::PyOverflowError::new_err(msg)
             } else {
                 pyo3::exceptions::PyTypeError::new_err(msg)
             }
-        })
+        })?;
+        // Stored while `value` (and `result`) still own it.
+        Ok(crate::pycmd::ok_envelope(value.data()))
     }
 }
 
@@ -193,7 +197,7 @@ fn init_once() {
 }
 
 /// Runs a prepared Python command in the embedded interpreter.
-pub fn call(call: &PyCall) -> Result<Data, String> {
+pub fn call(call: &PyCall) -> Result<DataObject, String> {
     init_once();
     let py_env_guard = PYENV.read().unwrap();
     let py_env = py_env_guard.as_ref().expect("PyEnv not initialized");
