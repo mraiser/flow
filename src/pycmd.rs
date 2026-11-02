@@ -217,6 +217,22 @@ impl Value {
   }
 }
 
+static STDOUT_IS_PROTOCOL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Declares that this process's stdout carries a protocol - the MCP server
+/// does (JSON-RPC, one message per line) - so a Python command's stdout
+/// (print) must not reach it: it goes to stderr, still labelled. Call it
+/// before any Python command runs (the interpreter's streams are set up
+/// once, at its first call).
+pub fn stdout_is_protocol() {
+  STDOUT_IS_PROTOCOL.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// The fd Python commands' stdout is written to: 1, or 2 under a protocol.
+pub fn python_stdout_fd() -> i32 {
+  if STDOUT_IS_PROTOCOL.load(std::sync::atomic::Ordering::SeqCst) { 2 } else { 1 }
+}
+
 /// The Python interpreters to try for a subprocess, in order: the venv next
 /// to `data/` (as the embedded runtime uses), then `python3`, then `python`.
 fn python_interpreters() -> Vec<String> {

@@ -39,8 +39,9 @@ impl PyEnv {
                 eprintln!("Python: could not configure sys.path (venv {:?}): {}", venv_path, e);
             }
             // print(), sys.stderr and logging: complete lines, labelled with
-            // the command, straight to the process's stdout (1) / stderr (2).
-            if let Err(e) = support(py).and_then(|m| m.call_method1("install_output", (1, 2)).map(|_| ())) {
+            // the command, straight to the process's stdout (1) / stderr (2) -
+            // stdout to 2 as well when stdout carries a protocol (MCP).
+            if let Err(e) = support(py).and_then(|m| m.call_method1("install_output", (crate::pycmd::python_stdout_fd(), 2)).map(|_| ())) {
                 eprintln!("Python: could not install the command output streams: {}", e);
             }
         });
