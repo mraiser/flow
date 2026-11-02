@@ -83,8 +83,15 @@ impl PyCmd {
       return Err(format!("{}:{} is not a Python command", lib, id));
     }
     let impl_def = store.get_data(lib, &cmd_def.get_string("python")).get_object("data");
-    let ctl = impl_def.get_string("ctl");
-    let func = impl_def.get_string("cmd");
+    // Older records carry the control and command names on the impl record;
+    // records written by newbound's dev.code do not: the name is on the
+    // command record, the control is the one that lists the command.
+    let func = if impl_def.has("cmd") { impl_def.get_string("cmd") } else { cmd_def.get_string("name") };
+    let ctl = if impl_def.has("ctl") {
+      impl_def.get_string("ctl")
+    } else {
+      control_of(&store, lib, id).ok_or_else(|| format!("no control in library {} lists command {}", lib, id))?
+    };
     let base_dir = store.get_lib_root(lib).join("src");
     let file = base_dir.join(lib).join(&ctl).join(format!("{}.py", func));
     let call = PyCall {
@@ -119,15 +126,27 @@ impl PyCmd {
   }
 
 
+  /// The generated source file. Panics if the command is not a Python
+  /// command, as reading a missing record does.
   pub fn get_path(lib: &str, id: &str) -> String {
-    let store = DataStore::new();
-    let impl_id = store.get_data(lib, id).get_object("data").get_string("python");
-    let impl_def = store.get_data(lib, &impl_id).get_object("data");
-    let ctl = impl_def.get_string("ctl");
-    let cmd = impl_def.get_string("cmd");
-    let root = store.get_lib_root(lib);
-    root.join("src").join(lib).join(&ctl).join(cmd + ".py").display().to_string()
+    match PyCmd::locate(lib, id) {
+      Ok(call) => call.file.display().to_string(),
+      Err(e) => panic!("{}", e),
+    }
   }
+}
+
+/// The name of the control in `lib` that lists command `id`.
+fn control_of(store: &DataStore, lib: &str, id: &str) -> Option<String> {
+  let list = store.get_data(lib, "controls").get_object("data").get_array("list");
+  for c in list.objects() {
+    let c = c.object();
+    let ctl = store.get_data(lib, &c.get_string("id")).get_object("data");
+    if ctl.has("cmd") && ctl.get_array("cmd").objects().iter().any(|e| e.object().get_string("id") == id) {
+      return Some(c.get_string("name"));
+    }
+  }
+  None
 }
 
 /// Runs a prepared call in this build's mode: the embedded interpreter with
@@ -215,11 +234,12 @@ fn python_interpreters() -> Vec<String> {
   v
 }
 
-/// The checker run by `check`, after PY_SUPPORT. argv: path func base module.
+/// The checker run by `check`, after PY_SUPPORT. argv: path func base module
+/// ("mypy" | "skip").
 const PY_CHECKER: &str = r#"
 def _check_main():
     import json
-    path, func, base, module = _sys.argv[1:5]
+    path, func, base, module, type_check = _sys.argv[1:6]
     result_fd = _os.dup(1)
     _os.dup2(2, 1)   # nothing the module prints may corrupt the result
     execute_line, body_def = _layout(path, func)
@@ -262,8 +282,8 @@ def _check_main():
                 lineno = e.lineno
             add("import", "error", lineno, _traceback.format_exception_only(type(e), e)[-1].strip())
 
-    mypy = "not installed"
-    if compiled:
+    mypy = "not installed" if type_check == "mypy" else "skipped"
+    if compiled and type_check == "mypy":
         try:
             from mypy import api as mypy_api
         except ImportError:
@@ -296,13 +316,23 @@ _check_main()
 /// reported where its author wrote them ("body line N", "imports line N"):
 ///
 ///   {"status": "ok", "command": "lib:ctl:cmd", "file": ..., "python": "3.13.1",
-///    "mypy": "ran" | "not installed", "clean": bool,
+///    "mypy": "ran" | "not installed" | "skipped", "clean": bool,
 ///    "problems": [{"tool": "python"|"import"|"mypy", "severity": "error"|"note"|...,
 ///                  "where": "body line 3", "line": 12, "message": ...}]}
 ///
 /// `clean` is false when any problem has severity "error". `status` is
 /// "err" only when the check itself cannot run.
 pub fn check(lib: &str, id: &str) -> DataObject {
+  check_with(lib, id, true)
+}
+
+/// `check` without mypy: compile and import only - fast enough to run on
+/// every save (newbound's dev.compile does). `mypy` is "skipped".
+pub fn check_quick(lib: &str, id: &str) -> DataObject {
+  check_with(lib, id, false)
+}
+
+fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
   let mut err = DataObject::new();
   err.put_string("status", "err");
   let call = match std::panic::catch_unwind(|| PyCmd::locate(lib, id)) {
@@ -324,6 +354,7 @@ pub fn check(lib: &str, id: &str) -> DataObject {
       .arg("-c").arg(&script)
       .arg(call.file.display().to_string()).arg(&call.func)
       .arg(call.base_dir.display().to_string()).arg(&call.module)
+      .arg(if type_check { "mypy" } else { "skip" })
       .current_dir(&call.base_dir)
       .output();
     let out = match out {

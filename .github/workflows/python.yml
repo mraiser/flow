@@ -29,6 +29,6 @@ jobs:
       - name: Generated Python sources (type hints, stubs)
         run: cargo test --release --features=serde_support --lib builder::python
       - name: Embedded (python_runtime)
-        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols --test python_output --test python_pytest --test python_exists --test python_check
+        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols --test python_output --test python_pytest --test python_exists --test python_check --test python_records
       - name: Subprocess (no python_runtime)
-        run: cargo test --release --features=serde_support --test python_commands --test python_output --test python_pytest --test python_exists --test python_check
+        run: cargo test --release --features=serde_support --test python_commands --test python_output --test python_pytest --test python_exists --test python_check --test python_records
