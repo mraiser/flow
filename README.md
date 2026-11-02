@@ -265,6 +265,16 @@ cargo build --features java_runtime        # loads a JVM via JNI
   directory is on `sys.path`. A `venv` is configured once, at interpreter
   start (its `sys.path` and `.pth` files, so editable installs work).
 
+  Python commands hot-reload: when a command's generated file changes
+  (`flowb`, or newbound's `dev.code` edits, regenerate it), the next call
+  reloads the module in place (`importlib.reload`) before running it — no
+  restart. Module-level code runs again, so top-level assignments are
+  re-made, while names it no longer assigns keep their old values. If the
+  new source fails to load (a `SyntaxError`, say), each call reports that
+  error until it is fixed; the old code never runs silently. A module that
+  imports another command's module sees the new code once that command has
+  been called (or reloaded); third-party packages are not reloaded.
+
   The embedded interpreter provides two modules, mirroring the Rust crates:
 
   ```python

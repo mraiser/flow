@@ -68,7 +68,10 @@ impl PyEnv {
             sys_path.append(&base_path)?;
         }
 
-        let module = support(py)?.getattr("import_command")?.call1((call.module.as_str(), base_path.as_str()))?;
+        let file_path = call.file.display().to_string();
+        let module = support(py)?
+            .getattr("import_command")?
+            .call1((call.module.as_str(), base_path.as_str(), file_path.as_str()))?;
         let function = module.getattr(call.func.as_str())?;
 
         let kwargs = PyDict::new(py);

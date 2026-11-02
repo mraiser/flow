@@ -394,3 +394,35 @@ fn ndata_array_pop() {
   let e = ret("import ndata_py\nreturn ndata_py.NDataArray().pop()").unwrap_err();
   assert!(e.starts_with("IndexError: pop from empty list"), "{}", e);
 }
+
+// ---- hot reload --------------------------------------------------------------------------
+
+#[test]
+fn edited_command_runs_new_code_without_a_restart() {
+  // Was: the module was imported once, so an edit took effect only after a
+  // restart. Same-size rewrites back to back: a .pyc is validated by
+  // whole-second mtime and size, and the mtime may not even change.
+  init();
+  let lib = format!("hot{}", std::process::id());
+  for i in 0..20 {
+    let v = if i % 2 == 0 { "v1" } else { "v2" };
+    let call = command_in(&lib, "", &[], &format!("return '{}'", v), "Any", DataObject::new());
+    assert_eq!(json(&run(&call).unwrap()), format!(r#"{{"v":"{}"}}"#, v), "round {}", i);
+  }
+}
+
+#[test]
+fn broken_edit_is_reported_until_fixed() {
+  // A failed reload never falls back to running the old code silently.
+  init();
+  let lib = format!("hotbad{}", std::process::id());
+  let good = command_in(&lib, "", &[], "return 'good'", "Any", DataObject::new());
+  assert_eq!(json(&run(&good).unwrap()), r#"{"v":"good"}"#);
+  for _ in 0..2 {
+    let broken = command_in(&lib, "", &[], "return (", "Any", DataObject::new());
+    let e = run(&broken).unwrap_err();
+    assert!(e.starts_with("SyntaxError: "), "{}", e);
+  }
+  let fixed = command_in(&lib, "", &[], "return 'fixed'", "Any", DataObject::new());
+  assert_eq!(json(&run(&fixed).unwrap()), r#"{"v":"fixed"}"#);
+}

@@ -209,6 +209,7 @@ pub const PY_SUPPORT: &str = r#"
 import os as _os
 import re as _re
 import sys as _sys
+import threading as _threading
 import traceback as _traceback
 
 
@@ -271,11 +272,99 @@ def format_error(e, path, func, label):
     return "%s (%s)\n\n%s" % (head, where_txt, tb.rstrip())
 
 
-def import_command(module, base):
+# Hot reload: per module, the ((mtime_ns, size), sha1) of its file as loaded.
+_loaded = {}
+_reload_lock = _threading.Lock()
+
+
+def _stamp(path):
+    try:
+        st = _os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _digest(path):
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha1(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _unchanged(module, path):
+    rec = _loaded.get(module)
+    if rec is None:
+        return False
+    stamp = _stamp(path)
+    if stamp != rec[0]:
+        return False
+    # A rewrite within the filesystem's timestamp granularity can keep both
+    # mtime and size: for a recently modified file, compare the contents.
+    import time
+    if stamp is not None and time.time_ns() - stamp[0] < 2_000_000_000:
+        return _digest(path) == rec[1]
+    return True
+
+
+def import_command(module, base, path):
     # Imports lib.ctl.cmd from the package root `base`, which the caller has
-    # put at the END of sys.path. If the library's name is already taken by
-    # another module (stdlib or installed), say so instead of a bare
-    # "No module named 'email.ctl'".
+    # put at the END of sys.path.
+    #
+    # Hot reload: when the command's file (`path`) has changed since it was
+    # loaded - flowb / newbound's dev.compile regenerated it - the module is
+    # reloaded in place before the call. Cached bytecode is removed before
+    # every load: Python validates a .pyc by whole-second mtime and size, so a
+    # same-size rewrite within a second would otherwise run the old code. If
+    # the new source fails (e.g. a SyntaxError) the call reports it, and the
+    # next call tries again; the old code is never run silently.
+    import importlib
+    import importlib.util
+    mod = _sys.modules.get(module)
+    if mod is not None and _unchanged(module, path):
+        return mod
+    with _reload_lock:
+        mod = _sys.modules.get(module)
+        if mod is not None and _unchanged(module, path):
+            return mod                      # another thread reloaded it
+        record = (_stamp(path), _digest(path))
+        # Before every load - a first import too: a .pyc left by an earlier
+        # process can be stale in the same way (the subprocess mode imports
+        # afresh on every call).
+        try:
+            _os.remove(importlib.util.cache_from_source(path))
+        except OSError:
+            pass
+        _forget_listings(base, path)
+        if mod is not None:
+            mod = importlib.reload(mod)
+        else:
+            mod = _import_new(module, base)
+        _loaded[module] = record
+        return mod
+
+
+def _forget_listings(base, path):
+    # A new command file or directory created within the filesystem's
+    # timestamp granularity may be missing from a finder's cached directory
+    # listing. Only the command's own directories are refreshed:
+    # importlib.invalidate_caches() also resets the metadata finders, which
+    # costs ~45 ms in a fresh interpreter (every subprocess-mode call).
+    d = _os.path.dirname(path)
+    while True:
+        finder = _sys.path_importer_cache.get(d)
+        if finder is not None and hasattr(finder, "invalidate_caches"):
+            finder.invalidate_caches()
+        if d == base or len(d) <= len(base):
+            break
+        d = _os.path.dirname(d)
+
+
+def _import_new(module, base):
+    # If the library's name is already taken by another module (stdlib or
+    # installed), say so instead of a bare "No module named 'email.ctl'".
     import importlib
     try:
         return importlib.import_module(module)
@@ -380,7 +469,7 @@ def _main():
         _sys.path[:] = [p for p in _sys.path if p not in ("", ".")]
         if base not in _sys.path:
             _sys.path.append(base)
-        result = getattr(import_command(module, base), func)(**args)
+        result = getattr(import_command(module, base, path), func)(**args)
         if rtype == "FLAT" and not isinstance(result, dict):
             raise TypeError("a FLAT command must return a dict or NDataObject, got %s" % type(result).__name__)
         out = json.dumps({"ok": True, "value": to_json(result)}, allow_nan=False)
