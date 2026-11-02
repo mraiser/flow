@@ -319,6 +319,13 @@ cargo build --features java_runtime        # loads a JVM via JNI
   command starts write with a plain `[py]` label (or the command's, where
   new threads inherit the context — free-threaded 3.14's default).
 
+  A CPython bundled next to the executable, in `<exe dir>/python` (a
+  relocatable python-build-standalone build, linked with an
+  `$ORIGIN/python/lib` rpath), is used automatically: the runtime sets
+  `PYTHONHOME` to it unless the environment sets one, and the subprocess
+  mode and the checker prefer its `python3`. This is how a binary can ship
+  with its own Python.
+
   Concurrency: with a standard CPython, Python commands share the GIL —
   CPU-bound commands run one at a time (the lock is released while
   `flowlang.call` runs another command, so a slow callee blocks no one).

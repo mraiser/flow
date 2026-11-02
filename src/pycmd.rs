@@ -217,6 +217,16 @@ impl Value {
   }
 }
 
+/// A CPython bundled next to the executable, in `<exe dir>/python` - as
+/// release bundles ship a relocatable python-build-standalone build. The
+/// embedded runtime sets PYTHONHOME to it (a relocatable build needs that
+/// when embedded), and subprocesses prefer it over the system python3.
+pub fn bundled_python_home() -> Option<PathBuf> {
+  let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+  let home = exe.parent()?.join("python");
+  if home.join("lib").is_dir() || home.join("Lib").is_dir() { Some(home) } else { None }
+}
+
 static STDOUT_IS_PROTOCOL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Declares that this process's stdout carries a protocol - the MCP server
@@ -243,6 +253,11 @@ fn python_interpreters() -> Vec<String> {
       for p in [venv.join("bin").join("python"), venv.join("Scripts").join("python.exe")] {
         if p.exists() { v.push(p.display().to_string()); }
       }
+    }
+  }
+  if let Some(home) = bundled_python_home() {
+    for p in [home.join("bin").join("python3"), home.join("python.exe")] {
+      if p.exists() { v.push(p.display().to_string()); }
     }
   }
   v.push("python3".to_string());

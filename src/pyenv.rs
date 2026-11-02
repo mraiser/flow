@@ -190,6 +190,14 @@ fn format_error(py: Python<'_>, err: &PyErr, call: &PyCall) -> String {
 
 fn init_once() {
     START.call_once(|| {
+        // A Python bundled next to the executable is this runtime's Python:
+        // point PYTHONHOME at it before the interpreter starts (unless the
+        // environment already chose one).
+        if std::env::var_os("PYTHONHOME").is_none() {
+            if let Some(home) = crate::pycmd::bundled_python_home() {
+                std::env::set_var("PYTHONHOME", &home);
+            }
+        }
         let venv_path_str = DataStore::new().root.canonicalize().unwrap();
 
         let venv_path_str = venv_path_str
