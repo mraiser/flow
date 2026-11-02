@@ -71,19 +71,39 @@ impl PyCmd {
     })
   }
 
-  /// Resolves the command's source file and selects its declared params from
-  /// `args`. A declared param missing from `args` is an error, worded exactly
-  /// as the generated Rust wrapper words it.
-  pub fn prepare(lib: &str, id: &str, args: DataObject) -> Result<PyCall, String> {
+  /// The command's paths and names, with no arguments.
+  pub fn locate(lib: &str, id: &str) -> Result<PyCall, String> {
+    PyCmd::locate_impl(lib, id).map(|(call, _)| call)
+  }
+
+  fn locate_impl(lib: &str, id: &str) -> Result<(PyCall, DataObject), String> {
     let store = DataStore::new();
     let cmd_def = store.get_data(lib, id).get_object("data");
-    let impl_id = cmd_def.get_string("python");
-    let impl_def = store.get_data(lib, &impl_id).get_object("data");
+    if !cmd_def.has("python") {
+      return Err(format!("{}:{} is not a Python command", lib, id));
+    }
+    let impl_def = store.get_data(lib, &cmd_def.get_string("python")).get_object("data");
     let ctl = impl_def.get_string("ctl");
     let func = impl_def.get_string("cmd");
     let base_dir = store.get_lib_root(lib).join("src");
     let file = base_dir.join(lib).join(&ctl).join(format!("{}.py", func));
+    let call = PyCall {
+      label: format!("{}:{}:{}", lib, ctl, func),
+      base_dir,
+      module: format!("{}.{}.{}", lib, ctl, func),
+      file,
+      func,
+      returntype: impl_def.get_string("returntype"),
+      args: DataObject::new(),
+    };
+    Ok((call, impl_def))
+  }
 
+  /// Resolves the command's source file and selects its declared params from
+  /// `args`. A declared param missing from `args` is an error, worded exactly
+  /// as the generated Rust wrapper words it.
+  pub fn prepare(lib: &str, id: &str, args: DataObject) -> Result<PyCall, String> {
+    let (mut call, impl_def) = PyCmd::locate_impl(lib, id)?;
     let mut call_args = DataObject::new();
     for p in impl_def.get_array("params").objects() {
       if let Data::DObject(_) = p {
@@ -94,17 +114,10 @@ impl PyCmd {
         }
       }
     }
-
-    Ok(PyCall {
-      label: format!("{}:{}:{}", lib, ctl, func),
-      base_dir,
-      module: format!("{}.{}.{}", lib, ctl, func),
-      file,
-      func,
-      returntype: impl_def.get_string("returntype"),
-      args: call_args,
-    })
+    call.args = call_args;
+    Ok(call)
   }
+
 
   pub fn get_path(lib: &str, id: &str) -> String {
     let store = DataStore::new();
@@ -185,6 +198,164 @@ impl Value {
   }
 }
 
+/// The Python interpreters to try for a subprocess, in order: the venv next
+/// to `data/` (as the embedded runtime uses), then `python3`, then `python`.
+fn python_interpreters() -> Vec<String> {
+  let mut v = Vec::new();
+  if let Ok(root) = DataStore::new().root.canonicalize() {
+    if let Some(parent) = root.parent() {
+      let venv = parent.join("venv");
+      for p in [venv.join("bin").join("python"), venv.join("Scripts").join("python.exe")] {
+        if p.exists() { v.push(p.display().to_string()); }
+      }
+    }
+  }
+  v.push("python3".to_string());
+  v.push("python".to_string());
+  v
+}
+
+/// The checker run by `check`, after PY_SUPPORT. argv: path func base module.
+const PY_CHECKER: &str = r#"
+def _check_main():
+    import json
+    path, func, base, module = _sys.argv[1:5]
+    result_fd = _os.dup(1)
+    _os.dup2(2, 1)   # nothing the module prints may corrupt the result
+    execute_line, body_def = _layout(path, func)
+    problems = []
+
+    def add(tool, severity, lineno, message):
+        where = _where(lineno, execute_line, body_def)
+        if where is None:
+            where = "generated line %d" % lineno if lineno else "module"
+        problems.append({"tool": tool, "severity": severity, "line": lineno or 0,
+                         "where": where, "message": message})
+
+    with open(path, encoding="utf-8") as f:
+        source = f.read()
+    try:
+        compile(source, path, "exec")
+        compiled = True
+    except SyntaxError as e:
+        add("python", "error", e.lineno, "%s: %s" % (type(e).__name__, e.msg))
+        compiled = False
+
+    if compiled:
+        # Import it as the runtime would: missing packages, errors in the
+        # imports or module-level code. The server-only modules are stand-ins.
+        _install_flowlang_stub()
+        _install_ndata_placeholder()
+        _sys.path[:] = [p for p in _sys.path if p not in ("", ".")]
+        if base not in _sys.path:
+            _sys.path.append(base)
+        try:
+            mod = _import_new(module, base)
+            if not callable(getattr(mod, func, None)):
+                add("import", "error", None, "the module defines no function %r" % func)
+        except BaseException as e:
+            lineno = None
+            for frame in _traceback.extract_tb(e.__traceback__):
+                if _same_file(frame.filename, path):
+                    lineno = frame.lineno
+            if isinstance(e, SyntaxError) and e.filename and _same_file(e.filename, path):
+                lineno = e.lineno
+            add("import", "error", lineno, _traceback.format_exception_only(type(e), e)[-1].strip())
+
+    mypy = "not installed"
+    if compiled:
+        try:
+            from mypy import api as mypy_api
+        except ImportError:
+            mypy_api = None
+        if mypy_api is not None:
+            _os.environ["MYPYPATH"] = base
+            out, err, code = mypy_api.run([
+                path, "--namespace-packages", "--explicit-package-bases", "--ignore-missing-imports",
+                "--follow-imports", "silent", "--no-error-summary", "--show-error-codes", "--no-pretty",
+                "--cache-dir", _os.devnull,
+            ])
+            mypy = "ran"
+            for line in out.splitlines():
+                m = _re.match(r"^(.*?):(\d+): (error|warning|note): (.*)$", line)
+                if m and _same_file(m.group(1), path):
+                    add("mypy", m.group(3), int(m.group(2)), m.group(4))
+
+    out = json.dumps({"mypy": mypy, "python": _sys.version.split()[0], "problems": problems})
+    with _os.fdopen(result_fd, "w", encoding="utf-8") as f:
+        f.write(out)
+
+_check_main()
+"#;
+
+/// Checks a Python command's generated source without running the command,
+/// in a fresh interpreter process (the venv's, if any): it compiles, imports
+/// as the runtime would (missing packages, errors in imports or module-level
+/// code), and - when mypy is installed in that Python - type-checks against
+/// the ndata_py/flowlang stubs. Problems in the command's own file are
+/// reported where its author wrote them ("body line N", "imports line N"):
+///
+///   {"status": "ok", "command": "lib:ctl:cmd", "file": ..., "python": "3.13.1",
+///    "mypy": "ran" | "not installed", "clean": bool,
+///    "problems": [{"tool": "python"|"import"|"mypy", "severity": "error"|"note"|...,
+///                  "where": "body line 3", "line": 12, "message": ...}]}
+///
+/// `clean` is false when any problem has severity "error". `status` is
+/// "err" only when the check itself cannot run.
+pub fn check(lib: &str, id: &str) -> DataObject {
+  let mut err = DataObject::new();
+  err.put_string("status", "err");
+  let call = match std::panic::catch_unwind(|| PyCmd::locate(lib, id)) {
+    Ok(Ok(c)) => c,
+    Ok(Err(e)) => { err.put_string("msg", &e); return err; }
+    Err(_) => { err.put_string("msg", &format!("no command {} in library {}", id, lib)); return err; }
+  };
+  if !call.file.exists() {
+    err.put_string("msg", &format!("{}: the generated source {} does not exist - build the command first", call.label, call.file.display()));
+    return err;
+  }
+  // The checker runs in the package root: hand it absolute paths.
+  let mut call = call;
+  call.file = call.file.canonicalize().unwrap_or(call.file);
+  call.base_dir = call.base_dir.canonicalize().unwrap_or(call.base_dir);
+  let script = format!("{}\n{}", PY_SUPPORT, PY_CHECKER);
+  for exe in python_interpreters() {
+    let out = std::process::Command::new(&exe)
+      .arg("-c").arg(&script)
+      .arg(call.file.display().to_string()).arg(&call.func)
+      .arg(call.base_dir.display().to_string()).arg(&call.module)
+      .current_dir(&call.base_dir)
+      .output();
+    let out = match out {
+      Ok(o) => o,
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+      Err(e) => { err.put_string("msg", &format!("could not start {}: {}", exe, e)); return err; }
+    };
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let reply = match DataObject::try_from_string(&text) {
+      Ok(r) => r,
+      Err(_) => {
+        err.put_string("msg", &format!("{} exited with {} without a result: {}", exe, out.status, String::from_utf8_lossy(&out.stderr)));
+        return err;
+      }
+    };
+    let problems = reply.get_array("problems");
+    let clean = !problems.objects().iter().any(|p| p.object().get_string("severity") == "error");
+    let mut o = DataObject::new();
+    o.put_string("status", "ok");
+    o.put_string("command", &call.label);
+    o.put_string("file", &call.file.display().to_string());
+    o.put_string("interpreter", &exe);
+    o.put_string("python", &reply.get_string("python"));
+    o.put_string("mypy", &reply.get_string("mypy"));
+    o.put_boolean("clean", clean);
+    o.put_array("problems", problems);
+    return o;
+  }
+  err.put_string("msg", "no Python interpreter found (python3 or python)");
+  err
+}
+
 /// `{"a": value}` - what a generated Rust wrapper returns on success.
 pub fn ok_envelope(value: Value) -> DataObject {
   let mut o = DataObject::new();
@@ -237,17 +408,22 @@ def _layout(path, func):
     return execute_line, body_def
 
 
+def _where(lineno, execute_line, body_def):
+    # A line of a generated command file in the terms its author wrote it.
+    if lineno is None:
+        return None
+    if body_def is not None and lineno > body_def:
+        return "body line %d" % (lineno - body_def)
+    if execute_line is not None and lineno < execute_line:
+        return "imports line %d" % lineno
+    return None
+
+
 def format_error(e, path, func, label):
     execute_line, body_def = _layout(path, func)
 
     def where(lineno):
-        if lineno is None:
-            return None
-        if body_def is not None and lineno > body_def:
-            return "body line %d" % (lineno - body_def)
-        if execute_line is not None and lineno < execute_line:
-            return "imports line %d" % lineno
-        return None
+        return _where(lineno, execute_line, body_def)
 
     loc = None
     if isinstance(e, SyntaxError) and e.filename and _same_file(e.filename, path):
@@ -422,6 +598,46 @@ def install_api():
     _sys.modules["flowlang"].api = make_api(_sys.modules["flowlang"].call)
 
 
+def _install_flowlang_stub():
+    # flowlang.call needs the server process; a subprocess cannot call back
+    # into it. Same names as the embedded module, with a clear error.
+    import types
+    m = types.ModuleType("flowlang")
+
+    class CommandError(Exception):
+        pass
+
+    def call(lib, ctl, cmd, /, *args, **kwargs):
+        raise RuntimeError(
+            "flowlang.call(%r, %r, %r) needs the embedded Python runtime; "
+            "build flowlang with --features=python_runtime" % (lib, ctl, cmd)
+        )
+
+    m.CommandError = CommandError
+    m.call = call
+    m.api = make_api(call)
+    _sys.modules["flowlang"] = m
+
+
+def _install_ndata_placeholder():
+    # For the checker's import step only: ndata_py exists in the embedded
+    # runtime alone. Importing names from it must work; using them need not.
+    import types
+    m = types.ModuleType("ndata_py")
+
+    class NDataPyError(Exception):
+        pass
+
+    def unavailable(*a, **k):
+        raise RuntimeError("ndata_py is only available in the embedded runtime")
+
+    for name in ("NDataObject", "NDataArray", "NDataBytes"):
+        setattr(m, name, type(name, (), {"__init__": unavailable}))
+    m.NDataPyError = NDataPyError
+    m.init = m.gc = m.to_py = unavailable
+    _sys.modules.setdefault("ndata_py", m)
+
+
 # ---- output: print(), sys.stderr and logging ----------------------------------
 #
 # sys.stdout / sys.stderr are replaced by line writers: each complete line is
@@ -585,7 +801,6 @@ def to_json(v):
 #[cfg(not(feature = "python_runtime"))]
 mod subprocess {
   use super::{PyCall, PY_SUPPORT};
-  use crate::DataStore;
   use ndata::dataobject::DataObject;
   use std::io::Write;
   use std::process::{Command, Stdio};
@@ -594,27 +809,6 @@ mod subprocess {
   // The result goes to a private dup of the original stdout; fd 1 itself is
   // pointed at stderr, so print() (even from C extensions) cannot corrupt it.
   const PY_RUNNER: &str = r#"
-def _install_flowlang_stub():
-    # flowlang.call needs the server process; a subprocess cannot call back
-    # into it. Same names as the embedded module, with a clear error.
-    import types
-    m = types.ModuleType("flowlang")
-
-    class CommandError(Exception):
-        pass
-
-    def call(lib, ctl, cmd, /, *args, **kwargs):
-        raise RuntimeError(
-            "flowlang.call(%r, %r, %r) needs the embedded Python runtime; "
-            "build flowlang with --features=python_runtime" % (lib, ctl, cmd)
-        )
-
-    m.CommandError = CommandError
-    m.call = call
-    m.api = make_api(call)
-    _sys.modules["flowlang"] = m
-
-
 def _main():
     import json
     _install_flowlang_stub()
@@ -644,26 +838,10 @@ def _main():
 _main()
 "#;
 
-  fn interpreters() -> Vec<String> {
-    let mut v = Vec::new();
-    // A venv next to data/ is used, as in the embedded runtime.
-    if let Ok(root) = DataStore::new().root.canonicalize() {
-      if let Some(parent) = root.parent() {
-        let venv = parent.join("venv");
-        for p in [venv.join("bin").join("python"), venv.join("Scripts").join("python.exe")] {
-          if p.exists() { v.push(p.display().to_string()); }
-        }
-      }
-    }
-    v.push("python3".to_string());
-    v.push("python".to_string());
-    v
-  }
-
   pub(super) fn call(call: &PyCall) -> Result<DataObject, String> {
     let script = format!("{}\n{}", PY_SUPPORT, PY_RUNNER);
     let mut last_err = String::new();
-    for exe in interpreters() {
+    for exe in super::python_interpreters() {
       let child = Command::new(&exe)
         .arg("-c").arg(&script)
         .arg(call.base_dir.display().to_string())
