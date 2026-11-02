@@ -257,6 +257,14 @@ cargo build --features java_runtime        # loads a JVM via JNI
   the command body (`body line N`, or `imports line N`), and the full
   traceback. A declared parameter missing from the call is an error.
 
+  Each command is the module `lib.ctl.cmd` under its library's package root,
+  which is appended to the END of `sys.path` — so a command imports a sibling
+  as `from lib.ctl import other`, and a library named like an existing Python
+  module (`email`, `html`, …) fails with an error naming that module rather
+  than shadowing it. Neither the working directory nor a command's own
+  directory is on `sys.path`. A `venv` is configured once, at interpreter
+  start (its `sys.path` and `.pth` files, so editable installs work).
+
   Without `python_runtime`, Python commands run in a `python3` subprocess
   (the `venv` interpreter if present) with the same envelope, conversion
   rules and error reports; the difference is that data crosses by value as

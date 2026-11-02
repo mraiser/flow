@@ -211,6 +211,29 @@ def format_error(e, path, func, label):
     return "%s (%s)\n\n%s" % (head, where_txt, tb.rstrip())
 
 
+def import_command(module, base):
+    # Imports lib.ctl.cmd from the package root `base`, which the caller has
+    # put at the END of sys.path. If the library's name is already taken by
+    # another module (stdlib or installed), say so instead of a bare
+    # "No module named 'email.ctl'".
+    import importlib
+    try:
+        return importlib.import_module(module)
+    except ImportError as e:
+        top = module.split(".")[0]
+        taken = _sys.modules.get(top)
+        origin = None
+        if taken is not None:
+            origin = getattr(taken, "__file__", None) or next(iter(getattr(taken, "__path__", None) or []), None)
+        root = _os.path.realpath(base) + _os.sep
+        if origin and not _os.path.realpath(origin).startswith(root):
+            raise ImportError(
+                "library %r cannot be imported as a Python package: that name is taken by the "
+                "Python module at %s; rename the library or the conflicting module" % (top, origin)
+            ) from e
+        raise
+
+
 def _hint(type_name):
     if type_name in ("set", "frozenset"):
         return " - convert it explicitly, e.g. sorted(x) or list(x)"
@@ -265,16 +288,18 @@ mod subprocess {
   // pointed at stderr, so print() (even from C extensions) cannot corrupt it.
   const PY_RUNNER: &str = r#"
 def _main():
-    import importlib
     import json
     base, module, func, rtype, path, label = _sys.argv[1:7]
     result_fd = _os.dup(1)
     _os.dup2(2, 1)
     try:
         args = json.load(_sys.stdin)
+        # As in the embedded runtime: no current-directory entry ('' from
+        # -c), and the package root at the end of sys.path.
+        _sys.path[:] = [p for p in _sys.path if p not in ("", ".")]
         if base not in _sys.path:
-            _sys.path.insert(0, base)
-        result = getattr(importlib.import_module(module), func)(**args)
+            _sys.path.append(base)
+        result = getattr(import_command(module, base), func)(**args)
         if rtype == "FLAT" and not isinstance(result, dict):
             raise TypeError("a FLAT command must return a dict or NDataObject, got %s" % type(result).__name__)
         out = json.dumps({"ok": True, "value": to_json(result)}, allow_nan=False)

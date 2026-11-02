@@ -34,11 +34,14 @@ const EMBEDDED: bool = cfg!(feature = "python_runtime");
 /// (imports, `execute`, then the user's body indented under `def <func>`),
 /// in a fresh package so the interpreter's module cache never interferes.
 fn command(imports: &str, params: &[&str], body: &str, returntype: &str, args: DataObject) -> PyCall {
-  init();
   let n = SEQ.fetch_add(1, Ordering::SeqCst);
-  let lib = format!("pytest{}_{}", std::process::id(), n);
+  command_in(&format!("pytest{}_{}", std::process::id(), n), imports, params, body, returntype, args)
+}
+
+fn command_in(lib: &str, imports: &str, params: &[&str], body: &str, returntype: &str, args: DataObject) -> PyCall {
+  init();
   let base = std::env::temp_dir().join("flowlang_python_commands");
-  let dir = base.join(&lib).join("ctl");
+  let dir = base.join(lib).join("ctl");
   std::fs::create_dir_all(&dir).unwrap();
   let func = "cmd";
   let mut src = String::new();
@@ -242,4 +245,37 @@ fn python_command_runs_as_a_flow_op() {
   let mut code = Code::new(Case::new(&body));
   let out = code.execute(DataObject::from_string(r#"{"v":"flow"}"#)).unwrap();
   assert_eq!(out.get_string("r"), "Hello flow from python");
+}
+
+// ---- sys.path ----------------------------------------------------------------------------
+
+#[test]
+fn sys_path_has_no_cwd_or_command_dir() {
+  // Was: the server's cwd and each command's own directory inserted at the
+  // FRONT of sys.path, so a stray json.py in either shadowed the stdlib.
+  init();
+  let call = command("import sys", &[], "return [p for p in sys.path if isinstance(p, str)]", "Any", DataObject::new());
+  let d = run(&call).unwrap();
+  let paths: Vec<String> = d.array().objects().iter().map(|p| p.string()).collect();
+  let cwd = std::env::current_dir().unwrap().display().to_string();
+  let cmd_dir = call.file.parent().unwrap().display().to_string();
+  for bad in ["", ".", cwd.as_str(), cmd_dir.as_str()] {
+    assert!(!paths.iter().any(|p| p == bad), "sys.path contains {:?}: {:?}", bad, paths);
+  }
+  let base = call.base_dir.display().to_string();
+  assert!(paths.contains(&base), "sys.path lacks the package root {}: {:?}", base, paths);
+}
+
+#[test]
+fn library_named_like_a_stdlib_module() {
+  // A library named `colorsys` shadowed the stdlib module for EVERY command
+  // while package roots went first on sys.path. Now the stdlib wins, and only
+  // that library's own commands fail - with an error that says why.
+  init();
+  let call = command_in("colorsys", "", &[], "return 1", "Any", DataObject::new());
+  let e = run(&call).unwrap_err();
+  let head = e.lines().next().unwrap();
+  assert!(head.starts_with("ImportError: library 'colorsys' cannot be imported as a Python package: that name is taken by the Python module at "), "{}", e);
+  let other = ret("import colorsys\nreturn list(colorsys.rgb_to_hsv(1.0, 0.0, 0.0))").unwrap();
+  assert_eq!(json(&other), r#"{"v":[0.0,1.0,1.0]}"#);
 }
