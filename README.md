@@ -226,7 +226,7 @@ Language engines are feature-gated so the base crate stays light. Enable the
 ones your flows need:
 
 ```bash
-cargo build --features python_runtime      # embeds Python 3 via PyO3
+cargo build --features python_runtime      # embeds Python 3.10-3.14 via PyO3
 cargo build --features javascript_runtime  # embeds V8 via deno_core
 cargo build --features java_runtime        # loads a JVM via JNI
 ```
@@ -234,9 +234,174 @@ cargo build --features java_runtime        # loads a JVM via JNI
 - **Python** — commands run in a persistent embedded interpreter. Arguments
   arrive as `NDataObject` / `NDataArray` / `NDataBytes`, thin Python wrappers
   around the underlying Rust data — no serialization on the boundary, and
-  Python mutates the same data Rust sees. Returning a plain value (string,
-  int, dict, …) wraps it into a `DataObject` automatically. If a `venv`
-  directory exists next to `data/`, it is activated automatically.
+  Python mutates the same data Rust sees. If a `venv` directory exists next
+  to `data/`, it is activated automatically. A Python command returns
+  exactly what a Rust command returns — `{"a": value}`, or
+  `{"a": {"status": "err", "msg": ...}}` on failure — so it works anywhere a
+  Rust command does, including as a flow op. The return value converts
+  exactly or not at all:
+
+  | Python | ndata |
+  |---|---|
+  | `None`, `bool`, `str` | `DNull`, `DBoolean`, `DString` |
+  | `int` (incl. `IntEnum`, numpy ints) | `DInt`; outside 64-bit range is an `OverflowError` |
+  | `float` (incl. numpy floats, `Fraction`) | `DFloat` |
+  | `bytes`, `bytearray` | `DBytes` |
+  | `dict` with `str` keys | `DObject` |
+  | `list`, `tuple` | `DArray` |
+  | `NDataObject` / `NDataArray` / `NDataBytes` | the same handle |
+
+  Anything else (`set`, `Decimal`, `datetime`, …) is a `TypeError` that
+  names an explicit conversion. A `FLAT` command must return a `dict` or
+  `NDataObject`. An exception's `msg` names the exception, its location in
+  the command body (`body line N`, or `imports line N`), and the full
+  traceback. A declared parameter missing from the call is an error.
+
+  Each command is the module `lib.ctl.cmd` under its library's package root,
+  which is appended to the END of `sys.path` — so a command imports a sibling
+  as `from lib.ctl import other`, and a library named like an existing Python
+  module (`email`, `html`, …) fails with an error naming that module rather
+  than shadowing it. Neither the working directory nor a command's own
+  directory is on `sys.path`. A `venv` is configured once, at interpreter
+  start (its `sys.path` and `.pth` files, so editable installs work).
+
+  `flow pytest [pytest arguments]` runs pytest inside the embedded runtime
+  (pytest must be installed in that Python, e.g. the venv next to `data/`).
+  Tests are ordinary pytest files with every library's package root on
+  `sys.path`, so they can call any command, import a command's module and
+  call its function directly, and use real `ndata_py` objects:
+
+  ```python
+  import flowlang, pytest
+  from testflow.testflow import test_python
+
+  def test_add():
+      assert flowlang.api.testflow.testflow.test_add(1, 2) == "1+2=3"
+
+  def test_hello():
+      assert test_python.test_python("you") == "Hello you from python"
+
+  def test_missing_argument():
+      with pytest.raises(flowlang.CommandError, match="missing required parameter"):
+          flowlang.call("testflow", "testflow", "test_python")
+  ```
+
+  An application embedding flowlang can offer the same with
+  `flowlang::pyenv::run_pytest(args)`.
+
+  Generated command functions are annotated from the declared types —
+  `def add(a: "int", items: "NDataArray") -> "Mapping[str, Any]":` — and
+  flowb writes type stubs for `ndata_py` and `flowlang` (`ndata_py.pyi`,
+  `flowlang.pyi`) into the package root next to the generated sources, so
+  pyright, mypy and editors check and complete command bodies. Declared
+  types map as String → `str`, Integer → `int`, Float/Double → `float`,
+  Boolean → `bool`, JSONObject → `NDataObject`, JSONArray → `NDataArray`,
+  InputStream → `NDataBytes`, anything else → `Any`; return types accept
+  what a command may return (`Mapping[str, Any]` for JSONObject and FLAT,
+  `Sequence[Any]` for JSONArray). The annotations are strings, never
+  evaluated at runtime.
+
+  Output from Python commands is labelled with the command and written as
+  complete lines straight to the process's streams, so it appears
+  immediately and in order with the server's own output, even when stdout
+  is not a terminal:
+
+  ```
+  [py testflow:testflow:report] building totals
+  [py testflow:testflow:report] WARNING mylib.db: slow query (2.3 s)
+  ```
+
+  `print()` goes to stdout; `sys.stderr` and `logging` go to stderr (in
+  subprocess mode, everything goes to stderr: the child's stdout carries the
+  result). Unless a command configures logging itself, the root logger gets
+  a `LEVEL name: message` handler at Python's default WARNING level; set
+  `FLOWLANG_PYTHON_LOG_LEVEL=INFO` (or `DEBUG`, …) to change it. Threads a
+  command starts write with a plain `[py]` label (or the command's, where
+  new threads inherit the context — free-threaded 3.14's default).
+
+  A CPython bundled next to the executable, in `<exe dir>/python` (a
+  relocatable python-build-standalone build, linked with an
+  `$ORIGIN/python/lib` rpath), is used automatically: the runtime sets
+  `PYTHONHOME` to it unless the environment sets one, and the subprocess
+  mode and the checker prefer its `python3`. This is how a binary can ship
+  with its own Python.
+
+  Concurrency: with a standard CPython, Python commands share the GIL —
+  CPU-bound commands run one at a time (the lock is released while
+  `flowlang.call` runs another command, so a slow callee blocks no one).
+  Built against a free-threaded CPython (3.13t/3.14t:
+  `PYO3_PYTHON=python3.14t cargo build --features python_runtime`), Python
+  commands run in parallel: `ndata_py` and `flowlang` declare that they do
+  not need the GIL, and four CPU-bound commands on four cores finish about
+  3.6× faster than one after another. A third-party extension module that
+  does not support free-threading re-enables the GIL when imported (Python
+  warns when it does).
+
+  Python commands hot-reload: when a command's generated file changes
+  (`flowb`, or newbound's `dev.code` edits, regenerate it), the next call
+  reloads the module in place (`importlib.reload`) before running it — no
+  restart. Module-level code runs again, so top-level assignments are
+  re-made, while names it no longer assigns keep their old values. If the
+  new source fails to load (a `SyntaxError`, say), each call reports that
+  error until it is fixed; the old code never runs silently. A module that
+  imports another command's module sees the new code once that command has
+  been called (or reloaded); third-party packages are not reloaded.
+
+  The embedded interpreter provides two modules, mirroring the Rust crates:
+
+  ```python
+  import ndata_py   # NDataObject, NDataArray, NDataBytes, NDataPyError, init, gc
+  import flowlang   # call, CommandError
+
+  o = ndata_py.NDataObject()
+  o["total"] = flowlang.call("testflow", "testflow", "test_add", a=300, b=120)
+  ```
+
+  `flowlang.call(lib, ctl, cmd, *args, **kwargs)` runs any command — Rust,
+  Python, flow, JavaScript or Java — with arguments cast to the declared
+  parameter types (positional arguments in declared order), and returns its
+  value (a flow's single output, or all of its outputs as an `NDataObject`).
+  `flowlang.api.<lib>.<ctl>.<cmd>(...)` is the same call as an attribute
+  path, mirroring the Rust `api` (names with `-` are written with `_`):
+
+  ```python
+  flowlang.api.testflow.testflow.test_add(300, 120)   # "300+120=420"
+  ```
+
+  flowb types the whole tree in `flowlang.pyi` from the libraries in
+  `data/`, so editors complete every command and type checkers check its
+  arguments and result. It raises `LookupError` for an unknown command,
+  `TypeError` for an argument that cannot be cast, and `flowlang.CommandError`
+  when the command fails — including a result whose `status` is `"err"`. The
+  interpreter lock is released while the command runs. In subprocess mode
+  `ndata_py` is absent and `flowlang.call` raises a `RuntimeError` saying the
+  embedded runtime is required.
+
+  The wrappers behave like the built-in types they stand for, while
+  reading and writing the shared ndata store directly:
+
+  - `NDataObject` is a `MutableMapping` (registered with `collections.abc`):
+    `[]`, `in`, `len`, iteration over keys, live `keys()`/`values()`/`items()`
+    views, `get`, `pop`, `popitem`, `setdefault`, `update`, `clear`, `copy`
+    (shallow), and `==` with any `dict` or mapping. Keys must be `str`.
+  - `NDataArray` is a `MutableSequence`: indexing and slicing (including
+    negative steps), `in`, `index`, `count`, `append`, `extend`, `+=`,
+    `insert`, `remove`, `pop`, `reverse`, `reversed()`, `clear`, `copy`, and
+    `==` with any `list`.
+  - `NDataBytes` supports `bytes(b)` and `==` with `bytes`/`bytearray`.
+  - `to_dict()` / `to_list()` / `ndata_py.to_py(x)` make deep native copies,
+    for code that requires a real `dict` or `list`. `json.dumps` accepts only
+    real dicts and lists, so serialize with
+    `json.dumps(x, default=ndata_py.to_py)` (or `x.to_json()`, ndata's own
+    JSON, which also encodes bytes).
+  - Like `dict` and `list`, the wrappers are unhashable, and their `repr`
+    shows the contents: `NDataObject({'a': 1})`.
+
+  Without `python_runtime`, Python commands run in a `python3` subprocess
+  (the `venv` interpreter if present) with the same envelope, conversion
+  rules and error reports; the difference is that data crosses by value as
+  JSON — arguments arrive as plain `dict`/`list`, and bytes as ndata's hex
+  string.
 - **JavaScript** — commands run in a Deno/V8 isolate, with `serde_v8`
   bridging `DataObject` to V8 values.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`

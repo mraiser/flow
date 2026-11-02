@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.3.41"
+version = "0.3.42"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -38,7 +38,7 @@ libc = "0.2"
 
 gag = { version = "1.0", optional = true }
 jni = { version = "^0.21.1", features = ["invocation"], optional = true }
-pyo3 = { version = "0.21.2", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.30", features = ["auto-initialize"], optional = true }
 deno_core = { version = "0.249.0", optional = true }
 serde_v8 = { version = "0.158.0", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }

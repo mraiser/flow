@@ -92,6 +92,8 @@ pub fn mcp(data: DataObject) -> DataObject {
 
 pub fn run(){
     eprintln!("[flow] MCP flow started — expecting JSON-RPC over stdin/stdout");
+    // stdout is the JSON-RPC channel: a Python command's print() goes to stderr.
+    crate::pycmd::stdout_is_protocol();
 
     let stdin = io::stdin();
     let stdout = io::stdout();

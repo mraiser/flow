@@ -1,0 +1,35 @@
+name: python
+
+# Python commands across the supported interpreters, in both execution modes:
+# embedded (python_runtime, PyO3) and subprocess (no python_runtime).
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-commands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14t: free-threaded CPython - Python commands run in parallel
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and embed this Python
+        run: |
+          echo "PYO3_PYTHON=$(which python)" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')" >> "$GITHUB_ENV"
+      - name: mypy and pytest (the generated-hints and flow pytest tests use them)
+        run: python -m pip install --quiet mypy pytest
+      - name: Generated Python sources (type hints, stubs)
+        run: cargo test --release --features=serde_support --lib builder::python
+      - name: Embedded (python_runtime)
+        run: cargo test --release --features=serde_support,python_runtime --test python_commands --test python_venv --test python_refcounts --test python_no_raw_refs --test python_ndata_protocols --test python_output --test python_pytest --test python_exists --test python_check --test python_records --test python_output_protocol --test python_parallel
+      - name: Subprocess (no python_runtime)
+        run: cargo test --release --features=serde_support --test python_commands --test python_output --test python_pytest --test python_exists --test python_check --test python_records --test python_output_protocol

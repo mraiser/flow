@@ -64,8 +64,8 @@ impl Command {
         return true;
       },
       "python" => {
-        // FIXME
-        return true;
+        // Runnable when its generated source exists (flowb writes it).
+        return std::path::Path::new(&PyCmd::get_path(lib, id)).exists();
       },
       _ => panic!("Unknown command type {}", typ),
     };

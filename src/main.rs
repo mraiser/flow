@@ -30,6 +30,20 @@ pub fn main() {
   env::set_var("RUST_BACKTRACE", "1");
   {
     let params: Vec<String> = env::args().collect();
+    // flow pytest [pytest args]: run pytest inside the embedded Python runtime.
+    if params.len() > 1 && params[1] == "pytest" {
+      #[cfg(feature = "python_runtime")]
+      std::process::exit(::flowlang::pyenv::run_pytest(params[2..].to_vec()));
+      #[cfg(not(feature = "python_runtime"))]
+      {
+        eprintln!("flow pytest needs the embedded Python runtime: build with --features=python_runtime");
+        std::process::exit(2);
+      }
+    }
+    if params.len() < 4 {
+      eprintln!("usage: flow <lib> <ctl> <cmd>  (JSON arguments on stdin)\n       flow pytest [pytest arguments]");
+      std::process::exit(2);
+    }
     let lib = &params[1];
     let ctl = &params[2];
     let cmd = &params[3];

@@ -4,3 +4,4 @@ Cargo.lock
 /libflowlang/target/
 /generated/
 /lib_python/
+__pycache__/
