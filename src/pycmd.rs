@@ -435,6 +435,8 @@ import contextvars as _contextvars
 import io as _io
 
 _label = _contextvars.ContextVar("flowlang_command_label", default=None)
+# The prefix for output written outside any command ("" under flow pytest).
+_UNLABELLED = "[py] "
 
 
 class _CommandOutput(_io.TextIOBase):
@@ -442,7 +444,8 @@ class _CommandOutput(_io.TextIOBase):
         self._fd = fd
         self._name = name
         self._lock = _threading.Lock()
-        self._partial = {}   # thread ident -> unfinished line
+        self._partial = {}   # thread ident -> text not yet written
+        self._open = set()   # threads whose current line is written in part
 
     @property
     def name(self):
@@ -465,6 +468,10 @@ class _CommandOutput(_io.TextIOBase):
     def fileno(self):
         return self._fd
 
+    def _prefix(self):
+        label = _label.get()
+        return "[py %s] " % label if label else _UNLABELLED
+
     def write(self, s):
         if not isinstance(s, str):
             raise TypeError("write() argument must be str, not %s" % type(s).__name__)
@@ -473,20 +480,35 @@ class _CommandOutput(_io.TextIOBase):
             *lines, rest = (self._partial.pop(tid, "") + s).split("\n")
             if rest:
                 self._partial[tid] = rest
-        if lines:
-            self._emit(lines)
+            out = []
+            for line in lines:
+                out.append(("" if tid in self._open else self._prefix()) + line + "\n")
+                self._open.discard(tid)
+            self._emit("".join(out))
         return len(s)
 
     def flush(self):
+        # Make the current line's text visible now, without ending the line
+        # (progress output, print(..., end="", flush=True)).
+        tid = _threading.get_ident()
         with self._lock:
-            rest = self._partial.pop(_threading.get_ident(), "")
-        if rest:
-            self._emit([rest])
+            rest = self._partial.pop(tid, "")
+            if rest:
+                self._emit(("" if tid in self._open else self._prefix()) + rest)
+                self._open.add(tid)
 
-    def _emit(self, lines):
-        label = _label.get()
-        prefix = "[py %s] " % label if label else "[py] "
-        data = "".join(prefix + line + "\n" for line in lines).encode("utf-8", "backslashreplace")
+    def end_line(self):
+        # At the end of a call: a line the command left unfinished is ended,
+        # so it neither joins nor is attributed to the next writer's text.
+        self.flush()
+        tid = _threading.get_ident()
+        with self._lock:
+            if tid in self._open:
+                self._open.discard(tid)
+                self._emit("\n")
+
+    def _emit(self, text):
+        data = text.encode("utf-8", "backslashreplace")
         while data:
             data = data[_os.write(self._fd, data):]
 
@@ -516,7 +538,7 @@ def end_call(token):
     # A partial line the command left belongs to it, not to the next writer.
     for stream in (_sys.stdout, _sys.stderr):
         if isinstance(stream, _CommandOutput):
-            stream.flush()
+            stream.end_line()
     _label.reset(token)
 
 

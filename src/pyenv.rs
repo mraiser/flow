@@ -190,7 +190,6 @@ fn format_error(py: Python<'_>, err: &PyErr, call: &PyCall) -> String {
 fn init_once() {
     START.call_once(|| {
         let venv_path_str = DataStore::new().root.canonicalize().unwrap();
-        eprintln!("Checking for DataStore.root at: {:?}", venv_path_str);
 
         let venv_path_str = venv_path_str
             .parent()
@@ -199,9 +198,8 @@ fn init_once() {
             .to_string_lossy()
             .to_string();
 
-        eprintln!("Checking for venv at: {}", venv_path_str);
-
         let venv_option = if Path::new(&venv_path_str).exists() {
+            eprintln!("Python: using the venv at {}", venv_path_str);
             Some(venv_path_str.as_str())
         } else {
             None
@@ -216,6 +214,53 @@ pub fn call(call: &PyCall) -> Result<DataObject, String> {
     let py_env_guard = PYENV.read().unwrap();
     let py_env = py_env_guard.as_ref().expect("PyEnv not initialized");
     py_env.execute(call)
+}
+
+/// Runs pytest inside the embedded runtime (`flow pytest [args]`): tests are
+/// plain pytest files that can call any command through `flowlang.call` /
+/// `flowlang.api`, import command modules (`from lib.ctl import cmd`) and
+/// call their functions directly, and use real `ndata_py` objects - exactly
+/// as commands do in the server. Every library's package root (`<lib
+/// root>/src`) is on `sys.path`. Returns pytest's exit code; 4 if pytest is
+/// not installed in the interpreter (or the venv next to `data/`).
+pub fn run_pytest(args: Vec<String>) -> i32 {
+    init_once();
+    let store = DataStore::new();
+    let mut roots: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&store.root) {
+        for e in entries.flatten() {
+            let lib = e.file_name().to_string_lossy().to_string();
+            if !store.exists(&lib, "controls") { continue; }
+            let src = store.get_lib_root(&lib).join("src");
+            let src = src.canonicalize().unwrap_or(src).display().to_string();
+            if !roots.contains(&src) { roots.push(src); }
+        }
+    }
+    roots.sort();
+    Python::attach(|py| {
+        let run = || -> PyResult<i32> {
+            let sys_path_any = py.import("sys")?.getattr("path")?;
+            let sys_path: &Bound<'_, PyList> = sys_path_any.cast()?;
+            for r in &roots {
+                if !sys_path.contains(r)? { sys_path.append(r)?; }
+            }
+            // Test output is pytest's own: no "[py]" prefix outside commands.
+            support(py)?.setattr("_UNLABELLED", "")?;
+            let pytest = match py.import("pytest") {
+                Ok(m) => m,
+                Err(_) => {
+                    eprintln!("pytest is not installed in the embedded Python {} (install it in the venv next to data/)",
+                              Python::version_str().split_whitespace().next().unwrap_or(""));
+                    return Ok(4);
+                }
+            };
+            pytest.call_method1("main", (args.clone(),))?.extract::<i32>()
+        };
+        run().unwrap_or_else(|e| {
+            eprintln!("flow pytest: {}", e);
+            3
+        })
+    })
 }
 
 /// Runs a Python command by library and id. Returns the same envelope a Rust

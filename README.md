@@ -265,6 +265,30 @@ cargo build --features java_runtime        # loads a JVM via JNI
   directory is on `sys.path`. A `venv` is configured once, at interpreter
   start (its `sys.path` and `.pth` files, so editable installs work).
 
+  `flow pytest [pytest arguments]` runs pytest inside the embedded runtime
+  (pytest must be installed in that Python, e.g. the venv next to `data/`).
+  Tests are ordinary pytest files with every library's package root on
+  `sys.path`, so they can call any command, import a command's module and
+  call its function directly, and use real `ndata_py` objects:
+
+  ```python
+  import flowlang, pytest
+  from testflow.testflow import test_python
+
+  def test_add():
+      assert flowlang.api.testflow.testflow.test_add(1, 2) == "1+2=3"
+
+  def test_hello():
+      assert test_python.test_python("you") == "Hello you from python"
+
+  def test_missing_argument():
+      with pytest.raises(flowlang.CommandError, match="missing required parameter"):
+          flowlang.call("testflow", "testflow", "test_python")
+  ```
+
+  An application embedding flowlang can offer the same with
+  `flowlang::pyenv::run_pytest(args)`.
+
   Generated command functions are annotated from the declared types —
   `def add(a: "int", items: "NDataArray") -> "Mapping[str, Any]":` — and
   flowb writes type stubs for `ndata_py` and `flowlang` (`ndata_py.pyi`,

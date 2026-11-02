@@ -67,6 +67,8 @@ fn command_output_is_labelled_lines() {
 print('hello')
 print('par', end='')
 print('tial')
+print('flu', end='', flush=True)
+print('shed')
 print('two\nlines')
 sys.stderr.write('to stderr\n')
 logging.getLogger('mylog').info('an info')
@@ -82,7 +84,7 @@ return 1"#);
   let (o, e) = if EMBEDDED { (&out, &err) } else { (&err, &err) };
 
   let t = "[py talk:ctl:cmd] ";
-  for want in ["hello", "partial", "two", "lines"] {
+  for want in ["hello", "partial", "flushed", "two", "lines"] {
     assert!(o.lines().any(|l| l == format!("{}{}", t, want)), "stdout lacks {:?}:\n{}", want, o);
   }
   assert!(e.lines().any(|l| l == format!("{}to stderr", t)), "{}", e);
