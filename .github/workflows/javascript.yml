@@ -1,0 +1,27 @@
+name: javascript
+
+# JavaScript commands (javascript_runtime: V8 via deno_core). The feature
+# went uncompiled for two years without anyone noticing; this job keeps it
+# building and its contract tested.
+on:
+  push:
+  pull_request:
+
+jobs:
+  javascript-commands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: js-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
+      - name: Build with javascript_runtime
+        run: cargo build --release --features=javascript_runtime
+      - name: JavaScript command tests
+        run: cargo test --release --features=javascript_runtime --test js_commands --test js_records

@@ -10,8 +10,9 @@ mix nodes written in any of them. It also speaks the
 the `flowmcp` binary exposes every command as an MCP tool that any MCP client
 can call.
 
-> **Note:** Support for back-end commands written in Java and JavaScript is
-> kind of broken for now. Contact me if you'd like to help fix it.
+> **Note:** Support for back-end commands written in Java is kind of broken
+> for now. Contact me if you'd like to help fix it. JavaScript commands work
+> (see *Language runtimes*), but are synchronous and dependency-free for now.
 
 A Flow program is a directed graph of operations ("commands") in which data
 flows along connections between nodes. Using an IDE like
@@ -402,8 +403,35 @@ cargo build --features java_runtime        # loads a JVM via JNI
   rules and error reports; the difference is that data crosses by value as
   JSON — arguments arrive as plain `dict`/`list`, and bytes as ndata's hex
   string.
-- **JavaScript** — commands run in a Deno/V8 isolate, with `serde_v8`
-  bridging `DataObject` to V8 values.
+- **JavaScript** — commands run in one embedded V8 isolate (`deno_core`),
+  owned by a thread of its own: callers on any thread hand their call to it
+  and wait, so commands run one at a time, and global state a command leaves
+  behind persists between calls. A command record's language is `"js"` or
+  `"javascript"` (newbound's `dev.code` writes the latter). The body is the
+  body of a function whose parameters are the declared params, in order;
+  each must be a JavaScript identifier, and a declared param missing from
+  the call is an error. A JavaScript command returns exactly what a Rust
+  command returns — `{"a": value}`, or `{"a": {"status": "err", "msg": ...}}`
+  on failure — so it works anywhere a Rust or Python command does.
+
+  Data crosses by value, with JSON semantics: objects, arrays, strings,
+  numbers, booleans and `null` convert both ways (bytes as ndata's hex
+  string); `undefined` returns as `null`. Returning a Promise, function,
+  symbol, BigInt, `Map` or `Set` is an error that names it, and a `FLAT`
+  command must return an object. An exception's `msg` is the exception, its
+  location in the command body (`body line N`) and the stack; the stack's
+  line numbers are the body's own. A syntax error is reported on every call
+  until the body is fixed — the old code never runs silently — and a panic
+  inside the engine restarts it rather than disabling JavaScript.
+
+  `console.log`/`info`/`debug` write to stdout (stderr under `flowmcp`, whose
+  stdout is the JSON-RPC channel) and `console.warn`/`error`/`trace` to
+  stderr, as complete lines labelled with the command:
+  `[js testflow:testflow:report] building totals`.
+
+  Not yet: `async` commands, `import`/npm packages, calling other commands
+  from JavaScript, and per-call timeouts — a command that never returns
+  blocks every JavaScript command after it.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`
   on the library path (e.g. `LD_LIBRARY_PATH`).
 - **Rust** — statically linked by default: `flowb` generates a wrapper and
@@ -460,9 +488,13 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
+cargo test --features=javascript_runtime --test js_commands --test js_records
 ```
 
-The suite covers the builder's wrapper guarantees, synchro ordering under
+The suite covers JavaScript commands (with `javascript_runtime`: the result
+envelope, value conversion, error reports, state across calls, calls from
+many threads, and records under both language tags), the builder's wrapper
+guarantees, synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when
 `syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values

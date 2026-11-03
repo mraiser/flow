@@ -202,6 +202,8 @@ pub(crate) fn build(
             self::python::build_python_command(&actual_library_build_src_path, lib_name, control_name, command_name, &store);
             false
         }
+        // JavaScript runs from the store as it is: nothing to generate.
+        "js" | "javascript" => false,
         _ => {
             println!("Unsupported command type '{}' for {}:{}:{}", command_type, lib_name, control_name, command_name);
             false
