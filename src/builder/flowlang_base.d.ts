@@ -51,7 +51,9 @@ declare namespace flowlang {
    * Runs lib:ctl:cmd with named arguments and returns its value. Throws
    * ReferenceError for an unknown command, TypeError for arguments that do
    * not fit its declared parameters, and CommandError when it fails. A
-   * JavaScript command that awaits returns a Promise.
+   * JavaScript command that awaits returns a Promise. A Rust, Python or flow
+   * command may call JavaScript commands in turn: they run in this isolate
+   * and must not await.
    */
   function call(lib: string, ctl: string, cmd: string, args?: Record<string, any>): any;
   /** flowlang.api.<lib>.<ctl>.<cmd>(...positional) == flowlang.call(lib, ctl, cmd, {...}). */

@@ -405,23 +405,16 @@ fn positional_args(call: &JsCall) -> DataArray {
 thread_local! {
   /// True on the engine thread.
   static ON_ENGINE: Cell<bool> = const { Cell::new(false) };
+  /// On a thread running a Rust, Python or flow command for a JavaScript
+  /// caller: the engine thread, which waits inside that caller's
+  /// `flowlang.call` and runs the JavaScript the command calls.
+  static NESTED: std::cell::RefCell<Option<std::sync::mpsc::Sender<Event>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Runs a prepared call on the engine thread. Returns the success envelope
 /// `{"a": value}`, or the error report.
 pub fn run(call: &JsCall) -> Result<DataObject, String> {
   let reg = registration(call)?;
-  if ON_ENGINE.with(|f| f.get()) {
-    // A JavaScript command called a Rust, Python or flow command, which
-    // called this one: the engine is inside the outer call and cannot take
-    // another until it returns.
-    return Err(format!(
-      "{} cannot run here: a non-JavaScript command called it from inside a JavaScript command, \
-       and the JavaScript engine is busy with that outer command (JavaScript commands can call \
-       JavaScript commands directly through flowlang.call)",
-      call.label
-    ));
-  }
   let job = Job {
     label: call.label.clone(),
     reg,
@@ -431,9 +424,24 @@ pub fn run(call: &JsCall) -> Result<DataObject, String> {
     timeout: call.timeout.or_else(default_timeout),
   };
   let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+  let mut msg = Msg { job, reply: reply_tx };
+  if let Some(route) = NESTED.with(|n| n.borrow().clone()) {
+    // A JavaScript command called the command running on this thread: its
+    // engine is waiting for it, inside that call, and runs this one there.
+    if route.send(Event::Js(msg)).is_err() {
+      return Err(format!("{} was not run: the JavaScript command that called this one was stopped", call.label));
+    }
+    let value = recv_soon(&reply_rx, ENGINE_SPIN)
+      .map_err(|_| format!("{} was not run: the JavaScript command that called this one was stopped", call.label))??;
+    return Ok(ok_envelope(value));
+  }
+  if ON_ENGINE.with(|f| f.get()) {
+    // Unreachable through flowlang.call (it runs other languages' commands
+    // off the engine thread); kept so a mistake here fails rather than hangs.
+    return Err(format!("{} cannot run on the JavaScript engine's own thread", call.label));
+  }
   // The engine thread is gone only if it was killed from outside the panic
   // guard; start a new one once before giving up.
-  let mut msg = Msg { job, reply: reply_tx };
   for attempt in 0..2 {
     match engine().send(msg) {
       Ok(()) => break,
@@ -509,6 +517,7 @@ fn spawn_engine() -> mpsc::UnboundedSender<Msg> {
           Err(e) => {
             // The isolate's state after a panic is unknown: start over.
             let why = panic_text(&e);
+            abandon_waits();
             crate::jsndata::end_all_calls();
             for p in pending.drain(..) {
               let _ = p.reply.send(Err(format!("the JavaScript engine panicked and was restarted while running {}: {}", p.label, why)));
@@ -612,6 +621,7 @@ fn serve(
     .min();
   watchdog.arm(limit);
   let turn = e.runtime.poll_event_loop(cx, PollEventLoopOptions::default());
+  abandon_waits();
   let fired = e.disarm(watchdog);
   // Only a loop with nothing left to do is idle. An error - an uncaught
   // exception in a timer callback, or JavaScript the watchdog stopped -
@@ -734,7 +744,7 @@ use crate::jsndata::{
   op_nd_set_bytes, op_nd_set_len, op_nd_set_nd, op_nd_set_null, op_nd_set_num, op_nd_set_str,
 };
 deno_core::extension!(flowlang_js, ops = [
-  op_flowlang_call,
+  op_flowlang_call, op_flowlang_resume,
   op_flowlang_fetch, op_flowlang_now, op_flowlang_random, op_flowlang_url_parse, op_flowlang_url_set,
   op_flowlang_call_args, op_flowlang_call_out, op_nd_delete, op_nd_get_bool, op_nd_get_bytes, op_nd_get_nd,
   op_nd_get_num, op_nd_get_str, op_nd_is_array, op_nd_keys, op_nd_kind, op_nd_len, op_nd_new, op_nd_set_bool,
@@ -742,7 +752,10 @@ deno_core::extension!(flowlang_js, ops = [
 ]);
 
 /// `flowlang.call` / `flowlang.api`: resolves the command and, unless it is
-/// JavaScript, runs it here: `{"ok": true}`, its value written to `out[0]`.
+/// JavaScript, runs it on a worker thread while this one waits: `{"ok":
+/// true}`, its value written to `out[0]`. When that command calls a
+/// JavaScript command, the answer is `{"nested": {...}}` instead, which the
+/// prelude runs here and answers through `op_flowlang_resume`.
 /// The arguments come as ndata (`positional`, `named`), so a handle passed
 /// along reaches the callee as the same object. A JavaScript callee comes
 /// back as `{"js": {...}}`, its cast arguments in `out[0]`, for the prelude
@@ -815,13 +828,182 @@ fn op_flowlang_call(
       "scriptName": reg.script_name,
     }});
   }
-  match run_command(&target, values) {
-    Ok(value) => {
-      value.push(&mut out);
-      json!({"ok": true})
+  // Any other language runs on a worker thread while this one waits for it,
+  // so a JavaScript command it calls can run here, in this isolate.
+  let worker = IDLE.with(|w| w.borrow_mut().pop()).unwrap_or_else(Worker::spawn);
+  let (events_tx, events) = std::sync::mpsc::channel();
+  if worker.jobs.send(WorkerJob { target, values, events: events_tx }).is_err() {
+    return err("failed", "flowlang.call: could not start the call".to_string());
+  }
+  let token = NEXT_WAIT.with(|n| { let t = n.get(); n.set(t.wrapping_add(1).max(1)); t });
+  WAITS.with(|w| { w.borrow_mut().insert(token, Wait { events, worker, out, nested: None }); });
+  wait_for(token)
+}
+
+/// Receives, spinning briefly before blocking: a handoff between the engine
+/// thread and a worker happens on every call to another language's command,
+/// and waking a blocked thread costs tens of microseconds where a spin costs
+/// well under one.
+fn recv_soon<T>(rx: &std::sync::mpsc::Receiver<T>, spin: Duration) -> Result<T, std::sync::mpsc::RecvError> {
+  let start = Instant::now();
+  loop {
+    match rx.try_recv() {
+      Ok(v) => return Ok(v),
+      Err(std::sync::mpsc::TryRecvError::Disconnected) => return Err(std::sync::mpsc::RecvError),
+      Err(std::sync::mpsc::TryRecvError::Empty) if start.elapsed() < spin => std::hint::spin_loop(),
+      Err(std::sync::mpsc::TryRecvError::Empty) => return rx.recv(),
     }
-    Err(CallFailure::BadArgs(m)) => err("args", m),
-    Err(CallFailure::Failed(m)) => err("failed", m),
+  }
+}
+
+/// How long the engine thread spins waiting for a worker (and a worker for
+/// the engine's answer to its JavaScript call): a quick command's time.
+const ENGINE_SPIN: Duration = Duration::from_micros(50);
+/// How long an idle worker spins for its next job: longer than the engine
+/// takes to look a command up, so a JavaScript loop calling Rust stays warm.
+const WORKER_SPIN: Duration = Duration::from_micros(250);
+
+/// What a worker thread tells the engine thread waiting for it.
+enum Event {
+  /// The command called a JavaScript command: run it, answer `reply`.
+  Js(Msg),
+  /// The command returned.
+  Done(Result<Value, CallFailure>),
+}
+
+/// A thread that runs Rust, Python and flow commands for JavaScript callers.
+struct Worker {
+  jobs: std::sync::mpsc::Sender<WorkerJob>,
+}
+
+struct WorkerJob {
+  target: crate::callapi::Target,
+  values: DataObject,
+  events: std::sync::mpsc::Sender<Event>,
+}
+
+impl Worker {
+  fn spawn() -> Worker {
+    let (jobs, rx) = std::sync::mpsc::channel::<WorkerJob>();
+    let spawned = std::thread::Builder::new().name("flowlang-js-call".to_string()).spawn(move || {
+      // Ends when its Worker is dropped: an abandoned call, or the engine's end.
+      while let Ok(job) = recv_soon(&rx, WORKER_SPIN) {
+        NESTED.with(|n| *n.borrow_mut() = Some(job.events.clone()));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_command(&job.target, job.values)))
+          .unwrap_or_else(|p| Err(CallFailure::Failed(format!("{} panicked: {}", job.target.label, panic_text(&p)))));
+        NESTED.with(|n| *n.borrow_mut() = None);
+        let _ = job.events.send(Event::Done(r));
+      }
+    });
+    if let Err(e) = spawned { eprintln!("[js] could not start a worker thread: {}", e); }
+    Worker { jobs }
+  }
+}
+
+/// A `flowlang.call` waiting for a command running on a worker.
+struct Wait {
+  events: std::sync::mpsc::Receiver<Event>,
+  worker: Worker,
+  /// Where the command's value goes.
+  out: DataArray,
+  /// The JavaScript command it called, while that runs here.
+  nested: Option<Nested>,
+}
+
+struct Nested {
+  label: String,
+  reg: Registration,
+  flat: bool,
+  call_id: u32,
+  out: DataArray,
+  reply: std::sync::mpsc::Sender<Result<Value, String>>,
+}
+
+thread_local! {
+  /// Calls waiting for a worker, on the engine thread, by token.
+  static WAITS: std::cell::RefCell<std::collections::HashMap<u32, Wait>> = Default::default();
+  static NEXT_WAIT: Cell<u32> = const { Cell::new(1) };
+  /// Workers with nothing to do.
+  static IDLE: std::cell::RefCell<Vec<Worker>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Blocks until the worker behind `token` returns, or calls a JavaScript
+/// command: then `{"nested": {...}}` asks the prelude to run it here and
+/// answer with `op_flowlang_resume`, which waits again.
+fn wait_for(token: u32) -> serde_json::Value {
+  use serde_json::json;
+  let event = WAITS.with(|w| w.borrow().get(&token).map(|w| recv_soon(&w.events, ENGINE_SPIN)));
+  let err = |kind: &str, msg: String| json!({"err": {"kind": kind, "msg": msg}});
+  match event {
+    None => err("failed", "flowlang.call: the call is no longer waiting".to_string()),
+    Some(Err(_)) => {
+      WAITS.with(|w| w.borrow_mut().remove(&token));
+      err("failed", "flowlang.call: the worker running the command stopped".to_string())
+    }
+    Some(Ok(Event::Done(r))) => {
+      let Some(wait) = WAITS.with(|w| w.borrow_mut().remove(&token)) else { return err("failed", String::new()) };
+      IDLE.with(|i| i.borrow_mut().push(wait.worker));
+      match r {
+        Ok(value) => {
+          let mut out = wait.out;
+          value.push(&mut out);
+          json!({"ok": true})
+        }
+        Err(CallFailure::BadArgs(m)) => err("args", m),
+        Err(CallFailure::Failed(m)) => err("failed", m),
+      }
+    }
+    Some(Ok(Event::Js(msg))) => {
+      let job = msg.job;
+      register_map(&job.reg);
+      let (call_id, out) = crate::jsndata::begin_call(job.args.clone());
+      let hash: String = serde_json::from_str(&job.reg.hash).unwrap_or_default();
+      let ask = json!({"nested": {
+        "token": token,
+        "label": job.label,
+        "hash": hash,
+        "source": job.reg.source,
+        "scriptName": job.reg.script_name,
+        "callId": call_id,
+      }});
+      let nested = Nested { label: job.label, reg: job.reg, flat: job.flat, call_id, out, reply: msg.reply };
+      WAITS.with(|w| { if let Some(w) = w.borrow_mut().get_mut(&token) { w.nested = Some(nested); } });
+      ask
+    }
+  }
+}
+
+/// The prelude ran the JavaScript command a waiting call's command called:
+/// `ok`, its value written to its call's result, or the `exception` it
+/// threw. Answers the command, then waits for it again.
+#[deno_core::op2]
+#[serde]
+fn op_flowlang_resume<'s, 'i>(
+  scope: &mut v8::PinScope<'s, 'i>,
+  #[smi] token: u32,
+  ok: bool,
+  exception: v8::Local<'s, v8::Value>,
+) -> serde_json::Value {
+  let nested = WAITS.with(|w| w.borrow_mut().get_mut(&token).and_then(|w| w.nested.take()));
+  if let Some(n) = nested {
+    let answer = if ok {
+      finish(&n.label, n.flat, &n.out)
+    } else {
+      let js = deno_core::error::JsError::from_v8_exception(scope, exception);
+      Err(report(&js, Some(&n.reg)))
+    };
+    crate::jsndata::end_call(n.call_id);
+    let _ = n.reply.send(answer);
+  }
+  wait_for(token)
+}
+
+/// Drops the calls left waiting by JavaScript the watchdog stopped: their
+/// commands' JavaScript calls fail, and their values are discarded.
+fn abandon_waits() {
+  let waits: Vec<Wait> = WAITS.with(|w| w.borrow_mut().drain().map(|(_, w)| w).collect());
+  for w in waits {
+    if let Some(n) = w.nested { crate::jsndata::end_call(n.call_id); }
   }
 }
 
@@ -890,6 +1072,36 @@ const PRELUDE: &str = r#"
     if (error) throw error.thrown;
   };
 
+  // A JavaScript command called by a command that this isolate is waiting
+  // for: [true] once its value is written, or [false, what it threw]. It
+  // must finish now - the command waiting for it holds this thread - so one
+  // that awaits fails here (the event loop cannot run until it returns).
+  const nested = (n) => {
+    const outer = state.label;
+    state.label = n.label;
+    try {
+      ensure(n.label, n.hash, n.source, n.scriptName);
+      let v = cmds[n.label](...nd.args(n.callId));
+      if (v instanceof Promise) {
+        const [settled, value] = core.getPromiseDetails(v);
+        v.catch(() => {});
+        if (settled === 0) {
+          throw new CommandError(`${n.label} awaits, so it cannot run inside a call that a JavaScript command ` +
+            "made to a Rust, Python or flow command: the event loop cannot run until that call returns. " +
+            "Call it from JavaScript with flowlang.call, or make it synchronous (it was started and keeps running)");
+        }
+        if (settled === 2) throw value;
+        v = value;
+      }
+      nd.result(n.callId, v, `return value of ${n.label}`);
+      return [true, undefined];
+    } catch (e) {
+      return [false, e];
+    } finally {
+      state.label = outer;
+    }
+  };
+
   // Arguments cross as ndata: a handle passed along is the same object for
   // the callee, a plain value becomes ndata (as a dict does from Python).
   const invoke = (lib, ctl, cmd, positional, named) => {
@@ -897,7 +1109,10 @@ const PRELUDE: &str = r#"
     const pos = nd.arrayOf(positional, (i) => `argument ${i + 1} of ${label}`);
     const nam = nd.objectOf(named, (k) => `argument ${k} of ${label}`);
     const out = nd.newArray();
-    const r = ops.op_flowlang_call(String(lib), String(ctl), String(cmd), pos, nam, out);
+    let r = ops.op_flowlang_call(String(lib), String(ctl), String(cmd), pos, nam, out);
+    // A Rust, Python or flow command calling a JavaScript command: run it
+    // here, hand back its answer, and wait for the command again.
+    while (r.nested) r = ops.op_flowlang_resume(r.nested.token, ...nested(r.nested));
     if (r.err) {
       if (r.err.kind === "lookup") throw new ReferenceError(r.err.msg);
       if (r.err.kind === "args") throw new TypeError(r.err.msg);
@@ -1103,6 +1318,7 @@ impl Engine {
     watchdog.arm(job.timeout);
     let src = format!("__flowlang.run({}, {}, {})", reg.key, call_id, job.stdout_to_err);
     let result = self.runtime.execute_script("<flowlang call>", src);
+    abandon_waits();
     let fired = self.disarm(watchdog);
     let result = match result {
       Ok(v) if !fired => v,

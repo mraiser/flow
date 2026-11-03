@@ -451,9 +451,13 @@ cargo build --features java_runtime        # loads a JVM via JNI
   callee); they throw `ReferenceError` for an unknown command,
   `TypeError` for arguments that do not fit, and `flowlang.CommandError` when
   the command fails. A JavaScript callee runs in the same isolate and returns
-  its value as is (a Promise if it is async). Not yet supported: JavaScript →
-  a non-JavaScript command → JavaScript; the inner call fails with a message
-  saying so rather than deadlocking.
+  its value as is (a Promise if it is async). Any other callee runs on a
+  worker thread while the caller waits, so it can call JavaScript in turn —
+  JavaScript → Rust, Python or flow → JavaScript, to any depth: the inner
+  command runs in the same isolate (same globals), its exception reaches the
+  outer one as the middle command's `CommandError`, and the outer call's time
+  limit covers it all. The inner command must finish without the event loop
+  (the middle command is waiting for it): one that awaits fails, saying so.
 
   An exception's `msg` is the exception, its location in the command body
   (`body line N`) and the stack, in the body's own line numbers. A syntax
@@ -576,13 +580,13 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry
 ```
 
 The suite covers JavaScript commands (with `javascript_runtime`: the result
 envelope, value conversion, error reports, async commands and timers, calls
 that await without holding each other up, time limits, `flowlang.call`
-across languages, records under both language tags, `check` with and
+across languages and back into JavaScript, records under both language tags, `check` with and
 without tsc, `flow jstest`, `fetch` against a local server and the other web
 APIs, and imports — CommonJS and ESM packages, source-mapped errors,
 resolution errors — and TypeScript commands, through esbuild), the builder's wrapper guarantees, synchro ordering under
