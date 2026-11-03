@@ -13,11 +13,12 @@
 //! declared params, in declared order. The body may `await`: a command that
 //! returns a Promise (an `async` body, or a returned promise) answers with
 //! what the promise resolves to, and a rejection is the command's error.
-//! Arguments go in by value (JSON semantics; bytes as ndata's hex string)
-//! and the return value comes back the same way: objects, arrays, strings,
-//! numbers, booleans and null convert; `undefined` is null. A function,
-//! symbol, BigInt, Map or Set is an error that names it. A `FLAT` command
-//! must return an object.
+//! Objects and arrays are live ndata (`jsndata`): an argument is a handle on
+//! the caller's own object, changes reach the caller, and returning a handle
+//! returns the same object; plain values written or returned become new
+//! ndata. Bytes cross as `Uint8Array`. A function, symbol, BigInt, Map, Set,
+//! Promise or cyclic structure cannot be stored - a TypeError names it. A
+//! `FLAT` command must return an object.
 //!
 //! One V8 isolate runs every JavaScript command, on a thread of its own: an
 //! isolate belongs to the thread that made it, so callers on any thread hand
@@ -84,7 +85,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
-use deno_core::serde_v8;
 use deno_core::v8;
 use deno_core::{JsRuntime, PollEventLoopOptions, RuntimeOptions};
 use ndata::data::Data;
@@ -391,13 +391,15 @@ impl deno_core::ModuleLoader for MapLoader {
   }
 }
 
-/// One argument per declared parameter, in order, as JSON.
-fn positional_args(call: &JsCall) -> Vec<serde_json::Value> {
-  call.params.iter().map(|p| {
-    let mut o = DataObject::new();
-    o.set_property("v", call.args.get_property(p));
-    o.to_json().get("v").cloned().unwrap_or(serde_json::Value::Null)
-  }).collect()
+/// One argument per declared parameter, in order: the caller's own values -
+/// objects and arrays as the same ndata (the command gets handles on them),
+/// never copies.
+fn positional_args(call: &JsCall) -> DataArray {
+  let mut a = DataArray::new();
+  for p in &call.params {
+    Value::from_data(call.args.try_get_property(p).unwrap_or(Data::DNull)).push(&mut a);
+  }
+  a
 }
 
 thread_local! {
@@ -443,14 +445,14 @@ pub fn run(call: &JsCall) -> Result<DataObject, String> {
     }
   }
   let value = reply_rx.recv().map_err(|_| format!("the JavaScript engine stopped while running {}", call.label))??;
-  Ok(ok_envelope(json_to_value(value)))
+  Ok(ok_envelope(value))
 }
 
 /// What the engine thread is asked to run.
 struct Job {
   label: String,
   reg: Registration,
-  args: Vec<serde_json::Value>,
+  args: DataArray,
   flat: bool,
   stdout_to_err: bool,
   timeout: Option<Duration>,
@@ -458,7 +460,7 @@ struct Job {
 
 struct Msg {
   job: Job,
-  reply: std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
+  reply: std::sync::mpsc::Sender<Result<Value, String>>,
 }
 
 static ENGINE: Mutex<Option<mpsc::UnboundedSender<Msg>>> = Mutex::new(None);
@@ -507,6 +509,7 @@ fn spawn_engine() -> mpsc::UnboundedSender<Msg> {
           Err(e) => {
             // The isolate's state after a panic is unknown: start over.
             let why = panic_text(&e);
+            crate::jsndata::end_all_calls();
             for p in pending.drain(..) {
               let _ = p.reply.send(Err(format!("the JavaScript engine panicked and was restarted while running {}: {}", p.label, why)));
             }
@@ -535,7 +538,11 @@ struct Pending {
   /// the microtasks queued behind stopped code, which may have been this
   /// call's.
   disrupted: bool,
-  reply: std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
+  /// The call's id (its arguments and result slot, `jsndata`) and the
+  /// array its result is written to.
+  call_id: u32,
+  out: DataArray,
+  reply: std::sync::mpsc::Sender<Result<Value, String>>,
 }
 
 impl Pending {
@@ -574,7 +581,7 @@ fn serve(
         let e = engine.as_mut().unwrap();
         match e.start(&msg.job, watchdog) {
           Started::Done(r) => { let _ = msg.reply.send(r); }
-          Started::Waiting(settled) => {
+          Started::Waiting(settled, call_id, out) => {
             let deadline = msg.job.timeout.map(|t| Instant::now() + t);
             pending.push(Pending {
               label: msg.job.label.clone(),
@@ -585,6 +592,8 @@ fn serve(
               settled,
               sleep: deadline.map(|d| Box::pin(tokio::time::sleep_until(tokio::time::Instant::from_std(d)))),
               disrupted: false,
+              call_id,
+              out,
               reply: msg.reply,
             });
           }
@@ -627,7 +636,7 @@ fn serve(
   while i < pending.len() {
     let p = &mut pending[i];
     let answer = match p.settled.as_mut().poll(cx) {
-      Poll::Ready(Ok(v)) => Some(e.finish(&p.label, p.flat, v)),
+      Poll::Ready(Ok(_)) => Some(finish(&p.label, p.flat, &p.out)),
       Poll::Ready(Err(js)) => Some(Err(report(&js, Some(&p.reg)))),
       Poll::Pending => {
         let late = p.deadline.map_or(false, |d| d <= Instant::now())
@@ -641,7 +650,11 @@ fn serve(
       }
     };
     match answer {
-      Some(r) => { let p = pending.swap_remove(i); let _ = p.reply.send(r); }
+      Some(r) => {
+        let p = pending.swap_remove(i);
+        crate::jsndata::end_call(p.call_id);
+        let _ = p.reply.send(r);
+      }
       None => i += 1,
     }
   }
@@ -715,28 +728,44 @@ impl Watchdog {
 }
 
 use crate::jsweb::{op_flowlang_fetch, op_flowlang_now, op_flowlang_random, op_flowlang_url_parse, op_flowlang_url_set};
+use crate::jsndata::{
+  op_flowlang_call_args, op_flowlang_call_out, op_nd_delete, op_nd_get_bool, op_nd_get_bytes, op_nd_get_nd,
+  op_nd_get_num, op_nd_get_str, op_nd_is_array, op_nd_keys, op_nd_kind, op_nd_len, op_nd_new, op_nd_set_bool,
+  op_nd_set_bytes, op_nd_set_len, op_nd_set_nd, op_nd_set_null, op_nd_set_num, op_nd_set_str,
+};
 deno_core::extension!(flowlang_js, ops = [
   op_flowlang_call,
   op_flowlang_fetch, op_flowlang_now, op_flowlang_random, op_flowlang_url_parse, op_flowlang_url_set,
+  op_flowlang_call_args, op_flowlang_call_out, op_nd_delete, op_nd_get_bool, op_nd_get_bytes, op_nd_get_nd,
+  op_nd_get_num, op_nd_get_str, op_nd_is_array, op_nd_keys, op_nd_kind, op_nd_len, op_nd_new, op_nd_set_bool,
+  op_nd_set_bytes, op_nd_set_len, op_nd_set_nd, op_nd_set_null, op_nd_set_num, op_nd_set_str,
 ]);
 
 /// `flowlang.call` / `flowlang.api`: resolves the command and, unless it is
-/// JavaScript, runs it here and returns `{"ok": value}`. A JavaScript callee
-/// comes back as `{"js": {...}}` for the prelude to run in this isolate - the
-/// engine cannot take a new call while it is inside this one. Failures are
-/// `{"err": {"kind": "lookup"|"args"|"failed", "msg"}}`, which the prelude
-/// throws as ReferenceError, TypeError or flowlang.CommandError.
+/// JavaScript, runs it here: `{"ok": true}`, its value written to `out[0]`.
+/// The arguments come as ndata (`positional`, `named`), so a handle passed
+/// along reaches the callee as the same object. A JavaScript callee comes
+/// back as `{"js": {...}}`, its cast arguments in `out[0]`, for the prelude
+/// to run in this isolate - the engine cannot take a new call while it is
+/// inside this one. Failures are `{"err": {"kind": "lookup"|"args"|"failed",
+/// "msg"}}`, which the prelude throws as ReferenceError, TypeError or
+/// flowlang.CommandError.
 #[deno_core::op2]
 #[serde]
 fn op_flowlang_call(
   #[string] lib: String,
   #[string] ctl: String,
   #[string] cmd: String,
-  #[serde] positional: Vec<serde_json::Value>,
-  #[serde] named: serde_json::Map<String, serde_json::Value>,
+  #[cppgc] positional: &crate::jsndata::Nd,
+  #[cppgc] named: &crate::jsndata::Nd,
+  #[cppgc] out: &crate::jsndata::Nd,
 ) -> serde_json::Value {
+  use crate::jsndata::Nd;
   use serde_json::json;
   let err = |kind: &str, msg: String| json!({"err": {"kind": kind, "msg": msg}});
+  let (Nd::Arr(positional), Nd::Obj(named), Nd::Arr(out)) = (positional, named, out) else {
+    return err("failed", "flowlang.call: unexpected argument containers".to_string());
+  };
   let target = match resolve_command(&lib, &ctl, &cmd) {
     Ok(t) => t,
     Err(msg) => return err("lookup", msg),
@@ -748,20 +777,21 @@ fn op_flowlang_call(
     ));
   }
   let mut values = DataObject::new();
-  for (name, v) in target.params.iter().zip(positional) {
-    json_to_value(v).put(&mut values, name);
+  for (i, name) in target.params.iter().enumerate().take(positional.len()) {
+    Value::from_data(positional.get_property(i)).put(&mut values, name);
   }
-  for (k, v) in named {
+  for (k, d) in named.objects() {
     if values.has(&k) {
       return err("args", format!("{} got multiple values for argument '{}'", target.label, k));
     }
-    json_to_value(v).put(&mut values, &k);
+    Value::from_data(d).put(&mut values, &k);
   }
 
   let command = match std::panic::catch_unwind(|| crate::command::Command::new(&target.lib, &target.id)) {
     Ok(c) => c,
     Err(p) => return err("failed", format!("{} could not be loaded: {}", target.label, panic_text(&p))),
   };
+  let mut out = out.clone();
   if is_js(&command.lang) {
     let cast = values.clone();
     if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| command.cast_params(cast))) {
@@ -776,20 +806,19 @@ fn op_flowlang_call(
       Err(msg) => return err("failed", msg),
     };
     register_map(&reg);
+    out.push_array(positional_args(&call));
     let hash: String = serde_json::from_str(&reg.hash).unwrap_or_default();
     return json!({"js": {
       "label": call.label,
       "hash": hash,
       "source": reg.source,
       "scriptName": reg.script_name,
-      "args": positional_args(&call),
     }});
   }
   match run_command(&target, values) {
     Ok(value) => {
-      let mut o = DataObject::new();
-      value.put(&mut o, "v");
-      json!({"ok": o.to_json().get("v").cloned().unwrap_or(serde_json::Value::Null)})
+      value.push(&mut out);
+      json!({"ok": true})
     }
     Err(CallFailure::BadArgs(m)) => err("args", m),
     Err(CallFailure::Failed(m)) => err("failed", m),
@@ -805,6 +834,9 @@ const PRELUDE: &str = r#"
   const ops = core.ops;
   const print = core.print;
   const state = { label: "", stdoutToErr: false };
+  // jsndata.js's hooks, for this prelude only.
+  const nd = globalThis.__flowlang_ndata;
+  delete globalThis.__flowlang_ndata;
 
   const fmt = (a) => {
     if (typeof a === "string") return a;
@@ -858,19 +890,27 @@ const PRELUDE: &str = r#"
     if (error) throw error.thrown;
   };
 
+  // Arguments cross as ndata: a handle passed along is the same object for
+  // the callee, a plain value becomes ndata (as a dict does from Python).
   const invoke = (lib, ctl, cmd, positional, named) => {
-    const r = ops.op_flowlang_call(String(lib), String(ctl), String(cmd), positional, named || {});
+    const label = `${lib}:${ctl}:${cmd}`;
+    const pos = nd.arrayOf(positional, (i) => `argument ${i + 1} of ${label}`);
+    const nam = nd.objectOf(named, (k) => `argument ${k} of ${label}`);
+    const out = nd.newArray();
+    const r = ops.op_flowlang_call(String(lib), String(ctl), String(cmd), pos, nam, out);
     if (r.err) {
       if (r.err.kind === "lookup") throw new ReferenceError(r.err.msg);
       if (r.err.kind === "args") throw new TypeError(r.err.msg);
       throw new CommandError(r.err.msg);
     }
-    if ("ok" in r) return r.ok;
+    if (r.ok) return nd.read(out, "0");
+    // A JavaScript callee: its cast arguments, in declared order, are out[0].
     const j = r.js;
     ensure(j.label, j.hash, j.source, j.scriptName);
+    const args = [...nd.read(out, "0")];
     const outer = state.label;
     state.label = j.label;
-    try { return cmds[j.label](...j.args); }
+    try { return cmds[j.label](...args); }
     finally { state.label = outer; }
   };
 
@@ -977,18 +1017,22 @@ const PRELUDE: &str = r#"
       cmds,
       hashes,
       testing,
-      run(key, args, stdoutToErr) {
+      // Runs call `callId`: its arguments (handles for objects and arrays)
+      // come from jsndata, and its value is written back there.
+      run(key, callId, stdoutToErr) {
         state.label = key;
         state.stdoutToErr = stdoutToErr;
+        const what = `return value of ${key}`;
         let pending = false;
         try {
-          const r = cmds[key](...args);
+          const r = cmds[key](...nd.args(callId));
           if (r instanceof Promise) {
             // Keep the label while the command is still at work.
             pending = true;
-            return r.finally(() => { if (state.label === key) state.label = ""; });
+            return r.then((v) => { nd.result(callId, v, what); })
+              .finally(() => { if (state.label === key) state.label = ""; });
           }
-          return r;
+          nd.result(callId, r, what);
         } finally {
           if (!pending) state.label = "";
         }
@@ -1006,19 +1050,22 @@ struct Engine {
 
 /// How a call's synchronous part ended.
 enum Started {
-  Done(Result<serde_json::Value, String>),
-  /// It returned a promise: the future settles with it.
-  Waiting(std::pin::Pin<Box<dyn std::future::Future<Output = Result<v8::Global<v8::Value>, Box<deno_core::error::JsError>>>>>),
+  Done(Result<Value, String>),
+  /// It returned a promise: the future settles with it; the call's id and
+  /// result array.
+  Waiting(std::pin::Pin<Box<dyn std::future::Future<Output = Result<v8::Global<v8::Value>, Box<deno_core::error::JsError>>>>>, u32, DataArray),
 }
 
 impl Engine {
   fn new(watchdog: &Watchdog) -> Result<Engine, String> {
+    v8_flags();
     let mut runtime = JsRuntime::new(RuntimeOptions {
       extensions: vec![flowlang_js::init()],
       module_loader: Some(std::rc::Rc::new(MapLoader)),
       ..Default::default()
     });
     runtime.execute_script("<flowlang web>", crate::jsweb::WEB_JS).map_err(|e| e.to_string())?;
+    runtime.execute_script("<flowlang ndata>", crate::jsndata::NDATA_JS).map_err(|e| e.to_string())?;
     runtime.execute_script("<flowlang prelude>", PRELUDE).map_err(|e| e.to_string())?;
     watchdog.set_handle(runtime.v8_isolate().thread_safe_handle());
     Ok(Engine { runtime, background: false })
@@ -1052,50 +1099,63 @@ impl Engine {
         }
       }
     }
+    let (call_id, out) = crate::jsndata::begin_call(job.args.clone());
     watchdog.arm(job.timeout);
-    let src = format!(
-      "__flowlang.run({}, {}, {})",
-      reg.key, serde_json::Value::Array(job.args.clone()), job.stdout_to_err
-    );
+    let src = format!("__flowlang.run({}, {}, {})", reg.key, call_id, job.stdout_to_err);
     let result = self.runtime.execute_script("<flowlang call>", src);
     let fired = self.disarm(watchdog);
     let result = match result {
       Ok(v) if !fired => v,
-      Ok(_) => return Started::Done(Err(timed_out_text(&job.label, job.timeout))),
-      Err(e) => return Started::Done(Err(if fired { timed_out_text(&job.label, job.timeout) } else { report(&e, Some(reg)) })),
+      Ok(_) => { crate::jsndata::end_call(call_id); return Started::Done(Err(timed_out_text(&job.label, job.timeout))); }
+      Err(e) => {
+        crate::jsndata::end_call(call_id);
+        return Started::Done(Err(if fired { timed_out_text(&job.label, job.timeout) } else { report(&e, Some(reg)) }));
+      }
     };
     let is_promise = {
       deno_core::scope!(scope, &mut self.runtime);
       v8::Local::new(scope, &result).is_promise()
     };
     if is_promise {
-      Started::Waiting(Box::pin(self.runtime.resolve(result)))
+      Started::Waiting(Box::pin(self.runtime.resolve(result)), call_id, out)
     } else {
-      Started::Done(self.finish(&job.label, job.flat, result))
+      crate::jsndata::end_call(call_id);
+      Started::Done(finish(&job.label, job.flat, &out))
     }
   }
+}
 
-  /// Converts a call's value for the caller.
-  fn finish(&mut self, label: &str, flat: bool, result: v8::Global<v8::Value>) -> Result<serde_json::Value, String> {
-    deno_core::scope!(scope, &mut self.runtime);
-    let local = v8::Local::new(scope, result);
-    let kind = if local.is_promise() { Some("a Promise") }
-      else if local.is_function() { Some("a function") }
-      else if local.is_symbol() { Some("a symbol") }
-      else if local.is_big_int() { Some("a BigInt") }
-      else if local.is_map() { Some("a Map") }
-      else if local.is_set() { Some("a Set") }
-      else { None };
-    if let Some(kind) = kind {
-      return Err(format!("return value of {} could not be converted: {}", label, kind));
+/// Applies `FLOWLANG_JS_V8_FLAGS` (V8 command-line flags, space-separated -
+/// for profiling or tests, e.g. `--expose-gc`), once, before the first
+/// isolate is made.
+fn v8_flags() {
+  static ONCE: std::sync::Once = std::sync::Once::new();
+  ONCE.call_once(|| {
+    if let Ok(flags) = std::env::var("FLOWLANG_JS_V8_FLAGS") {
+      let mut args = vec!["flowlang".to_string()];
+      args.extend(flags.split_whitespace().map(str::to_string));
+      let rejected = deno_core::v8_set_flags(args);
+      if rejected.len() > 1 { eprintln!("[js] FLOWLANG_JS_V8_FLAGS: V8 did not take {:?}", &rejected[1..]); }
     }
-    let value: serde_json::Value = serde_v8::from_v8(scope, local)
-      .map_err(|e| format!("return value of {} could not be converted: {}", label, e))?;
-    if flat && !value.is_object() {
-      return Err(format!("a FLAT command must return an object, got {}", json_kind(&value)));
-    }
-    Ok(value)
+  });
+}
+
+/// A call's value, as its prelude wrote it (null if it wrote none).
+fn finish(_label: &str, flat: bool, out: &DataArray) -> Result<Value, String> {
+  let value = crate::jsndata::result_of(out).unwrap_or(Value::Scalar(Data::DNull));
+  if flat && !matches!(value, Value::Object(_)) {
+    let kind = match &value {
+      Value::Array(_) => "an array",
+      Value::Bytes(_) => "bytes",
+      Value::Scalar(Data::DNull) => "null",
+      Value::Scalar(Data::DString(_)) => "a string",
+      Value::Scalar(Data::DBoolean(_)) => "a boolean",
+      Value::Scalar(_) => "a number",
+      Value::Object(_) => "an object",
+    };
+    return Err(format!("a FLAT command must return an object, got {}", kind));
   }
+  Ok(value)
 }
 
 fn core_error_text(e: deno_core::error::CoreError, reg: Option<&Registration>) -> String {
@@ -1128,32 +1188,6 @@ fn report(e: &deno_core::error::JsError, reg: Option<&Registration>) -> String {
   }
   msg
 }
-
-fn json_kind(v: &serde_json::Value) -> &'static str {
-  match v {
-    serde_json::Value::Null => "null",
-    serde_json::Value::Bool(_) => "a boolean",
-    serde_json::Value::Number(_) => "a number",
-    serde_json::Value::String(_) => "a string",
-    serde_json::Value::Array(_) => "an array",
-    serde_json::Value::Object(_) => "an object",
-  }
-}
-
-fn json_to_value(v: serde_json::Value) -> Value {
-  match v {
-    serde_json::Value::Object(_) => Value::Object(DataObject::from_json(v)),
-    serde_json::Value::Array(_) => Value::Array(DataArray::from_json(v)),
-    serde_json::Value::String(s) => Value::Scalar(Data::DString(s)),
-    serde_json::Value::Bool(b) => Value::Scalar(Data::DBoolean(b)),
-    serde_json::Value::Null => Value::Scalar(Data::DNull),
-    serde_json::Value::Number(n) => match n.as_i64() {
-      Some(i) => Value::Scalar(Data::DInt(i)),
-      None => Value::Scalar(Data::DFloat(n.as_f64().unwrap_or(f64::NAN))),
-    },
-  }
-}
-
 
 // ---- checking a command without running it -------------------------------------------------
 
@@ -1351,6 +1385,7 @@ fn syntax_problem(call: &JsCall, reg: &Registration) -> Option<(String, Option<i
       // deno_core's isolates need a tokio runtime context.
       let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
       let _guard = rt.enter();
+      v8_flags();
       let mut js = JsRuntime::new(RuntimeOptions::default());
       match js.execute_script(script_name.clone(), source) {
         Ok(_) => None,

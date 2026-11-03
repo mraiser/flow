@@ -75,8 +75,8 @@ pub fn ts_type(flow_type: &str) -> &'static str {
     "Boolean" => "boolean",
     "JSONObject" | "FLAT" => "Record<string, any>",
     "JSONArray" => "any[]",
-    // ndata's JSON form of bytes: a space-separated hex string.
-    "InputStream" => "string",
+    // Bytes cross as a Uint8Array.
+    "InputStream" => "Uint8Array",
     _ => "any",
   }
 }

@@ -24,6 +24,25 @@ declare function clearTimeout(timer?: FlowlangTimer): void;
 declare function clearInterval(timer?: FlowlangTimer): void;
 declare function queueMicrotask(callback: () => void): void;
 
+/**
+ * Live ndata. An object or array argument (and every object or array read from
+ * one) is a handle on the caller's own ndata: changes are seen by the caller and
+ * by Rust and Python commands holding it. Handles behave like plain objects and
+ * arrays; each read returns a new handle, so compare contents, not identity.
+ */
+declare namespace ndata {
+  /** The prototype of object handles: `h instanceof ndata.NDataObject`. */
+  class NDataObject {}
+  /** True for a handle on ndata. */
+  function isHandle(value: any): boolean;
+  /** A deep copy of a handle as plain objects and arrays. */
+  function toJS<T>(value: T): T;
+  /** A new, empty ndata object, as a handle. */
+  function object(): Record<string, any>;
+  /** A new, empty ndata array, as a handle. */
+  function array(): any[];
+}
+
 /** Calls into any command - Rust, Python, flow or JavaScript. */
 declare namespace flowlang {
   /** Thrown when a called command fails (raises, panics or returns an error envelope). */

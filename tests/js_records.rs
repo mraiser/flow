@@ -18,7 +18,7 @@ fn records_under_both_language_tags() {
   DataStore::init(root.join("data").to_str().unwrap());
   let store = DataStore::new();
   store.set_data("jl", "controls", record(r#"{"data":{"list":[{"name":"tools","id":"ctl1"}]}}"#));
-  store.set_data("jl", "ctl1", record(r#"{"data":{"cmd":[{"name":"hello","id":"cmd1"},{"name":"add","id":"cmd2"},{"name":"broken","id":"cmd3"},{"name":"twice","id":"cmd4"},{"name":"slow_add","id":"cmd5"},{"name":"await_slow","id":"cmd6"},{"name":"thrower","id":"cmd7"},{"name":"calls_thrower","id":"cmd8"},{"name":"label","id":"cmd9"}]}}"#));
+  store.set_data("jl", "ctl1", record(r#"{"data":{"cmd":[{"name":"hello","id":"cmd1"},{"name":"add","id":"cmd2"},{"name":"broken","id":"cmd3"},{"name":"twice","id":"cmd4"},{"name":"slow_add","id":"cmd5"},{"name":"await_slow","id":"cmd6"},{"name":"thrower","id":"cmd7"},{"name":"calls_thrower","id":"cmd8"},{"name":"label","id":"cmd9"},{"name":"mutator","id":"cmd10"},{"name":"relay","id":"cmd11"}]}}"#));
 
   // As newbound's dev.code.upsert_command writes it: type and keys "javascript",
   // no ctl or cmd on the impl record.
@@ -46,6 +46,9 @@ fn records_under_both_language_tags() {
   js("cmd7", "impl7", "thrower", "[]", "\nthrow new Error('inner')");
   js("cmd8", "impl8", "calls_thrower", "[]", "return flowlang.api.jl.tools.thrower()");
   js("cmd9", "impl9", "label", "[]", "console.log('inside'); return 1");
+  // Handles pass along: the callee changes the caller's object.
+  js("cmd10", "impl10", "mutator", r#"[{"name":"o","type":"JSONObject"}]"#, "o.touched = (o.touched || 0) + 1;\nreturn null");
+  js("cmd11", "impl11", "relay", r#"[{"name":"o","type":"JSONObject"}]"#, "flowlang.api.jl.tools.mutator(o);\nflowlang.call('jl', 'tools', 'mutator', { o });\nreturn o.touched");
 
   assert!(Command::exists("jl", "cmd1"));
   assert!(Command::exists("jl", "cmd2"));
@@ -85,6 +88,14 @@ fn records_under_both_language_tags() {
   let r = Command::new("jl", "cmd8").execute(DataObject::new()).unwrap();
   let msg = r.get_object("a").get_string("msg");
   assert!(msg.contains("inner") && msg.contains("flowlang:jl/tools/thrower.js:2:"), "{}", msg);
+
+  // A Rust caller's object, through JavaScript to JavaScript and back.
+  let o = DataObject::from_string(r#"{"name":"x"}"#);
+  let mut args = DataObject::new();
+  args.put_object("o", o.clone());
+  let r = Command::new("jl", "cmd11").execute(args).unwrap();
+  assert_eq!(r.to_string(), r#"{"a":2}"#);
+  assert_eq!(o.get_int("touched"), 2);
 
   let _ = std::fs::remove_dir_all(&root);
 }

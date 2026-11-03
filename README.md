@@ -414,12 +414,22 @@ cargo build --features java_runtime        # loads a JVM via JNI
   `{"a": {"status": "err", "msg": ...}}` on failure — so it works anywhere a
   Rust or Python command does.
 
-  Data crosses by value, with JSON semantics: objects, arrays, strings,
-  numbers, booleans and `null` convert both ways (bytes as ndata's hex
-  string); `undefined` returns as `null`. Returning a function, symbol,
-  BigInt, `Map` or `Set` is an error that names it, and a `FLAT` command must
-  return an object. A command that returns a Promise answers with what it
-  resolves to; a rejection is its error.
+  Data is live, as for Python: a `JSONObject` or `JSONArray` argument — and
+  every object or array read from one — is a handle on the caller's own
+  ndata, so changes are seen by the caller and by any Rust or Python command
+  holding it, with no copying. A handle behaves like a plain object or array
+  (property access, `in`, `delete`, `Object.keys`, spread, `for…of`,
+  `JSON.stringify`; for arrays `Array.isArray`, `length`, indexing and the
+  `Array` methods). Writing a plain object or array stores new ndata (as a
+  `dict` does from Python); writing a handle stores the same object;
+  `toJSON` (Date, URL) is honoured; `undefined` removes an object's key; bytes
+  (`InputStream`) cross as `Uint8Array`. Returning a handle returns the same
+  object. A function, symbol, BigInt, `Map`, `Set`, Promise or cyclic
+  structure is a TypeError that names it, and a `FLAT` command must return an
+  object. Each read makes a new handle, so compare contents, not identity;
+  `ndata.isHandle`, `ndata.toJS` (a plain deep copy), `ndata.object()` and
+  `ndata.array()` are the global `ndata`'s helpers. A command that returns a
+  Promise answers with what it resolves to; a rejection is its error.
 
   The engine works like Node's event loop: a call's synchronous part runs to
   completion, and a call that awaits leaves the engine free for other calls
@@ -437,7 +447,8 @@ cargo build --features java_runtime        # loads a JVM via JNI
   `flowlang.call(lib, ctl, cmd, {name: value})` and
   `flowlang.api.<lib>.<ctl>.<cmd>(positional...)` run any command — Rust,
   Python, flow or JavaScript — and return its value, as Python's
-  `flowlang.call` does; they throw `ReferenceError` for an unknown command,
+  `flowlang.call` does (handles passed along are the same objects for the
+  callee); they throw `ReferenceError` for an unknown command,
   `TypeError` for arguments that do not fit, and `flowlang.CommandError` when
   the command fails. A JavaScript callee runs in the same isolate and returns
   its value as is (a Promise if it is async). Not yet supported: JavaScript →
@@ -565,7 +576,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts
 ```
 
 The suite covers JavaScript commands (with `javascript_runtime`: the result

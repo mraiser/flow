@@ -29,6 +29,8 @@ pub mod javacmd;
 pub mod jscmd;
 #[cfg(feature="javascript_runtime")]
 mod jsweb;
+#[cfg(feature="javascript_runtime")]
+mod jsndata;
 #[cfg(feature="python_runtime")]
 pub mod pyenv;
 #[cfg(feature="python_runtime")]
