@@ -3,6 +3,7 @@ pub mod flowlang;
 pub mod code;
 pub mod case;
 pub mod command;
+pub mod callapi;
 pub mod datastore;
 pub mod hotswap;
 pub mod primitives;

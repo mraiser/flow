@@ -7,6 +7,7 @@
 pub mod api;
 pub(crate) mod cargo;
 pub(crate) mod initializer;
+pub mod javascript;
 pub(crate) mod python;
 pub(crate) mod rust;
 pub(crate) mod scaffolding;
@@ -202,8 +203,11 @@ pub(crate) fn build(
             self::python::build_python_command(&actual_library_build_src_path, lib_name, control_name, command_name, &store);
             false
         }
-        // JavaScript runs from the store as it is: nothing to generate.
-        "js" | "javascript" => false,
+        // JavaScript runs from the store as it is: nothing to compile, but
+        // the editor/checker files are written.
+        "js" | "javascript" => {
+            self::javascript::build_js_command(&actual_library_build_src_path, lib_name, control_name, command_name, &store)
+        }
         _ => {
             println!("Unsupported command type '{}' for {}:{}:{}", command_type, lib_name, control_name, command_name);
             false

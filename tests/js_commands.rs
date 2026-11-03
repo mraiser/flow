@@ -8,12 +8,15 @@
 //! on failure. Before, it returned `{"status", "msg"|"data"}`, ran a V8
 //! isolate shared across threads behind `unsafe impl Send`, and a single
 //! syntax error poisoned the engine's lock so every later call panicked.
+//! Then: no async, no timers, no time limit, and no way to call another
+//! command.
 #![cfg(feature = "javascript_runtime")]
 
 use flowlang::jscmd::{run, JsCall};
 use ndata::dataobject::DataObject;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Once;
+use std::time::{Duration, Instant};
 
 static INIT: Once = Once::new();
 static SEQ: AtomicUsize = AtomicUsize::new(0);
@@ -34,8 +37,11 @@ fn call(params: &[&str], body: &str, returntype: &str, args: DataObject) -> JsCa
     body: body.to_string(),
     returntype: returntype.to_string(),
     args,
+    timeout: None,
   }
 }
+
+
 
 fn ret(body: &str) -> Result<DataObject, String> {
   run(&call(&[], body, "Any", obj()))
@@ -96,7 +102,6 @@ fn objects_and_arrays_nest() {
 #[test]
 fn values_that_do_not_convert_are_errors() {
   for (body, kind) in [
-    ("return (async () => 1)()", "Promise"),
     ("return function () {}", "function"),
     ("return 10n", "BigInt"),
     ("return Symbol('s')", "symbol"),
@@ -227,4 +232,103 @@ fn calls_from_many_threads_all_answer() {
     let (n, got) = t.join().unwrap();
     assert_eq!(got, n * 1000);
   }
+}
+
+// ---- async and timers ----------------------------------------------------------------------
+
+#[test]
+fn an_awaiting_body_answers_with_what_it_resolves_to() {
+  assert_eq!(json(&ret("return await Promise.resolve(5)").unwrap()), v(r#"{"v":5}"#));
+  assert_eq!(
+    json(&ret("await new Promise((r) => setTimeout(r, 20));\nreturn {after: 'timer'}").unwrap()),
+    v(r#"{"v":{"after":"timer"}}"#)
+  );
+}
+
+#[test]
+fn a_returned_promise_is_awaited_too() {
+  assert_eq!(json(&ret("return new Promise((r) => setTimeout(() => r(7), 10))").unwrap()), v(r#"{"v":7}"#));
+}
+
+#[test]
+fn a_rejection_is_the_commands_error() {
+  let e = err(ret("await null;\nthrow new Error('async nope')"));
+  assert!(e.contains("async nope") && e.contains("(body line 2)"), "{}", e);
+}
+
+#[test]
+fn a_promise_that_can_never_settle_is_an_error_not_a_hang() {
+  let started = Instant::now();
+  let e = err(ret("return new Promise(() => {})"));
+  assert!(e.to_lowercase().contains("pending"), "{}", e);
+  assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn timers_left_behind_run_between_calls() {
+  let flag = format!("__bg{}", SEQ.fetch_add(1, Ordering::SeqCst));
+  ret(&format!("globalThis.{f} = 0; setTimeout(() => {{ globalThis.{f} = 1; }}, 10); return 0", f = flag)).unwrap();
+  std::thread::sleep(Duration::from_millis(200));
+  assert_eq!(json(&ret(&format!("return globalThis.{}", flag)).unwrap()), v(r#"{"v":1}"#));
+}
+
+#[test]
+fn intervals_can_be_cleared() {
+  let body = "let n = 0;\nawait new Promise((done) => {\n  const t = setInterval(() => { if (++n === 3) { clearInterval(t); done(); } }, 5);\n});\nreturn n";
+  assert_eq!(json(&ret(body).unwrap()), v(r#"{"v":3}"#));
+}
+
+// ---- calling other commands ----------------------------------------------------------------
+
+#[test]
+fn flowlang_api_calls_a_flow_command() {
+  assert_eq!(
+    json(&ret("return flowlang.api.testflow.testflow.test_add(300, 120)").unwrap()),
+    v(r#"{"v":"300+120=420"}"#)
+  );
+  assert_eq!(
+    json(&ret("return flowlang.call('testflow', 'testflow', 'test_add', {a: 1, b: 2})").unwrap()),
+    v(r#"{"v":"1+2=3"}"#)
+  );
+}
+
+#[test]
+fn flowlang_call_failures_throw_by_kind() {
+  let lookup = "try { flowlang.api.testflow.testflow.no_such_command(); } catch (e) { return e.name + ': ' + e.message; }";
+  let got = ret(lookup).unwrap().get_string("a");
+  assert!(got.starts_with("ReferenceError: no command testflow:testflow:no_such_command"), "{}", got);
+
+  let args = "try { flowlang.api.testflow.testflow.test_add(1, 2, 3); } catch (e) { return e.name + ': ' + e.message; }";
+  let got = ret(args).unwrap().get_string("a");
+  assert!(got.starts_with("TypeError:") && got.contains("but 3 positional were given"), "{}", got);
+
+  let failed = "try { flowlang.call('testflow', 'testflow', 'test_rust'); } catch (e) { return (e instanceof flowlang.CommandError) + ' ' + e.message; }";
+  let got = ret(failed).unwrap().get_string("a");
+  assert!(got.starts_with("true ") && got.contains("missing required parameter: a"), "{}", got);
+}
+
+#[test]
+fn an_uncaught_command_error_is_the_callers_error() {
+  let e = err(ret("return flowlang.call('testflow', 'testflow', 'test_rust')"));
+  assert!(e.contains("CommandError") && e.contains("(body line 1)"), "{}", e);
+}
+
+#[test]
+fn awaiting_calls_do_not_hold_each_other_up() {
+  init();
+  // Four calls that each wait 300 ms: answered together, not one after another.
+  let c = call(&[], "await new Promise((r) => setTimeout(r, 300));\nreturn 'done'", "String", obj());
+  let started = Instant::now();
+  let threads: Vec<_> = (0..4).map(|_| { let c = c.clone(); std::thread::spawn(move || run(&c).unwrap().get_string("a")) }).collect();
+  for t in threads { assert_eq!(t.join().unwrap(), "done"); }
+  let took = started.elapsed();
+  assert!(took < Duration::from_millis(900), "took {:?}", took);
+  // A synchronous call is answered while another one awaits.
+  let slow = call(&[], "await new Promise((r) => setTimeout(r, 500));\nreturn 'slow'", "String", obj());
+  let t = std::thread::spawn(move || run(&slow).unwrap().get_string("a"));
+  std::thread::sleep(Duration::from_millis(50));
+  let quick = Instant::now();
+  assert_eq!(json(&ret("return 'quick'").unwrap()), v(r#"{"v":"quick"}"#));
+  assert!(quick.elapsed() < Duration::from_millis(300), "{:?}", quick.elapsed());
+  assert_eq!(t.join().unwrap(), "slow");
 }

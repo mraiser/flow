@@ -12,7 +12,7 @@ can call.
 
 > **Note:** Support for back-end commands written in Java is kind of broken
 > for now. Contact me if you'd like to help fix it. JavaScript commands work
-> (see *Language runtimes*), but are synchronous and dependency-free for now.
+> (see *Language runtimes*), without `import`/npm packages for now.
 
 A Flow program is a directed graph of operations ("commands") in which data
 flows along connections between nodes. Using an IDE like
@@ -405,33 +405,73 @@ cargo build --features java_runtime        # loads a JVM via JNI
   string.
 - **JavaScript** — commands run in one embedded V8 isolate (`deno_core`),
   owned by a thread of its own: callers on any thread hand their call to it
-  and wait, so commands run one at a time, and global state a command leaves
-  behind persists between calls. A command record's language is `"js"` or
-  `"javascript"` (newbound's `dev.code` writes the latter). The body is the
-  body of a function whose parameters are the declared params, in order;
-  each must be a JavaScript identifier, and a declared param missing from
-  the call is an error. A JavaScript command returns exactly what a Rust
-  command returns — `{"a": value}`, or `{"a": {"status": "err", "msg": ...}}`
-  on failure — so it works anywhere a Rust or Python command does.
+  and wait. A command record's language is `"js"` or `"javascript"`
+  (newbound's `dev.code` writes the latter). The body is the body of a
+  function whose parameters are the declared params, in order (each must be
+  a JavaScript identifier); a body that uses `await` is an `async` function.
+  A declared param missing from the call is an error. A JavaScript command
+  returns exactly what a Rust command returns — `{"a": value}`, or
+  `{"a": {"status": "err", "msg": ...}}` on failure — so it works anywhere a
+  Rust or Python command does.
 
   Data crosses by value, with JSON semantics: objects, arrays, strings,
   numbers, booleans and `null` convert both ways (bytes as ndata's hex
-  string); `undefined` returns as `null`. Returning a Promise, function,
-  symbol, BigInt, `Map` or `Set` is an error that names it, and a `FLAT`
-  command must return an object. An exception's `msg` is the exception, its
-  location in the command body (`body line N`) and the stack; the stack's
-  line numbers are the body's own. A syntax error is reported on every call
-  until the body is fixed — the old code never runs silently — and a panic
-  inside the engine restarts it rather than disabling JavaScript.
+  string); `undefined` returns as `null`. Returning a function, symbol,
+  BigInt, `Map` or `Set` is an error that names it, and a `FLAT` command must
+  return an object. A command that returns a Promise answers with what it
+  resolves to; a rejection is its error.
 
-  `console.log`/`info`/`debug` write to stdout (stderr under `flowmcp`, whose
-  stdout is the JSON-RPC channel) and `console.warn`/`error`/`trace` to
-  stderr, as complete lines labelled with the command:
-  `[js testflow:testflow:report] building totals`.
+  The engine works like Node's event loop: a call's synchronous part runs to
+  completion, and a call that awaits leaves the engine free for other calls
+  while it waits, so many awaiting calls progress together. `setTimeout`,
+  `setInterval`, `clearTimeout`, `clearInterval` and `queueMicrotask` exist;
+  timers a command leaves behind keep running between calls, and global
+  state persists between calls. A promise that can never settle is an
+  error, not a hang. Every call has a time limit — 30 s, or
+  `FLOWLANG_JS_TIMEOUT_MS` (`0`: none), or `jscmd::set_default_timeout` —
+  covering its synchronous part and its awaiting; JavaScript running past
+  it is stopped and the engine carries on. (Stopping JavaScript discards the
+  microtasks V8 had queued behind it; an awaiting call that loses its work
+  that way says so.)
 
-  Not yet: `async` commands, `import`/npm packages, calling other commands
-  from JavaScript, and per-call timeouts — a command that never returns
-  blocks every JavaScript command after it.
+  `flowlang.call(lib, ctl, cmd, {name: value})` and
+  `flowlang.api.<lib>.<ctl>.<cmd>(positional...)` run any command — Rust,
+  Python, flow or JavaScript — and return its value, as Python's
+  `flowlang.call` does; they throw `ReferenceError` for an unknown command,
+  `TypeError` for arguments that do not fit, and `flowlang.CommandError` when
+  the command fails. A JavaScript callee runs in the same isolate and returns
+  its value as is (a Promise if it is async). Not yet supported: JavaScript →
+  a non-JavaScript command → JavaScript; the inner call fails with a message
+  saying so rather than deadlocking.
+
+  An exception's `msg` is the exception, its location in the command body
+  (`body line N`) and the stack, in the body's own line numbers. A syntax
+  error is reported on every call until the body is fixed — the old code
+  never runs silently — and a panic inside the engine restarts it rather
+  than disabling JavaScript. `console.log`/`info`/`debug` write to stdout
+  (stderr under `flowmcp`, whose stdout is the JSON-RPC channel) and
+  `console.warn`/`error`/`trace` to stderr, as complete lines labelled with
+  the command: `[js testflow:testflow:report] building totals`.
+
+  `jscmd::check(lib, id)` checks a command without running it: a V8 syntax
+  check, plus a TypeScript type check when `tsc` is found (`$FLOWLANG_TSC`,
+  `node_modules/.bin/tsc` next to `data/`, or `tsc` on the PATH) — the body
+  as `// @ts-check` JavaScript with JSDoc types from its declared params,
+  against `flowlang.d.ts`, so names the engine does not provide (`fetch`,
+  `require`) are errors and `flowlang.api` calls are checked against the
+  callee. Problems are reported at body lines; `check_quick` is the syntax
+  check alone. `flowb` writes `flowlang.d.ts` (the engine's globals and a
+  typed `flowlang.api` tree of every command in the store) and each command
+  as `<lib>/<ctl>/<cmd>.js` into the library's crate `src/`, for editors.
+
+  `flow jstest [files or directories]` runs `*.test.js` files in the same
+  engine, so tests call any command; each file gets `test(name, fn)`
+  (`fn` may be async; `test.skip`) and `assert` (`equal`, `notEqual`,
+  `deepEqual`, `throws`, `rejects`). Exit status: 0 all passed, 1 a failure,
+  2 nothing ran.
+
+  Not yet: `import`/npm packages, `fetch` and other web APIs, TypeScript
+  command bodies.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`
   on the library path (e.g. `LD_LIBRARY_PATH`).
 - **Rust** — statically linked by default: `flowb` generates a wrapper and
@@ -488,13 +528,14 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --features=javascript_runtime --test js_commands --test js_records
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest
 ```
 
 The suite covers JavaScript commands (with `javascript_runtime`: the result
-envelope, value conversion, error reports, state across calls, calls from
-many threads, and records under both language tags), the builder's wrapper
-guarantees, synchro ordering under
+envelope, value conversion, error reports, async commands and timers, calls
+that await without holding each other up, time limits, `flowlang.call`
+across languages, records under both language tags, `check` with and
+without tsc, and `flow jstest`), the builder's wrapper guarantees, synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when
 `syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values
