@@ -177,10 +177,63 @@ fn a_test_file_imports_a_command() {
     "returntype": "String", "import": "export const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-');"}));
   w("t/fmt.test.js", "import fmt, { slug } from \"flowlang:jt/text/fmt\";\n\ntest('the helper', () => assert.equal(slug('Hello World'), 'hello-world'));\ntest('the function', () => assert.equal(fmt('A B'), 'a-b'));\ntest('the command', () => assert.equal(flowlang.api.jt.text.fmt('C D'), 'c-d'));\n");
   w("t/bad.test.js", "import x from \"flowlang:jt/text/nope\";\ntest('t', () => {});\n");
+  w("t/typed.test.ts", "import fmt, { slug } from \"flowlang:jt/text/fmt\";\n\ntest('typed', () => { const s: string = slug('X Y'); assert.equal(s, 'x-y'); assert.equal(fmt('Q R') as string, 'q-r'); });\n");
   let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").arg("t").current_dir(&root).output().unwrap();
   let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
   let _ = std::fs::remove_dir_all(&root);
   assert!(text.contains("✓ the helper") && text.contains("✓ the function") && text.contains("✓ the command"), "{}", text);
   assert!(text.contains("cannot import \"flowlang:jt/text/nope\": there is no command jt:text:nope (line 1)"), "{}", text);
-  assert!(text.contains("3 passed, 1 failed"), "{}", text);
+  assert!(text.contains("✓ typed"), "{}", text);
+  assert!(text.contains("4 passed, 1 failed"), "{}", text);
+}
+
+// ---- TypeScript test files (*.test.ts), always bundled with esbuild ----
+
+const TYPED: &str = r#"interface Point { x: number; y: number }
+enum Axis { X = "x", Y = "y" }
+const norm = <T extends Point>(p: T): number => Math.abs(p.x) + Math.abs(p.y);
+
+test("types, generics and enums", () => {
+  const p = { x: -2, y: 3 } as Point;
+  assert.equal(norm(p), 5);
+  assert.equal(Axis.Y, "y");
+  assert.equal(flowlang.api.testflow.testflow.test_add(2, 2) as string, "2+2=4");
+});
+
+test("a failure keeps the file's line", () => {
+  const n: number = norm({ x: 1, y: 1 });
+  assert.equal(n, 3);
+});
+"#;
+
+const TYPED_IMPORTS: &str = r#"import { scale, type Scaled } from "./geometry.ts";
+
+const s: Scaled = scale(2, 21);
+
+test("imports a TypeScript file beside it", () => {
+  assert.equal(s.value, 42);
+});
+"#;
+
+#[test]
+fn typescript_test_files_run() {
+  if !esbuild_or_skip() { return; }
+  let dir = std::env::temp_dir().join(format!("flowlang_jstest_ts_{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).unwrap();
+  std::fs::write(dir.join("typed.test.ts"), TYPED).unwrap();
+  std::fs::write(dir.join("imports.test.ts"), TYPED_IMPORTS).unwrap();
+  std::fs::write(dir.join("geometry.ts"), "export interface Scaled { value: number }\nexport const scale = (k: number, n: number): Scaled => ({ value: k * n });\n").unwrap();
+  std::fs::write(dir.join("broken.test.ts"), "test('t', () => {});\n\nconst x: = 1;\n").unwrap();
+  // Found beside the JavaScript ones.
+  std::fs::write(dir.join("plain.test.js"), "test('plain', () => assert.ok(true));\n").unwrap();
+  let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").arg(&dir).current_dir(env!("CARGO_MANIFEST_DIR")).output().unwrap();
+  let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+  let _ = std::fs::remove_dir_all(&dir);
+  assert_eq!(out.status.code(), Some(1), "{}", text);
+  assert!(text.contains("✓ types, generics and enums") && text.contains("✓ imports a TypeScript file beside it") && text.contains("✓ plain"), "{}", text);
+  assert!(text.contains("✗ a failure keeps the file's line") && text.contains("expected 3, got 2") && text.contains("typed.test.ts:14:10)"), "{}", text);
+  assert!(text.contains("broken.test.ts") && text.contains("the file failed") && text.contains("(line 3)"), "{}", text);
+  assert!(text.contains("3 passed, 2 failed"), "{}", text);
+  assert!(!text.contains("flowlang:jstest"), "{}", text);
 }

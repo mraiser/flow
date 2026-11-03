@@ -1687,12 +1687,14 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Resul
 /// `flow jstest [files or directories]`: runs JavaScript test files in the
 /// engine commands run in, so tests call any command through `flowlang.call`
 /// / `flowlang.api` and see the same globals. A directory is searched for
-/// `*.test.js` (skipping `node_modules`, `target` and hidden directories);
+/// `*.test.js` and `*.test.ts` (skipping `node_modules`, `target` and hidden
+/// directories);
 /// with no arguments, the current directory is. Each file gets `test(name,
 /// fn)` (`fn` may be async; `test.skip` skips) and `assert` (`assert(cond)`,
 /// `equal`, `notEqual`, `deepEqual`, `throws`, `rejects`) as locals; tests
 /// run in order, and each file has the engine's time limit. A file that
-/// starts with `import` statements runs from an esbuild bundle
+/// starts with `import` statements, or is TypeScript, runs from an esbuild
+/// bundle
 /// (`gen::bundle_test`), its lines unchanged. Prints one line
 /// per test and returns the exit status: 0 all passed, 1 a test or file
 /// failed, 2 nothing to run.
@@ -1707,7 +1709,7 @@ pub fn run_tests(args: Vec<String>) -> i32 {
   files.sort();
   files.dedup();
   if files.is_empty() {
-    eprintln!("jstest: no *.test.js files under {}", roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", "));
+    eprintln!("jstest: no *.test.js or *.test.ts files under {}", roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", "));
     return 2;
   }
   let (mut passed, mut failed, mut skipped) = (0, 0, 0);
@@ -1718,11 +1720,14 @@ pub fn run_tests(args: Vec<String>) -> i32 {
       Ok(s) => s,
       Err(e) => { println!("  ✗ could not be read: {}", e); failed += 1; continue; }
     };
-    let rel = shown.trim_start_matches("./").trim_end_matches(".js").replace(':', "_");
-    // A file that imports runs from an esbuild bundle (its imports resolve as
-    // a command's do, plus files beside it); its lines keep their numbers.
-    let module = if source.contains("import") {
-      match gen::bundle_test(&DataStore::new(), file, &source, &format!("flowlang:jstest/{}.js", rel)) {
+    let typescript = shown.ends_with(".ts");
+    let ext = if typescript { "ts" } else { "js" };
+    let rel = shown.trim_start_matches("./").trim_end_matches(&format!(".{}", ext)).replace(':', "_");
+    // A file that imports, or is TypeScript, runs from an esbuild bundle
+    // (imports resolve as a command's do, plus files beside it); its lines
+    // keep their numbers.
+    let module = if typescript || source.contains("import") {
+      match gen::bundle_test(&DataStore::new(), file, &source, &format!("flowlang:jstest/{}.{}", rel, ext)) {
         Ok(m) => m.map(|bundle| Module {
           bundle: Arc::new(bundle),
           layout: Layout { imports_first: 0, imports_lines: 0, body_first: 1, body_lines: source.lines().count().max(1) },
@@ -1772,7 +1777,7 @@ fn find_tests(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     if path.is_dir() {
       if name.starts_with('.') || name == "node_modules" || name == "target" { continue; }
       find_tests(&path, out);
-    } else if name.ends_with(".test.js") {
+    } else if name.ends_with(".test.js") || name.ends_with(".test.ts") {
       out.push(path);
     }
   }

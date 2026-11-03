@@ -767,6 +767,7 @@ fn run_esbuild_with(store: &DataStore, input: Input, out: &Path, banner: &str, t
       }
       Input::Stdin { dir, name, .. } => {
         command.arg(format!("--sourcefile={}", name)).current_dir(dir).stdin(std::process::Stdio::piped());
+        if name.ends_with(".ts") { command.arg("--loader=ts"); }
         name.to_string()
       }
     };
@@ -1132,9 +1133,10 @@ fn import_complete(stmt: &str) -> bool {
   false
 }
 
-/// The entry for a test file, or None when it has no import statements.
-/// An error is (file line, message).
-pub fn test_entry(source: &str) -> Result<Option<TestEntry>, (usize, String)> {
+/// The entry for a test file, or None when it has no import statements and
+/// is not TypeScript (`typescript`: it always needs compiling). An error is
+/// (file line, message).
+pub fn test_entry(source: &str, typescript: bool) -> Result<Option<TestEntry>, (usize, String)> {
   let mut lines: Vec<String> = source.split('\n').map(str::to_string).collect();
   let mut statements: Vec<(usize, String)> = Vec::new();
   let mut i = 0;
@@ -1164,7 +1166,7 @@ pub fn test_entry(source: &str) -> Result<Option<TestEntry>, (usize, String)> {
       return Err((n + 1, "imports must come first in a test file, before its tests and other statements".to_string()));
     }
   }
-  if statements.is_empty() { return Ok(None); }
+  if statements.is_empty() && !typescript { return Ok(None); }
   let mut first_line = String::new();
   let mut spans = Vec::new();
   for (line, stmt) in &statements {
@@ -1184,11 +1186,12 @@ pub fn test_entry(source: &str) -> Result<Option<TestEntry>, (usize, String)> {
 
 /// Bundles a test file that imports - npm packages from node_modules next to
 /// data/ (or above the file), commands as `flowlang:<lib>/<ctl>/<cmd>`, and
-/// files relative to it. None when it does not import. `source_name` is
-/// the file's name in stack traces. Errors are ready to print, at the
-/// file's own lines.
+/// files relative to it - or is TypeScript (`*.test.ts`). None for a
+/// JavaScript file that does not import. `source_name` is the file's name in
+/// stack traces. Errors are ready to print, at the file's own lines.
 pub fn bundle_test(store: &DataStore, file: &Path, source: &str, source_name: &str) -> Result<Option<Bundle>, String> {
-  let entry = match test_entry(source) {
+  let typescript = file.extension().map_or(false, |e| e == "ts");
+  let entry = match test_entry(source, typescript) {
     Ok(Some(e)) => e,
     Ok(None) => return Ok(None),
     Err((line, msg)) => return Err(format!("{} (line {})", msg, line)),
@@ -1218,7 +1221,8 @@ pub fn bundle_test(store: &DataStore, file: &Path, source: &str, source_name: &s
   let out = std::env::temp_dir().join(format!("flowlang_jstest_{}.js", key));
   let failed = |e: BundleError| -> String {
     match e {
-      BundleError::NoEsbuild => "this test file imports, so it runs from an esbuild bundle, and there is no esbuild: run `npm install esbuild` next to data/ (or set FLOWLANG_ESBUILD)".to_string(),
+      BundleError::NoEsbuild => format!("this test file {}, so it runs from an esbuild bundle, and there is no esbuild: run `npm install esbuild` next to data/ (or set FLOWLANG_ESBUILD)",
+        if typescript { "is TypeScript" } else { "imports" }),
       BundleError::Other(m) => m,
       BundleError::Failed(ds) => ds.iter().map(|d| {
         // Line 1 holds the imports: back to the line each came from.
