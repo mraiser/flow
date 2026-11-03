@@ -31,4 +31,4 @@ jobs:
       - name: Generated declarations (flowlang.d.ts compiles)
         run: FLOWLANG_REQUIRE_TSC=1 cargo test --release --lib builder::javascript
       - name: JavaScript command tests
-        run: FLOWLANG_REQUIRE_TSC=1 FLOWLANG_REQUIRE_ESBUILD=1 cargo test --release --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules
+        run: FLOWLANG_REQUIRE_TSC=1 FLOWLANG_REQUIRE_ESBUILD=1 cargo test --release --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy

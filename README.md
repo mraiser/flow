@@ -487,10 +487,18 @@ cargo build --features java_runtime        # loads a JVM via JNI
   an esbuild bundle: `flowb` (or the first call) writes the command as
   `<lib>/<ctl>/<cmd>.js` — its imports, then the body as the module's
   default export — and bundles it into `<cmd>.bundle.js`, rebuilt when the
-  command, its imports or the npm lockfile change. esbuild is found as
-  `$FLOWLANG_ESBUILD`, `node_modules/.bin/esbuild` next to `data/`, or
-  `esbuild` on the PATH (`npm install esbuild`); without it such a command
-  says so. Problems surface before anything runs — a missing package, or one
+  command, its imports or the npm lockfile's content change. esbuild is
+  found as `$FLOWLANG_ESBUILD` (alone, when set), else
+  `node_modules/.bin/esbuild` next to `data/`, or `esbuild` on the PATH
+  (`npm install esbuild`).
+
+  Bundles are build output, like compiled Rust: `flowb BUNDLES` builds every
+  one a store needs (and fails if any cannot be built), and a deployment
+  that ships them next to `data/`, at the same paths, needs neither esbuild
+  nor `node_modules` — a bundle built from the command's current code is
+  used as is when there is no lockfile to contradict it. A bundle built from
+  other code is never run: without esbuild to rebuild it, the command
+  reports that it needs one. Problems surface before anything runs — a missing package, or one
   that needs Node's built-ins, is an error at its `imports line N` — and
   errors at run time point into the author's code through the bundle's
   source map (`body line N`, `flowlang:<lib>/<ctl>/<cmd>.js:L:C`) and into

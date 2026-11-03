@@ -298,8 +298,9 @@ fn write_if_changed(path: &Path, content: &str) {
 /// `npm:<package path>` (code from node_modules).
 #[derive(Debug, Clone)]
 pub struct Bundle {
-  /// Identifies the inputs: changes when the command, its imports or the
-  /// installed packages change.
+  /// Identifies the bundle's inputs (`<source key>-<packages key>`):
+  /// changes when the command, its imports or the installed packages
+  /// change.
   pub key: String,
   pub code: String,
   pub map: Vec<u8>,
@@ -362,7 +363,7 @@ impl BundleError {
   /// The error as one message, with locations in the author's terms.
   pub fn text(&self, layout: &Layout) -> String {
     match self {
-      BundleError::NoEsbuild => "the command imports modules or is TypeScript, so it runs from an esbuild bundle, and esbuild is not installed: run `npm install esbuild` next to data/ (or set FLOWLANG_ESBUILD)".to_string(),
+      BundleError::NoEsbuild => "the command imports modules or is TypeScript, so it runs from an esbuild bundle, and there is no bundle for its current code here and no esbuild to build one: run `npm install esbuild` next to data/ (or set FLOWLANG_ESBUILD), or deploy with the bundles built where esbuild is (`newbound jsbundle`, the js package variant)".to_string(),
       BundleError::Other(e) => e.clone(),
       BundleError::Failed(ds) => ds.iter().map(|d| d.full(d.line.map(|l| layout.describe(l)).as_deref()))
         .collect::<Vec<_>>().join("\n"),
@@ -370,72 +371,201 @@ impl BundleError {
   }
 }
 
-/// The bundle for a command: from memory or the bundle file when its inputs
-/// are unchanged, else freshly built with esbuild (which also writes the
-/// generated file). `src_root` is the library crate's `src/`.
+/// The bundle for a command, `<cmd>.bundle.js` next to its generated file
+/// in the library crate's `src/` (`src_root`).
+///
+/// A bundle records what it was built from in its first line:
+/// `// flowlang-bundle <source key> <packages key>` - the command's code,
+/// and the content of the npm lockfiles next to data/ (`-` when there are
+/// none). The bundle on disk is used when its source key matches the
+/// command and either its packages key matches or there is no lockfile here
+/// - a deployment that ships pre-built bundles needs neither esbuild nor
+/// node_modules. Otherwise esbuild rebuilds it (writing the generated file
+/// first). Without esbuild, a bundle whose source key matches is still used
+/// (with a warning, once, when the lockfile here differs); one built from
+/// other code is an error.
 pub fn bundle(store: &DataStore, src_root: &Path, lib: &str, ctl: &str, cmd: &str, src: &JsSource) -> Result<std::sync::Arc<Bundle>, BundleError> {
   use std::collections::HashMap;
   use std::sync::{Arc, Mutex};
   static CACHE: Mutex<Option<HashMap<std::path::PathBuf, Arc<Bundle>>>> = Mutex::new(None);
   static BUILDING: Mutex<()> = Mutex::new(());
+  static WARNED: Mutex<Option<std::collections::HashSet<std::path::PathBuf>>> = Mutex::new(None);
 
   let dir = src_root.join(lib).join(ctl);
   let entry = dir.join(format!("{}.{}", cmd, src.extension()));
   let out = dir.join(format!("{}.bundle.js", cmd));
-  let key = bundle_key(store, src);
+  let source = source_key(src);
+  let packages = packages_key(store);
   let source_name = format!("flowlang:{}/{}/{}.{}", lib, ctl, cmd, src.extension());
-  let cached = |out: &Path| -> Option<Arc<Bundle>> {
-    let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    guard.as_ref().and_then(|c| c.get(out)).filter(|b| b.key == key).cloned()
+  let file_name = format!("{}.{}", cmd, src.extension());
+  // Usable: built from this code, and from these packages unless there are
+  // no lockfiles here to say otherwise.
+  let usable = |b: &Bundle| -> bool {
+    let (s, p) = b.key.split_once('-').unwrap_or((b.key.as_str(), ""));
+    s == source && (packages.is_none() || packages.as_deref() == Some(p))
   };
-  if let Some(b) = cached(&out) { return Ok(b); }
+  let cached = || -> Option<Arc<Bundle>> {
+    let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().and_then(|c| c.get(&out)).filter(|b| usable(b)).cloned()
+  };
+  if let Some(b) = cached() { return Ok(b); }
 
   let _building = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
-  if let Some(b) = cached(&out) { return Ok(b); }
-  let banner = format!("// flowlang-bundle {}", key);
-  let fresh = read_to_string(&out).ok().filter(|t| t.lines().next() == Some(banner.as_str()));
-  let text = match fresh {
-    Some(t) => t,
-    None => {
-      write_if_changed(&entry, &command_file(src, "../../flowlang.d.ts"));
-      write_if_changed(&src_root.join("flowlang.d.ts"), &flowlang_dts(store));
-      run_esbuild(store, &entry, &out, &banner)?;
-      read_to_string(&out).map_err(|e| BundleError::Other(format!("could not read the bundle {}: {}", out.display(), e)))?
-    }
+  if let Some(b) = cached() { return Ok(b); }
+  let remember = |b: Bundle| -> Arc<Bundle> {
+    let b = Arc::new(b);
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.get_or_insert_with(HashMap::new).insert(out.clone(), b.clone());
+    b
   };
-  let file_name = format!("{}.{}", cmd, src.extension());
-  let b = Arc::new(split_bundle(&text, &file_name, &source_name, key.clone())?);
-  let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-  guard.get_or_insert_with(HashMap::new).insert(out, b.clone());
-  Ok(b)
+  // The bundle on disk, with the key its banner records.
+  let on_disk = read_to_string(&out).ok().and_then(|text| {
+    let mut words = text.lines().next()?.strip_prefix("// flowlang-bundle ")?.split(' ');
+    let key = format!("{}-{}", words.next()?, words.next()?);
+    Some((key, text))
+  });
+  // A bundle that does not split (truncated, hand-edited) counts as absent.
+  let existing = on_disk.and_then(|(key, text)| split_bundle(&text, &file_name, &source_name, key).ok());
+  if let Some(b) = existing.as_ref().filter(|b| usable(b)) {
+    return Ok(remember(b.clone()));
+  }
+
+  let packages_word = packages.clone().unwrap_or_else(|| "-".to_string());
+  let banner = format!("// flowlang-bundle {} {}", source, packages_word);
+  write_if_changed(&entry, &command_file(src, "../../flowlang.d.ts"));
+  write_if_changed(&src_root.join("flowlang.d.ts"), &flowlang_dts(store));
+  match run_esbuild(store, &entry, &out, &banner) {
+    Ok(()) => {
+      let text = read_to_string(&out).map_err(|e| BundleError::Other(format!("could not read the bundle {}: {}", out.display(), e)))?;
+      Ok(remember(split_bundle(&text, &file_name, &source_name, format!("{}-{}", source, packages_word))?))
+    }
+    Err(BundleError::NoEsbuild) => {
+      // Built from this code against other packages: still the best there is.
+      match existing.filter(|b| b.key.split_once('-').map(|(s, _)| s == source).unwrap_or(false)) {
+        Some(b) => {
+          let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+          if warned.get_or_insert_with(Default::default).insert(out.clone()) {
+            eprintln!("[js] {}/{}/{}: its bundle was built against other npm packages than the lockfile here describes, and there is no esbuild to rebuild it - using it as built", lib, ctl, cmd);
+          }
+          Ok(remember(b))
+        }
+        None => Err(BundleError::NoEsbuild),
+      }
+    }
+    Err(e) => Err(e),
+  }
 }
 
-/// Hashes everything a bundle depends on: the command's code and
-/// declarations, and the installed packages (the npm lockfiles' size and
-/// modification time).
-fn bundle_key(store: &DataStore, src: &JsSource) -> String {
+/// Identifies a command's code: everything in the store that its bundle is
+/// built from.
+fn source_key(src: &JsSource) -> String {
   use std::collections::hash_map::DefaultHasher;
   use std::hash::{Hash, Hasher};
   let mut h = DefaultHasher::new();
   (&src.lang, &src.imports, &src.params, &src.returntype, &src.body, &src.name).hash(&mut h);
-  if let Some(parent) = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf())) {
-    for f in ["package-lock.json", "node_modules/.package-lock.json", "yarn.lock", "pnpm-lock.yaml"] {
-      if let Ok(m) = std::fs::metadata(parent.join(f)) {
-        (f, m.len(), m.modified().ok()).hash(&mut h);
-      }
-    }
-  }
   format!("{:016x}", h.finish())
 }
 
+/// Identifies the installed npm packages by the content of the lockfiles
+/// next to data/; `None` when there are none. A lockfile's hash is
+/// recomputed only when its size or modification time changes.
+fn packages_key(store: &DataStore) -> Option<String> {
+  use std::collections::hash_map::DefaultHasher;
+  use std::collections::HashMap;
+  use std::hash::{Hash, Hasher};
+  use std::sync::Mutex;
+  static MEMO: Mutex<Option<HashMap<std::path::PathBuf, (u64, Option<std::time::SystemTime>, u64)>>> = Mutex::new(None);
+  let parent = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf()))?;
+  let mut h = DefaultHasher::new();
+  let mut any = false;
+  for f in ["package-lock.json", "node_modules/.package-lock.json", "yarn.lock", "pnpm-lock.yaml"] {
+    let path = parent.join(f);
+    let Ok(meta) = std::fs::metadata(&path) else { continue };
+    let stamp = (meta.len(), meta.modified().ok());
+    let mut memo = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    let memo = memo.get_or_insert_with(HashMap::new);
+    let content = match memo.get(&path) {
+      Some((len, modified, hash)) if (*len, *modified) == stamp => *hash,
+      _ => {
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let mut fh = DefaultHasher::new();
+        bytes.hash(&mut fh);
+        let hash = fh.finish();
+        memo.insert(path.clone(), (stamp.0, stamp.1, hash));
+        hash
+      }
+    };
+    (f, content).hash(&mut h);
+    any = true;
+  }
+  if any { Some(format!("{:016x}", h.finish())) } else { None }
+}
+
+/// Where esbuild is looked for: `$FLOWLANG_ESBUILD` alone when it is set
+/// (an explicit choice; a path that does not exist means none), else
+/// `node_modules/.bin/esbuild` next to data/, then `esbuild` on the PATH.
 fn esbuild_candidates(store: &DataStore) -> Vec<std::path::PathBuf> {
+  if let Some(t) = std::env::var("FLOWLANG_ESBUILD").ok().filter(|t| !t.trim().is_empty()) {
+    return vec![t.into()];
+  }
   let mut v: Vec<std::path::PathBuf> = Vec::new();
-  if let Ok(t) = std::env::var("FLOWLANG_ESBUILD") { v.push(t.into()); }
   if let Some(parent) = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf())) {
     v.push(parent.join("node_modules").join(".bin").join("esbuild"));
   }
   v.push("esbuild".into());
   v
+}
+
+/// Every JavaScript/TypeScript command in the store that runs from a bundle,
+/// as (lib, ctl, cmd, id).
+pub fn bundled_commands(store: &DataStore) -> Vec<(String, String, String, String)> {
+  let mut out = Vec::new();
+  let mut libs: Vec<String> = std::fs::read_dir(&store.root)
+    .map(|it| it.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect())
+    .unwrap_or_default();
+  libs.retain(|l| store.exists(l, "controls"));
+  libs.sort();
+  for lib in libs {
+    let found = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+      let mut v = Vec::new();
+      for c in store.get_data(&lib, "controls").get_object("data").get_array("list").objects() {
+        let c = c.object();
+        let (ctl, ctl_id) = (c.get_string("name"), c.get_string("id"));
+        if !store.exists(&lib, &ctl_id) { continue; }
+        let data = store.get_data(&lib, &ctl_id).get_object("data");
+        if !data.has("cmd") { continue; }
+        for e in data.get_array("cmd").objects() {
+          let e = e.object();
+          let (cmd, id) = (e.get_string("name"), e.get_string("id"));
+          if JsSource::read(store, &lib, &id).map_or(false, |s| s.needs_bundle()) {
+            v.push((lib.clone(), ctl.clone(), cmd, id));
+          }
+        }
+      }
+      v
+    })).unwrap_or_default();
+    out.extend(found);
+  }
+  out
+}
+
+/// Builds (or confirms current) the bundle of every command that runs from
+/// one - what a package ships so that its deployments need no esbuild.
+/// Returns the commands done, as `lib:ctl:cmd`, and the failures with their
+/// messages.
+pub fn build_bundles(store: &DataStore) -> (Vec<String>, Vec<(String, String)>) {
+  let mut done = Vec::new();
+  let mut failed = Vec::new();
+  for (lib, ctl, cmd, id) in bundled_commands(store) {
+    let label = format!("{}:{}:{}", lib, ctl, cmd);
+    let Some(src) = JsSource::read(store, &lib, &id) else { continue };
+    let src_root = store.get_lib_root(&lib).join("src");
+    match bundle(store, &src_root, &lib, &ctl, &cmd, &src) {
+      Ok(_) => done.push(label),
+      Err(e) => failed.push((label, e.text(&layout(&src)))),
+    }
+  }
+  (done, failed)
 }
 
 /// The node_modules next to data/, for esbuild's NODE_PATH.
