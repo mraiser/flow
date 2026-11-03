@@ -65,7 +65,16 @@
 //!
 //! A command record names its language `"js"` or `"javascript"` (newbound's
 //! `dev.code` writes the latter); both are the same language, and the body is
-//! read from whichever key the implementation record carries.
+//! read from whichever key the implementation record carries. `"typescript"`
+//! / `"ts"` commands run here too.
+//!
+//! A command with imports (its record's `import` field: ES `import`
+//! statements, resolved from node_modules next to data/), and every
+//! TypeScript command, runs from an esbuild bundle (`builder::javascript::
+//! bundle`): the bundle is installed as a script under a name unique to its
+//! version, and its source map - served by the engine's module loader - maps
+//! stack traces back to the generated file, whose lines `Layout` turns into
+//! "imports line N" / "body line N".
 
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
@@ -88,9 +97,14 @@ use crate::code::CodeException;
 use crate::pycmd::{err_envelope, ok_envelope, Value};
 use crate::DataStore;
 
-pub use crate::builder::javascript::{is_identifier, uses_await, JS_LANGS as LANGS};
+pub use crate::builder::javascript::{is_identifier, uses_await, Bundle, BundleError, JsSource, Layout};
+use crate::builder::javascript as gen;
 
-/// True for a command `type` that names JavaScript.
+/// The language tags of the commands this engine runs: JavaScript and
+/// TypeScript.
+pub const LANGS: [&str; 4] = ["js", "javascript", "typescript", "ts"];
+
+/// True for a command `type` this engine runs (JavaScript or TypeScript).
 pub fn is_js(lang: &str) -> bool {
   LANGS.contains(&lang)
 }
@@ -140,6 +154,16 @@ pub struct JsCall {
   pub args: DataObject,
   /// The time limit for this call; `None` uses `default_timeout()`.
   pub timeout: Option<Duration>,
+  /// For a command that imports modules or is TypeScript: its esbuild
+  /// bundle and the generated file's layout (for reporting lines).
+  pub module: Option<Module>,
+}
+
+/// A bundled command: what runs, and where its lines are.
+#[derive(Debug, Clone)]
+pub struct Module {
+  pub bundle: Arc<Bundle>,
+  pub layout: Layout,
 }
 
 impl JSCmd {
@@ -202,29 +226,40 @@ impl JSCmd {
     Ok((format!("{}:{}:{}", lib, ctl, name), impl_def))
   }
 
-  /// Reads the command's body and selects its declared params from `args`.
+  /// Reads the command's code and selects its declared params from `args`.
   /// A declared param missing from `args` is an error, worded exactly as the
-  /// generated Rust wrapper words it.
+  /// generated Rust wrapper words it. A command that imports modules or is
+  /// TypeScript comes with its bundle - built now if its inputs changed.
   pub fn prepare(lib: &str, id: &str, args: DataObject) -> Result<JsCall, String> {
-    let (label, impl_def) = JSCmd::locate(lib, id)?;
-    let key = body_key(&impl_def).ok_or_else(|| format!("{} has no JavaScript body", label))?;
-    let body = impl_def.get_string(key);
-    let mut params = Vec::new();
+    let (label, _) = JSCmd::locate(lib, id)?;
+    let store = DataStore::new();
+    let src = JsSource::read(&store, lib, id).ok_or_else(|| format!("{} has no JavaScript body", label))?;
     let mut call_args = DataObject::new();
-    if impl_def.has("params") {
-      for p in impl_def.get_array("params").objects() {
-        if let Data::DObject(_) = p {
-          let name = p.object().get_string("name");
-          match args.try_get_property(&name) {
-            Ok(v) => call_args.set_property(&name, v),
-            Err(_) => return Err(format!("missing required parameter: {}", name)),
-          }
-          params.push(name);
-        }
+    for (name, _) in &src.params {
+      match args.try_get_property(name) {
+        Ok(v) => call_args.set_property(name, v),
+        Err(_) => return Err(format!("missing required parameter: {}", name)),
       }
     }
-    let returntype = if impl_def.has("returntype") { impl_def.get_string("returntype") } else { "Any".to_string() };
-    Ok(JsCall { label, params, body, returntype, args: call_args, timeout: None })
+    let module = if src.needs_bundle() {
+      let mut parts = label.splitn(3, ':').skip(1);
+      let (ctl, cmd) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+      let layout = gen::layout(&src);
+      let bundle = gen::bundle(&store, &store.get_lib_root(lib).join("src"), lib, ctl, cmd, &src)
+        .map_err(|e| format!("{}: {}", label, e.text(&layout)))?;
+      Some(Module { bundle, layout })
+    } else {
+      None
+    };
+    Ok(JsCall {
+      label,
+      params: src.params.iter().map(|(n, _)| n.clone()).collect(),
+      body: src.body,
+      returntype: src.returntype,
+      args: call_args,
+      timeout: None,
+      module,
+    })
   }
 }
 
@@ -252,15 +287,21 @@ fn body_key(impl_def: &DataObject) -> Option<&'static str> {
 struct Registration {
   /// The label as a JavaScript string literal.
   key: String,
-  /// Identifies (label, params, body), as a JavaScript string literal.
+  /// Identifies (label, params, body, bundle), as a JavaScript string literal.
   hash: String,
   /// Installs the function as `__flowlang.cmds[label]` and records `hash`.
-  /// The body starts on line 1, so the source's line numbers are the body's.
   source: String,
-  /// The script name in stack traces: `flowlang:lib/ctl/cmd.js` (a URL:
-  /// `evalContext` requires one).
+  /// The script's name: `flowlang:lib/ctl/cmd.js` (a URL: `evalContext`
+  /// requires one), or for a bundle `flowlang:lib/ctl/cmd.bundle.<key>.js`
+  /// - unique per bundle, as the engine caches source maps by name.
   script_name: String,
-  body_lines: i64,
+  /// The name the author's code has in stack traces: the script's own, or
+  /// for a bundle the generated file's (`flowlang:lib/ctl/cmd.ts`), through
+  /// the source map.
+  source_name: String,
+  layout: Layout,
+  /// A bundle's source map, registered under `script_name`.
+  map: Option<Arc<Bundle>>,
 }
 
 fn registration(call: &JsCall) -> Result<Registration, String> {
@@ -272,24 +313,82 @@ fn registration(call: &JsCall) -> Result<Registration, String> {
   let key = serde_json::Value::String(call.label.clone()).to_string();
   let hash = {
     let mut h = DefaultHasher::new();
-    (&call.label, &call.params, &call.body).hash(&mut h);
+    (&call.label, &call.params, &call.body, call.module.as_ref().map(|m| &m.bundle.key)).hash(&mut h);
     serde_json::Value::String(format!("{:016x}", h.finish())).to_string()
   };
+  let path = call.label.replace(':', "/");
+  if let Some(m) = &call.module {
+    // The bundle defines __flowlang_module in a scope of its own; its first
+    // line is esbuild's banner comment, so the wrapper's opening shares it
+    // and every other line keeps its number for the source map.
+    let source = format!(
+      "__flowlang.cmds[{key}] = (() => {{ {code}\n; return __flowlang_module.default; }})(); __flowlang.hashes[{key}] = {hash};",
+      key = key, code = m.bundle.code, hash = hash
+    );
+    return Ok(Registration {
+      key,
+      hash,
+      source,
+      script_name: format!("flowlang:{}.bundle.{}.js", path, m.bundle.key),
+      source_name: m.bundle.source_name.clone(),
+      layout: m.layout,
+      map: Some(m.bundle.clone()),
+    });
+  }
   let name = call.label.rsplit(':').next().filter(|n| is_identifier(n)).unwrap_or("command");
   // A body that awaits is an async function; any other stays synchronous, so
   // a JavaScript caller gets its value directly rather than a Promise.
   let asynchronous = if uses_await(&call.body) { "async " } else { "" };
+  // The body starts on line 1, so the source's line numbers are the body's.
   let source = format!(
     "__flowlang.cmds[{key}] = {asynchronous}function {name}({params}) {{ {body}\n}}; __flowlang.hashes[{key}] = {hash};",
     key = key, asynchronous = asynchronous, name = name, params = call.params.join(", "), body = call.body, hash = hash
   );
+  let script_name = format!("flowlang:{}.js", path);
   Ok(Registration {
     key,
     hash,
     source,
-    script_name: format!("flowlang:{}.js", call.label.replace(':', "/")),
-    body_lines: call.body.lines().count().max(1) as i64,
+    source_name: script_name.clone(),
+    script_name,
+    layout: Layout { imports_first: 0, imports_lines: 0, body_first: 1, body_lines: call.body.lines().count().max(1) },
+    map: None,
   })
+}
+
+thread_local! {
+  /// Bundles' source maps by script name, for the engine's loader (engine
+  /// thread only).
+  static SOURCE_MAPS: std::cell::RefCell<std::collections::HashMap<String, Arc<Bundle>>> = Default::default();
+}
+
+/// Makes a registration's source map available before its script runs.
+fn register_map(reg: &Registration) {
+  if let Some(b) = &reg.map {
+    SOURCE_MAPS.with(|m| { m.borrow_mut().insert(reg.script_name.clone(), b.clone()); });
+  }
+}
+
+/// The engine's module loader: it loads no modules (bundles inline their
+/// imports), and serves bundles' source maps so stack traces point into the
+/// generated file.
+struct MapLoader;
+
+impl deno_core::ModuleLoader for MapLoader {
+  fn resolve(&self, specifier: &str, referrer: &str, kind: deno_core::ResolutionKind) -> deno_core::ModuleResolveResponse {
+    deno_core::NoopModuleLoader.resolve(specifier, referrer, kind)
+  }
+  fn load(
+    &self,
+    specifier: &deno_core::ModuleSpecifier,
+    referrer: Option<&deno_core::ModuleLoadReferrer>,
+    options: deno_core::ModuleLoadOptions,
+  ) -> deno_core::ModuleLoadResponse {
+    deno_core::NoopModuleLoader.load(specifier, referrer, options)
+  }
+  fn get_source_map(&self, file_name: &str) -> Option<std::borrow::Cow<'_, [u8]>> {
+    SOURCE_MAPS.with(|m| m.borrow().get(file_name).map(|b| std::borrow::Cow::Owned(b.map.clone())))
+  }
 }
 
 /// One argument per declared parameter, in order, as JSON.
@@ -676,6 +775,7 @@ fn op_flowlang_call(
       Ok(r) => r,
       Err(msg) => return err("failed", msg),
     };
+    register_map(&reg);
     let hash: String = serde_json::from_str(&reg.hash).unwrap_or_default();
     return json!({"js": {
       "label": call.label,
@@ -915,6 +1015,7 @@ impl Engine {
   fn new(watchdog: &Watchdog) -> Result<Engine, String> {
     let mut runtime = JsRuntime::new(RuntimeOptions {
       extensions: vec![flowlang_js::init()],
+      module_loader: Some(std::rc::Rc::new(MapLoader)),
       ..Default::default()
     });
     runtime.execute_script("<flowlang web>", crate::jsweb::WEB_JS).map_err(|e| e.to_string())?;
@@ -945,6 +1046,7 @@ impl Engine {
       Err(e) => return Started::Done(Err(e)),
       Ok(true) => {}
       Ok(false) => {
+        register_map(reg);
         if let Err(e) = self.runtime.execute_script(reg.script_name.clone(), reg.source.clone()) {
           return Started::Done(Err(report(&e, Some(reg))));
         }
@@ -1009,12 +1111,12 @@ fn report(e: &deno_core::error::JsError, reg: Option<&Registration>) -> String {
   let mut msg = e.exception_message.clone();
   if let Some(reg) = reg {
     let line = e.frames.iter()
-      .find(|f| f.file_name.as_deref() == Some(reg.script_name.as_str()))
+      .find(|f| f.file_name.as_deref() == Some(reg.source_name.as_str()))
       .and_then(|f| f.line_number);
-    match line {
-      Some(n) if n > reg.body_lines => msg += " (at the end of the body)",
-      Some(n) => msg += &format!(" (body line {})", n),
-      None => {}
+    if let Some(n) = line {
+      let place = reg.layout.describe(n.max(0) as usize);
+      if place == "the end of the body" { msg += " (at the end of the body)"; }
+      else { msg += &format!(" ({})", place); }
     }
   }
   for l in e.to_string().lines() {
@@ -1055,34 +1157,42 @@ fn json_to_value(v: serde_json::Value) -> Value {
 
 // ---- checking a command without running it -------------------------------------------------
 
-/// Checks a JavaScript command without running it: its body compiles (V8,
-/// as the engine would install it), and - when TypeScript's `tsc` is found -
-/// it type-checks against flowlang.d.ts with the JSDoc types of its declared
-/// parameters and return type (`// @ts-check`, `--lib es2022`: names the
-/// engine does not provide, such as `fetch` or `require`, are errors).
-/// Problems are reported where the author wrote them ("body line N"):
+/// Checks a JavaScript or TypeScript command without running it.
+///
+/// - Syntax: a plain JavaScript command compiles in V8 as the engine would
+///   install it. One that imports modules, or is TypeScript, is bundled with
+///   esbuild instead - which also resolves its imports, so a missing package
+///   or one that needs Node's built-ins (`fs`, `http`, ...) is reported here.
+/// - Types, when TypeScript's `tsc` is found: the generated file (JSDoc-typed
+///   `// @ts-check` JavaScript, or the TypeScript itself, strict) against
+///   flowlang.d.ts with `--lib es2022`, so names the engine does not provide
+///   (`process`, `require`, `Buffer`) are errors and `flowlang.api` calls are
+///   checked against the callee. Imports resolve from node_modules next to
+///   data/, types included.
+///
+/// Problems are reported where the author wrote them ("body line N",
+/// "imports line N"):
 ///
 ///   {"status": "ok", "command": "lib:ctl:cmd", "tsc": "ran" | "not installed" | "skipped",
 ///    "clean": bool,
-///    "problems": [{"tool": "syntax"|"tsc", "severity": "error", "where": "body line 3",
+///    "problems": [{"tool": "syntax"|"esbuild"|"tsc", "severity": "error", "where": "body line 3",
 ///                  "line": 3, "column": 5, "message": ...}]}
 ///
 /// `tsc` is looked for as `$FLOWLANG_TSC`, then `node_modules/.bin/tsc`
-/// next to `data/`, then `tsc` on the PATH. `clean` is false when any
-/// problem has severity "error". `status` is "err" only when the check
-/// itself cannot run.
+/// next to `data/`, then `tsc` on the PATH; esbuild likewise
+/// (`$FLOWLANG_ESBUILD`). `clean` is false when any problem has severity
+/// "error". `status` is "err" only when the check itself cannot run.
 pub fn check(lib: &str, id: &str) -> DataObject {
   check_with(lib, id, true)
 }
 
-/// `check` without tsc: the syntax check only - fast enough to run on every
-/// save. `tsc` is "skipped".
+/// `check` without tsc: the syntax check (or bundle) only - fast enough to
+/// run on every save. `tsc` is "skipped".
 pub fn check_quick(lib: &str, id: &str) -> DataObject {
   check_with(lib, id, false)
 }
 
 fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
-  use crate::builder::javascript::{command_file, command_header_lines, flowlang_dts, JsSource};
   let mut err = DataObject::new();
   err.put_string("status", "err");
   let located = std::panic::catch_unwind(|| {
@@ -1095,38 +1205,64 @@ fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
     Ok(Err(e)) => { err.put_string("msg", &e); return err; }
     Err(_) => { err.put_string("msg", &format!("no command {} in library {}", id, lib)); return err; }
   };
+  let store = DataStore::new();
+  let layout = gen::layout(&src);
 
   let mut problems = DataArray::new();
-  let mut problem = |tool: &str, line: Option<i64>, column: Option<i64>, body_lines: i64, message: &str| {
+  // `place`: the author's name for the line ("body line 3"), when known.
+  let mut problem = |tool: &str, place: Option<String>, line: Option<i64>, column: Option<i64>, message: &str| {
     let mut p = DataObject::new();
     p.put_string("tool", tool);
     p.put_string("severity", "error");
-    match line {
-      Some(n) if n >= 1 && n <= body_lines => { p.put_string("where", &format!("body line {}", n)); p.put_int("line", n); }
-      Some(n) if n > body_lines => p.put_string("where", "the end of the body"),
-      _ => p.put_string("where", "the command"),
-    }
+    p.put_string("where", place.as_deref().unwrap_or("the command"));
+    if let Some(n) = line { p.put_int("line", n); }
     if let Some(c) = column { p.put_int("column", c); }
     p.put_string("message", message);
     problems.push_object(p);
   };
-
-  let call = JsCall {
-    label: label.clone(),
-    params: src.params.iter().map(|(n, _)| n.clone()).collect(),
-    body: src.body.clone(),
-    returntype: src.returntype.clone(),
-    args: DataObject::new(),
-    timeout: None,
+  // A generated-file line in the author's terms, and the line number within
+  // its part (imports or body).
+  let place = |file_line: usize| -> (String, Option<i64>) {
+    let d = layout.describe(file_line);
+    let n = d.rsplit(' ').next().and_then(|n| n.parse::<i64>().ok());
+    (d, n)
   };
-  let body_lines = call.body.lines().count().max(1) as i64;
+
   let mut syntax_ok = true;
-  match registration(&call) {
-    Err(msg) => { syntax_ok = false; problem("syntax", None, None, body_lines, &msg); }
-    Ok(reg) => {
-      if let Some((message, line, column)) = syntax_problem(&call, &reg) {
+  if src.needs_bundle() {
+    let mut parts = label.splitn(3, ':').skip(1);
+    let (ctl, cmd) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    match gen::bundle(&store, &store.get_lib_root(lib).join("src"), lib, ctl, cmd, &src) {
+      Ok(_) => {}
+      Err(BundleError::Failed(ds)) => {
         syntax_ok = false;
-        problem("syntax", line, column, body_lines, &message);
+        for d in ds {
+          let (where_, n) = match d.line { Some(l) => { let (w, n) = place(l); (Some(w), n) } None => (None, None) };
+          problem("esbuild", where_, n, d.column.map(|c| c as i64 + 1), &d.full(None));
+        }
+      }
+      Err(e) => { syntax_ok = false; problem("esbuild", None, None, None, &e.text(&layout)); }
+    }
+  } else {
+    let call = JsCall {
+      label: label.clone(),
+      params: src.params.iter().map(|(n, _)| n.clone()).collect(),
+      body: src.body.clone(),
+      returntype: src.returntype.clone(),
+      args: DataObject::new(),
+      timeout: None,
+      module: None,
+    };
+    match registration(&call) {
+      Err(msg) => { syntax_ok = false; problem("syntax", None, None, None, &msg); }
+      Ok(reg) => {
+        if let Some((message, line, column)) = syntax_problem(&call, &reg) {
+          syntax_ok = false;
+          // V8's lines are the installed source's: body line N is line N.
+          let where_ = line.map(|l| reg.layout.describe(l.max(0) as usize));
+          let n = if where_.as_deref().map_or(false, |w| w.starts_with("body line")) { line } else { None };
+          problem("syntax", where_, n, column, &message);
+        }
       }
     }
   }
@@ -1134,23 +1270,30 @@ fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
   let tsc_state = if !type_check || !syntax_ok {
     "skipped".to_string()
   } else {
-    let store = DataStore::new();
-    let header = command_header_lines(&src) as i64;
-    let dir = std::env::temp_dir().join(format!("flowlang_check_js_{}_{:x}", std::process::id(), {
+    let file = format!("command.{}", src.extension());
+    // A command that imports packages is checked next to data/, so its
+    // imports (and their types) resolve from node_modules there.
+    let parent = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf()));
+    let base = match (&parent, src.needs_bundle()) {
+      (Some(p), true) => p.clone(),
+      _ => std::env::temp_dir(),
+    };
+    let dir = base.join(format!(".flowlang_check_js_{}_{:x}", std::process::id(), {
       let mut h = DefaultHasher::new(); (&label, Instant::now()).hash(&mut h); h.finish()
     }));
     let _ = std::fs::create_dir_all(&dir);
-    let written = std::fs::write(dir.join("flowlang.d.ts"), flowlang_dts(&store))
-      .and_then(|_| std::fs::write(dir.join("command.js"), command_file(&src, "flowlang.d.ts")))
-      .and_then(|_| std::fs::write(dir.join("tsconfig.json"), TSCONFIG));
+    let written = std::fs::write(dir.join("flowlang.d.ts"), gen::flowlang_dts(&store))
+      .and_then(|_| std::fs::write(dir.join(&file), gen::command_file(&src, "flowlang.d.ts")))
+      .and_then(|_| std::fs::write(dir.join("tsconfig.json"), tsconfig(&src, &file)));
     let state = match written {
       Err(e) => { let _ = std::fs::remove_dir_all(&dir); err.put_string("msg", &format!("could not write the check files: {}", e)); return err; }
-      Ok(()) => match run_tsc(&store, &dir) {
+      Ok(()) => match run_tsc(&store, &dir, &file) {
         None => "not installed".to_string(),
         Some(Err(e)) => { let _ = std::fs::remove_dir_all(&dir); err.put_string("msg", &e); return err; }
         Some(Ok(diagnostics)) => {
           for (line, column, message) in diagnostics {
-            problem("tsc", Some(line - header), Some(column), body_lines, &message);
+            let (where_, n) = place(line.max(0) as usize);
+            problem("tsc", Some(where_), n, Some(column), &message);
           }
           "ran".to_string()
         }
@@ -1170,21 +1313,30 @@ fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
   o
 }
 
-const TSCONFIG: &str = r#"{
-  "compilerOptions": {
+/// The check's tsconfig: JavaScript is checked loosely (`checkJs`, not
+/// strict), TypeScript strictly; a module resolves its imports the way a
+/// bundler does.
+fn tsconfig(src: &JsSource, file: &str) -> String {
+  format!(r#"{{
+  "compilerOptions": {{
     "target": "es2022",
     "lib": ["es2022"],
     "types": [],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "allowJs": true,
     "checkJs": true,
     "noEmit": true,
-    "strict": false,
-    "noImplicitAny": false,
+    "strict": {strict},
+    "noImplicitAny": {strict},
     "skipLibCheck": true
-  },
-  "files": ["flowlang.d.ts", "command.js"]
+  }},
+  "files": ["flowlang.d.ts", "{file}"]
+}}
+"#, strict = src.is_typescript(), file = file)
 }
-"#;
 
 /// Compiles the command as the engine would install it, in a short-lived
 /// isolate on a thread of its own (so it is safe from any thread, the
@@ -1196,8 +1348,11 @@ fn syntax_problem(call: &JsCall, reg: &Registration) -> Option<(String, Option<i
   let script_name = reg.script_name.clone();
   std::thread::scope(|s| {
     s.spawn(move || {
-      let mut rt = JsRuntime::new(RuntimeOptions::default());
-      match rt.execute_script(script_name.clone(), source) {
+      // deno_core's isolates need a tokio runtime context.
+      let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+      let _guard = rt.enter();
+      let mut js = JsRuntime::new(RuntimeOptions::default());
+      match js.execute_script(script_name.clone(), source) {
         Ok(_) => None,
         Err(e) => {
           let frame = e.frames.iter().find(|f| f.file_name.as_deref() == Some(script_name.as_str()));
@@ -1209,14 +1364,15 @@ fn syntax_problem(call: &JsCall, reg: &Registration) -> Option<(String, Option<i
 }
 
 /// Runs tsc in `dir`: `None` when no tsc is found, else its diagnostics for
-/// command.js as (file line, column, message).
-fn run_tsc(store: &DataStore, dir: &std::path::Path) -> Option<Result<Vec<(i64, i64, String)>, String>> {
+/// `file` as (file line, column, message).
+fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Result<Vec<(i64, i64, String)>, String>> {
   let mut candidates: Vec<std::path::PathBuf> = Vec::new();
   if let Ok(t) = std::env::var("FLOWLANG_TSC") { candidates.push(t.into()); }
   if let Ok(root) = store.root.canonicalize() {
     if let Some(parent) = root.parent() { candidates.push(parent.join("node_modules").join(".bin").join("tsc")); }
   }
   candidates.push("tsc".into());
+  let prefix = format!("{}(", file);
   for exe in candidates {
     if exe.components().count() > 1 && !exe.exists() { continue; }
     let out = std::process::Command::new(&exe)
@@ -1231,8 +1387,8 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path) -> Option<Result<Vec<(i64, 
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let mut found: Vec<(i64, i64, String)> = Vec::new();
     for l in text.lines() {
-      // command.js(12,5): error TS2304: Cannot find name 'fetch'.
-      if let Some(rest) = l.strip_prefix("command.js(") {
+      // command.js(12,5): error TS2304: Cannot find name 'process'.
+      if let Some(rest) = l.strip_prefix(prefix.as_str()) {
         let parsed = rest.split_once("): ").and_then(|(pos, msg)| {
           let (line, col) = pos.split_once(',')?;
           Some((line.parse().ok()?, col.parse().ok()?, msg.split_once(": ").map(|(_, m)| m).unwrap_or(msg).to_string()))
@@ -1242,7 +1398,7 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path) -> Option<Result<Vec<(i64, 
       if l.starts_with(' ') {
         // A continuation of the previous message.
         if let Some(last) = found.last_mut() { last.2.push('\n'); last.2.push_str(l.trim_end()); }
-      } else if !l.trim().is_empty() && !out.status.success() && found.is_empty() && !l.starts_with("command.js") {
+      } else if !l.trim().is_empty() && !out.status.success() && found.is_empty() && !l.starts_with(file) {
         return Some(Err(format!("{} failed: {}", exe.display(), text.trim())));
       }
     }
@@ -1294,6 +1450,7 @@ pub fn run_tests(args: Vec<String>) -> i32 {
       returntype: "JSONArray".to_string(),
       args: DataObject::new(),
       timeout: None,
+      module: None,
     };
     match run(&call) {
       Err(e) => { println!("  ✗ the file failed: {}", indent(&clean_stack(&e))); failed += 1; }

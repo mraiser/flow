@@ -11,8 +11,8 @@ the `flowmcp` binary exposes every command as an MCP tool that any MCP client
 can call.
 
 > **Note:** Support for back-end commands written in Java is kind of broken
-> for now. Contact me if you'd like to help fix it. JavaScript commands work
-> (see *Language runtimes*), without `import`/npm packages for now.
+> for now. Contact me if you'd like to help fix it. JavaScript and TypeScript
+> commands work (see *Language runtimes*).
 
 A Flow program is a directed graph of operations ("commands") in which data
 flows along connections between nodes. Using an IDE like
@@ -454,7 +454,8 @@ cargo build --features java_runtime        # loads a JVM via JNI
   the command: `[js testflow:testflow:report] building totals`.
 
   `jscmd::check(lib, id)` checks a command without running it: a V8 syntax
-  check, plus a TypeScript type check when `tsc` is found (`$FLOWLANG_TSC`,
+  check (esbuild's bundle, for a command with imports or in TypeScript),
+  plus a TypeScript type check when `tsc` is found (`$FLOWLANG_TSC`,
   `node_modules/.bin/tsc` next to `data/`, or `tsc` on the PATH) — the body
   as `// @ts-check` JavaScript with JSDoc types from its declared params,
   against `flowlang.d.ts`, so names the engine does not provide (`fetch`,
@@ -470,8 +471,35 @@ cargo build --features java_runtime        # loads a JVM via JNI
   `deepEqual`, `throws`, `rejects`). Exit status: 0 all passed, 1 a failure,
   2 nothing ran.
 
-  Not yet: `import`/npm packages, `fetch` and other web APIs, TypeScript
-  command bodies.
+  Web platform APIs are built in: `fetch` (with `Headers`, `Request`,
+  `Response` and `AbortController`; requests run off the engine thread, TLS
+  through the OS trust store and `SSL_CERT_FILE`, `*_PROXY`/`NO_PROXY`
+  honoured, bodies read whole), `URL`/`URLSearchParams`,
+  `TextEncoder`/`TextDecoder`, `atob`/`btoa`, `crypto.getRandomValues` /
+  `randomUUID`, `structuredClone`, `performance.now`, `EventTarget` and
+  `DOMException`. Node's built-ins (`fs`, `process`, `Buffer`, `require`) are
+  not there.
+
+  **Imports and npm packages.** A command's `import` field holds ES `import`
+  statements; packages resolve from `node_modules` next to `data/` (`npm
+  install lodash` there), CommonJS and ESM alike. Such a command runs from
+  an esbuild bundle: `flowb` (or the first call) writes the command as
+  `<lib>/<ctl>/<cmd>.js` — its imports, then the body as the module's
+  default export — and bundles it into `<cmd>.bundle.js`, rebuilt when the
+  command, its imports or the npm lockfile change. esbuild is found as
+  `$FLOWLANG_ESBUILD`, `node_modules/.bin/esbuild` next to `data/`, or
+  `esbuild` on the PATH (`npm install esbuild`); without it such a command
+  says so. Problems surface before anything runs — a missing package, or one
+  that needs Node's built-ins, is an error at its `imports line N` — and
+  errors at run time point into the author's code through the bundle's
+  source map (`body line N`, `flowlang:<lib>/<ctl>/<cmd>.js:L:C`) and into
+  packages as `npm:<path>`.
+
+  **TypeScript.** A command whose language is `"typescript"` (or `"ts"`) is
+  TypeScript: the same body, params typed from the declarations
+  (`<cmd>.ts`), compiled by esbuild — so TypeScript commands need esbuild
+  too. esbuild does not type-check; `jscmd::check` runs tsc on them in
+  strict mode.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`
   on the library path (e.g. `LD_LIBRARY_PATH`).
 - **Rust** — statically linked by default: `flowb` generates a wrapper and
@@ -528,14 +556,16 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules
 ```
 
 The suite covers JavaScript commands (with `javascript_runtime`: the result
 envelope, value conversion, error reports, async commands and timers, calls
 that await without holding each other up, time limits, `flowlang.call`
 across languages, records under both language tags, `check` with and
-without tsc, and `flow jstest`), the builder's wrapper guarantees, synchro ordering under
+without tsc, `flow jstest`, `fetch` against a local server and the other web
+APIs, and imports — CommonJS and ESM packages, source-mapped errors,
+resolution errors — and TypeScript commands, through esbuild), the builder's wrapper guarantees, synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when
 `syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values

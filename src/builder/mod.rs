@@ -203,9 +203,10 @@ pub(crate) fn build(
             self::python::build_python_command(&actual_library_build_src_path, lib_name, control_name, command_name, &store);
             false
         }
-        // JavaScript runs from the store as it is: nothing to compile, but
-        // the editor/checker files are written.
-        "js" | "javascript" => {
+        // JavaScript and TypeScript: nothing for cargo, but the editor/checker
+        // files are written, and a command that imports modules (or is
+        // TypeScript) is bundled with esbuild.
+        "js" | "javascript" | "typescript" | "ts" => {
             self::javascript::build_js_command(&actual_library_build_src_path, lib_name, control_name, command_name, &store)
         }
         _ => {

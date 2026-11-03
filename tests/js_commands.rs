@@ -38,6 +38,7 @@ fn call(params: &[&str], body: &str, returntype: &str, args: DataObject) -> JsCa
     returntype: returntype.to_string(),
     args,
     timeout: None,
+    module: None,
   }
 }
 

@@ -81,28 +81,34 @@ pub fn ts_type(flow_type: &str) -> &'static str {
   }
 }
 
-/// A JavaScript command as the store holds it.
+/// A JavaScript or TypeScript command as the store holds it.
 #[derive(Debug, Clone)]
 pub struct JsSource {
   /// The command's name (the generated function's name when it is an
   /// identifier).
   pub name: String,
+  /// The record's language: `javascript`, `js`, `typescript` or `ts`.
+  pub lang: String,
   /// Declared (name, type) pairs, in order.
   pub params: Vec<(String, String)>,
   pub returntype: String,
+  /// The command's imports (ES `import` statements), possibly empty.
+  pub imports: String,
   pub body: String,
 }
 
 impl JsSource {
-  /// Reads a JavaScript command's records: `None` if it is not one.
+  /// Reads a JavaScript or TypeScript command's records: `None` if it is
+  /// not one.
   pub fn read(store: &DataStore, lib: &str, id: &str) -> Option<JsSource> {
     if !store.exists(lib, id) { return None; }
     let cmd = store.get_data(lib, id).get_object("data");
-    let impl_key = JS_LANGS.iter().copied().find(|k| cmd.has(k))?;
+    let typ = if cmd.has("type") { cmd.get_string("type") } else { String::new() };
+    let impl_key = record_key(&cmd, &typ)?;
     let impl_id = cmd.get_string(impl_key);
     if !store.exists(lib, &impl_id) { return None; }
     let impl_def = store.get_data(lib, &impl_id).get_object("data");
-    let body_key = JS_LANGS.iter().copied().find(|k| impl_def.has(k))?;
+    let body_key = record_key(&impl_def, &typ)?;
     let mut params = Vec::new();
     if impl_def.has("params") {
       for p in impl_def.get_array("params").objects() {
@@ -112,8 +118,10 @@ impl JsSource {
     }
     Some(JsSource {
       name: if impl_def.has("cmd") { impl_def.get_string("cmd") } else { cmd.get_string("name") },
+      lang: if is_lang(&typ) { typ } else { body_key.to_string() },
       params,
       returntype: if impl_def.has("returntype") { impl_def.get_string("returntype") } else { "Any".to_string() },
+      imports: if impl_def.has("import") { impl_def.get_string("import") } else { String::new() },
       body: impl_def.get_string(body_key),
     })
   }
@@ -122,7 +130,22 @@ impl JsSource {
     uses_await(&self.body)
   }
 
-  /// What the body may return, as JSDoc sees it.
+  pub fn is_typescript(&self) -> bool {
+    TS_LANGS.contains(&self.lang.as_str())
+  }
+
+  /// True when the command runs from an esbuild bundle: it imports modules,
+  /// or it is TypeScript.
+  pub fn needs_bundle(&self) -> bool {
+    self.is_typescript() || !self.imports.trim().is_empty()
+  }
+
+  /// The generated file's extension.
+  pub fn extension(&self) -> &'static str {
+    if self.is_typescript() { "ts" } else { "js" }
+  }
+
+  /// What the body may return.
   fn returns(&self) -> String {
     let t = match self.returntype.as_str() {
       "NULL" => "any",
@@ -130,38 +153,115 @@ impl JsSource {
     };
     if self.is_async() { format!("Promise<{}>", t) } else { format!("{} | PromiseLike<{}>", t, t) }
   }
+
+  fn import_lines(&self) -> usize {
+    if self.imports.trim().is_empty() { 0 } else { self.imports.lines().count() }
+  }
+}
+
+/// The TypeScript language tags.
+pub const TS_LANGS: [&str; 2] = ["typescript", "ts"];
+
+/// True for a command `type` the JavaScript engine runs: JavaScript or
+/// TypeScript.
+pub fn is_lang(t: &str) -> bool {
+  JS_LANGS.contains(&t) || TS_LANGS.contains(&t)
+}
+
+/// The key of a command or implementation record that names (or holds) the
+/// code: the record's own type first, then any JavaScript/TypeScript key.
+fn record_key(record: &ndata::dataobject::DataObject, typ: &str) -> Option<&'static str> {
+  let all = [JS_LANGS[0], JS_LANGS[1], TS_LANGS[0], TS_LANGS[1]];
+  if let Some(k) = all.iter().copied().find(|k| *k == typ) {
+    if record.has(k) { return Some(k); }
+  }
+  all.iter().copied().find(|k| record.has(k))
+}
+
+/// Where the parts of a generated command file are, in file lines (1-based).
+#[derive(Debug, Clone, Copy)]
+pub struct Layout {
+  pub imports_first: usize,
+  pub imports_lines: usize,
+  pub body_first: usize,
+  pub body_lines: usize,
+}
+
+impl Layout {
+  /// The author's own name for a line of the generated file.
+  pub fn describe(&self, file_line: usize) -> String {
+    if self.imports_lines > 0 && file_line >= self.imports_first && file_line < self.imports_first + self.imports_lines {
+      format!("imports line {}", file_line - self.imports_first + 1)
+    } else if file_line >= self.body_first && file_line < self.body_first + self.body_lines {
+      format!("body line {}", file_line - self.body_first + 1)
+    } else if file_line >= self.body_first + self.body_lines {
+      "the end of the body".to_string()
+    } else {
+      format!("line {} of the generated file", file_line)
+    }
+  }
+}
+
+/// The layout of `command_file(src, ..)`.
+pub fn layout(src: &JsSource) -> Layout {
+  let file = command_file(src, "flowlang.d.ts");
+  let lines: Vec<&str> = file.lines().collect();
+  let imports_first = lines.iter().position(|l| l.starts_with("/// <reference")).map(|i| i + 2).unwrap_or(1);
+  let header = lines.iter().position(|l| l.starts_with("export default ") && l.ends_with('{')).map(|i| i + 1).unwrap_or(0);
+  Layout {
+    imports_first,
+    imports_lines: src.import_lines(),
+    body_first: header + 1,
+    body_lines: src.body.lines().count().max(1),
+  }
 }
 
 /// The lines before the body in a generated command file: body line N is
-/// file line `COMMAND_HEADER_LINES + N`.
+/// file line `command_header_lines + N`.
 pub fn command_header_lines(src: &JsSource) -> usize {
-  command_file(src, "flowlang.d.ts").lines().position(|l| l.ends_with(") {")).map(|i| i + 1).unwrap_or(0)
+  layout(src).body_first - 1
 }
 
-/// The generated `// @ts-check` file for a command; `dts` is the path of
-/// flowlang.d.ts relative to it.
+/// The generated file for a command: `// @ts-check` JavaScript with JSDoc
+/// types from the declared parameters and return type, or TypeScript with
+/// the same types written out. The command's imports come first, then the
+/// command as the module's default export. `dts` is the path of
+/// flowlang.d.ts relative to the file. esbuild bundles this file, tsc checks
+/// it, and editors open it.
 pub fn command_file(src: &JsSource, dts: &str) -> String {
   let name = if is_identifier(&src.name) { src.name.as_str() } else { "command" };
   let mut s = String::new();
-  s.push_str("// @ts-check\n");
+  if !src.is_typescript() { s.push_str("// @ts-check\n"); }
   s.push_str("// Generated by flowb from the store: edit the command, not this file.\n");
   s.push_str(&format!("/// <reference path=\"{}\" />\n", dts));
-  s.push_str("/**\n");
-  for (p, t) in &src.params {
-    s.push_str(&format!(" * @param {{{}}} {}\n", ts_type(t), p));
+  if src.import_lines() > 0 {
+    s.push_str(src.imports.trim_end_matches('\n'));
+    s.push('\n');
   }
-  s.push_str(&format!(" * @returns {{{}}}\n", src.returns()));
-  s.push_str(" */\n");
-  let names: Vec<&str> = src.params.iter().map(|(p, _)| p.as_str()).collect();
-  s.push_str(&format!("{}function {}({}) {{\n", if src.is_async() { "async " } else { "" }, name, names.join(", ")));
+  let asynchronous = if src.is_async() { "async " } else { "" };
+  if src.is_typescript() {
+    let params: Vec<String> = src.params.iter().map(|(p, t)| format!("{}: {}", p, ts_type(t))).collect();
+    s.push_str(&format!("export default {}function {}({}): {} {{\n", asynchronous, name, params.join(", "), src.returns()));
+  } else {
+    s.push_str("/**\n");
+    for (p, t) in &src.params {
+      s.push_str(&format!(" * @param {{{}}} {}\n", ts_type(t), p));
+    }
+    s.push_str(&format!(" * @returns {{{}}}\n", src.returns()));
+    s.push_str(" */\n");
+    let names: Vec<&str> = src.params.iter().map(|(p, _)| p.as_str()).collect();
+    s.push_str(&format!("export default {}function {}({}) {{\n", asynchronous, name, names.join(", ")));
+  }
   s.push_str(&src.body);
   if !src.body.ends_with('\n') { s.push('\n'); }
   s.push_str("}\n");
   s
 }
 
-/// flowb's build step for a JavaScript command: writes its generated file
-/// and refreshes flowlang.d.ts. Returns false: there is no cargo artifact.
+/// flowb's build step for a JavaScript or TypeScript command: writes its
+/// generated file, refreshes flowlang.d.ts, and - for a command that needs
+/// one, when esbuild is installed - its bundle. Returns false: there is no
+/// cargo artifact.
 pub(crate) fn build_js_command(src_root: &Path, lib: &str, ctl: &str, cmd: &str, store: &DataStore) -> bool {
   let id = store.lookup_cmd_id(lib, ctl, cmd);
   let Some(src) = JsSource::read(store, lib, &id) else {
@@ -169,8 +269,15 @@ pub(crate) fn build_js_command(src_root: &Path, lib: &str, ctl: &str, cmd: &str,
     return false;
   };
   let dir = src_root.join(lib).join(ctl);
-  write_if_changed(&dir.join(format!("{}.js", cmd)), &command_file(&src, "../../flowlang.d.ts"));
+  write_if_changed(&dir.join(format!("{}.{}", cmd, src.extension())), &command_file(&src, "../../flowlang.d.ts"));
   write_if_changed(&src_root.join("flowlang.d.ts"), &flowlang_dts(store));
+  if src.needs_bundle() {
+    match bundle(store, src_root, lib, ctl, cmd, &src) {
+      Ok(_) => {}
+      Err(BundleError::NoEsbuild) => println!("NOTE: {}:{}:{} needs esbuild to run (npm install esbuild next to data/)", lib, ctl, cmd),
+      Err(e) => println!("WARNING: {}:{}:{} does not bundle: {}", lib, ctl, cmd, e.text(&layout(&src))),
+    }
+  }
   false
 }
 
@@ -180,6 +287,270 @@ fn write_if_changed(path: &Path, content: &str) {
   if let Err(e) = std::fs::write(path, content) {
     println!("WARNING: could not write {:?}: {}", path, e);
   }
+}
+
+// ---- bundles --------------------------------------------------------------------------------
+
+/// A command bundled by esbuild: one script that defines
+/// `__flowlang_module` (the generated file's exports) with every import
+/// inlined, and its source map, whose sources are named
+/// `flowlang:<lib>/<ctl>/<cmd>.<ext>` (the generated file) and
+/// `npm:<package path>` (code from node_modules).
+#[derive(Debug, Clone)]
+pub struct Bundle {
+  /// Identifies the inputs: changes when the command, its imports or the
+  /// installed packages change.
+  pub key: String,
+  pub code: String,
+  pub map: Vec<u8>,
+  /// The generated file's name in the source map and in stack traces.
+  pub source_name: String,
+}
+
+/// An esbuild diagnostic: where in the generated file (if known), what, and
+/// esbuild's notes - rewritten where its advice (bundler flags) does not
+/// apply to a command.
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+  pub line: Option<usize>,
+  pub column: Option<usize>,
+  pub message: String,
+  pub notes: Vec<String>,
+}
+
+impl Diagnostic {
+  /// The message, the note lines indented beneath it.
+  pub fn full(&self, place: Option<&str>) -> String {
+    let mut s = self.message.clone();
+    if let Some(p) = place { s.push_str(&format!(" ({})", p)); }
+    for n in &self.notes { s.push_str("\n  "); s.push_str(n); }
+    s
+  }
+}
+
+/// esbuild's note, or what to say instead.
+fn note(text: &str, message: &str) -> Option<String> {
+  let package = message.strip_prefix("Could not resolve \"").and_then(|m| m.split('"').next()).unwrap_or("");
+  if text.contains("is built into node") {
+    Some(format!("\"{}\" is one of Node's built-in modules, which the engine does not have: use fetch and the web APIs, or a command in Rust or Python for files and processes.", package))
+  } else if text.starts_with("You can mark the path") && text.contains("as external") {
+    let name = package.split('/').take(if package.starts_with('@') { 2 } else { 1 }).collect::<Vec<_>>().join("/");
+    if package.starts_with('.') || package.starts_with('/') {
+      Some("Imports resolve from node_modules next to data/; a relative path is relative to the generated file.".to_string())
+    } else {
+      Some(format!("Install it next to data/: npm install {}", name))
+    }
+  } else if text.contains("--platform") || text.contains("--packages") {
+    None
+  } else {
+    Some(text.to_string())
+  }
+}
+
+#[derive(Debug, Clone)]
+pub enum BundleError {
+  /// No esbuild: `$FLOWLANG_ESBUILD`, `node_modules/.bin/esbuild` next to
+  /// `data/`, or `esbuild` on the PATH.
+  NoEsbuild,
+  /// esbuild ran and reported errors.
+  Failed(Vec<Diagnostic>),
+  /// Anything else: a file that could not be written or read.
+  Other(String),
+}
+
+impl BundleError {
+  /// The error as one message, with locations in the author's terms.
+  pub fn text(&self, layout: &Layout) -> String {
+    match self {
+      BundleError::NoEsbuild => "the command imports modules or is TypeScript, so it runs from an esbuild bundle, and esbuild is not installed: run `npm install esbuild` next to data/ (or set FLOWLANG_ESBUILD)".to_string(),
+      BundleError::Other(e) => e.clone(),
+      BundleError::Failed(ds) => ds.iter().map(|d| d.full(d.line.map(|l| layout.describe(l)).as_deref()))
+        .collect::<Vec<_>>().join("\n"),
+    }
+  }
+}
+
+/// The bundle for a command: from memory or the bundle file when its inputs
+/// are unchanged, else freshly built with esbuild (which also writes the
+/// generated file). `src_root` is the library crate's `src/`.
+pub fn bundle(store: &DataStore, src_root: &Path, lib: &str, ctl: &str, cmd: &str, src: &JsSource) -> Result<std::sync::Arc<Bundle>, BundleError> {
+  use std::collections::HashMap;
+  use std::sync::{Arc, Mutex};
+  static CACHE: Mutex<Option<HashMap<std::path::PathBuf, Arc<Bundle>>>> = Mutex::new(None);
+  static BUILDING: Mutex<()> = Mutex::new(());
+
+  let dir = src_root.join(lib).join(ctl);
+  let entry = dir.join(format!("{}.{}", cmd, src.extension()));
+  let out = dir.join(format!("{}.bundle.js", cmd));
+  let key = bundle_key(store, src);
+  let source_name = format!("flowlang:{}/{}/{}.{}", lib, ctl, cmd, src.extension());
+  let cached = |out: &Path| -> Option<Arc<Bundle>> {
+    let guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().and_then(|c| c.get(out)).filter(|b| b.key == key).cloned()
+  };
+  if let Some(b) = cached(&out) { return Ok(b); }
+
+  let _building = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
+  if let Some(b) = cached(&out) { return Ok(b); }
+  let banner = format!("// flowlang-bundle {}", key);
+  let fresh = read_to_string(&out).ok().filter(|t| t.lines().next() == Some(banner.as_str()));
+  let text = match fresh {
+    Some(t) => t,
+    None => {
+      write_if_changed(&entry, &command_file(src, "../../flowlang.d.ts"));
+      write_if_changed(&src_root.join("flowlang.d.ts"), &flowlang_dts(store));
+      run_esbuild(store, &entry, &out, &banner)?;
+      read_to_string(&out).map_err(|e| BundleError::Other(format!("could not read the bundle {}: {}", out.display(), e)))?
+    }
+  };
+  let file_name = format!("{}.{}", cmd, src.extension());
+  let b = Arc::new(split_bundle(&text, &file_name, &source_name, key.clone())?);
+  let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+  guard.get_or_insert_with(HashMap::new).insert(out, b.clone());
+  Ok(b)
+}
+
+/// Hashes everything a bundle depends on: the command's code and
+/// declarations, and the installed packages (the npm lockfiles' size and
+/// modification time).
+fn bundle_key(store: &DataStore, src: &JsSource) -> String {
+  use std::collections::hash_map::DefaultHasher;
+  use std::hash::{Hash, Hasher};
+  let mut h = DefaultHasher::new();
+  (&src.lang, &src.imports, &src.params, &src.returntype, &src.body, &src.name).hash(&mut h);
+  if let Some(parent) = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf())) {
+    for f in ["package-lock.json", "node_modules/.package-lock.json", "yarn.lock", "pnpm-lock.yaml"] {
+      if let Ok(m) = std::fs::metadata(parent.join(f)) {
+        (f, m.len(), m.modified().ok()).hash(&mut h);
+      }
+    }
+  }
+  format!("{:016x}", h.finish())
+}
+
+fn esbuild_candidates(store: &DataStore) -> Vec<std::path::PathBuf> {
+  let mut v: Vec<std::path::PathBuf> = Vec::new();
+  if let Ok(t) = std::env::var("FLOWLANG_ESBUILD") { v.push(t.into()); }
+  if let Some(parent) = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf())) {
+    v.push(parent.join("node_modules").join(".bin").join("esbuild"));
+  }
+  v.push("esbuild".into());
+  v
+}
+
+/// The node_modules next to data/, for esbuild's NODE_PATH.
+fn node_modules(store: &DataStore) -> Option<std::path::PathBuf> {
+  store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.join("node_modules")))
+}
+
+fn run_esbuild(store: &DataStore, entry: &Path, out: &Path, banner: &str) -> Result<(), BundleError> {
+  for exe in esbuild_candidates(store) {
+    if exe.components().count() > 1 && !exe.exists() { continue; }
+    let mut command = std::process::Command::new(&exe);
+    command.arg(entry)
+      .args(["--bundle", "--format=iife", "--global-name=__flowlang_module", "--platform=neutral",
+             "--main-fields=module,main", "--target=es2022", "--sourcemap=inline", "--sources-content=false",
+             "--log-level=error", "--color=false", "--log-limit=0"])
+      .arg(format!("--banner:js={}", banner))
+      .arg(format!("--outfile={}", out.display()));
+    if let Some(nm) = node_modules(store) { command.env("NODE_PATH", nm); }
+    let output = match command.output() {
+      Ok(o) => o,
+      Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+      Err(e) => return Err(BundleError::Other(format!("could not start {}: {}", exe.display(), e))),
+    };
+    if output.status.success() { return Ok(()); }
+    let text = String::from_utf8_lossy(&output.stderr).to_string();
+    let file = entry.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    let ds = parse_esbuild_errors(&text, &file);
+    return Err(if ds.is_empty() { BundleError::Other(format!("esbuild failed: {}", text.trim())) } else { BundleError::Failed(ds) });
+  }
+  Err(BundleError::NoEsbuild)
+}
+
+/// esbuild's error report, as diagnostics:
+///
+/// ```text
+/// ✘ [ERROR] Could not resolve "fs"
+///
+///     src/lib/ctl/cmd.js:3:15:
+///       3 │ import fs from "fs";
+///         ╵                ~~~~
+///
+///   The package "fs" wasn't found on the file system but is built into node. ...
+/// ```
+///
+/// A location in the generated file (`file`) keeps its line; a note is
+/// appended to its error's message.
+pub(crate) fn parse_esbuild_errors(text: &str, file: &str) -> Vec<Diagnostic> {
+  let mut out: Vec<Diagnostic> = Vec::new();
+  for line in text.lines() {
+    let t = line.trim();
+    if let Some(msg) = t.strip_prefix("✘ [ERROR] ").or_else(|| t.strip_prefix("X [ERROR] ")) {
+      out.push(Diagnostic { line: None, column: None, message: msg.to_string(), notes: Vec::new() });
+      continue;
+    }
+    let Some(d) = out.last_mut() else { continue };
+    if t.is_empty() || t.contains('│') || t.contains('╵') || t.contains('╷') { continue; }
+    // A location: "path:line:col:".
+    if let Some(loc) = t.strip_suffix(':') {
+      let mut it = loc.rsplitn(3, ':');
+      if let (Some(col), Some(ln), Some(path)) = (it.next(), it.next(), it.next()) {
+        if let (Ok(ln), Ok(col)) = (ln.parse::<usize>(), col.parse::<usize>()) {
+          if d.line.is_none() && (path.ends_with(file) || path.replace('\\', "/").ends_with(file)) {
+            d.line = Some(ln);
+            d.column = Some(col);
+          } else if d.line.is_none() {
+            d.message.push_str(&format!(" (in {}:{}:{})", path.rsplit_once("node_modules/").map(|x| x.1).unwrap_or(path), ln, col));
+          }
+          continue;
+        }
+      }
+    }
+    // A note: a paragraph may wrap over several lines.
+    let fresh = line.starts_with("  ") && !line.starts_with("    ") || d.notes.is_empty();
+    if fresh {
+      d.notes.push(t.to_string());
+    } else if let Some(last) = d.notes.last_mut() {
+      last.push(' ');
+      last.push_str(t);
+    }
+  }
+  for d in out.iter_mut() {
+    let message = d.message.clone();
+    d.notes = d.notes.iter().filter_map(|n| note(n, &message)).collect();
+  }
+  out
+}
+
+/// Splits esbuild's output into the code and its inline source map, renaming
+/// the map's sources: the generated file as `source_name`, packages as
+/// `npm:<path inside node_modules>`.
+fn split_bundle(text: &str, file_name: &str, source_name: &str, key: String) -> Result<Bundle, BundleError> {
+  const MARK: &str = "//# sourceMappingURL=data:application/json;base64,";
+  let (code, encoded) = text.rsplit_once(MARK)
+    .ok_or_else(|| BundleError::Other("the bundle has no inline source map".to_string()))?;
+  let raw = std::panic::catch_unwind(|| crate::base64::Base64::decode(encoded.trim().chars().collect()))
+    .map_err(|_| BundleError::Other("the bundle's source map is not valid base64".to_string()))?;
+  let json = String::from_utf8(raw).map_err(|_| BundleError::Other("the bundle's source map is not UTF-8".to_string()))?;
+  let mut map = ndata::dataobject::DataObject::try_from_string(&json)
+    .map_err(|_| BundleError::Other("the bundle's source map is not JSON".to_string()))?;
+  let mut renamed = ndata::dataarray::DataArray::new();
+  if map.has("sources") {
+    for s in map.get_array("sources").objects() {
+      let s = s.string();
+      let name = if s == file_name || s.ends_with(&format!("/{}", file_name)) {
+        source_name.to_string()
+      } else if let Some((_, inside)) = s.rsplit_once("node_modules/") {
+        format!("npm:{}", inside)
+      } else {
+        format!("{}/{}", source_name.rsplit_once('/').map(|x| x.0).unwrap_or(source_name), s.trim_start_matches("./"))
+      };
+      renamed.push_string(&name);
+    }
+  }
+  map.put_array("sources", renamed);
+  Ok(Bundle { key, code: code.to_string(), map: map.to_string().into_bytes(), source_name: source_name.to_string() })
 }
 
 /// flowlang.d.ts: the hand-written base plus `FlowlangApi`, a typed tree of
@@ -236,7 +607,7 @@ fn api_methods(store: &DataStore, lib: &str, ctl: &str, ctl_id: &str) -> String 
     let cmd = store.get_data(lib, &id).get_object("data");
     if !cmd.has("type") { continue; }
     let typ = cmd.get_string("type");
-    let impl_key = if cmd.has(&typ) { typ.clone() } else if let Some(k) = JS_LANGS.iter().find(|k| cmd.has(k)) { k.to_string() } else { continue };
+    let impl_key = if cmd.has(&typ) { typ.clone() } else if let Some(k) = record_key(&cmd, &typ) { k.to_string() } else { continue };
     let impl_data = store.get_data(lib, &cmd.get_string(&impl_key)).get_object("data");
     let mut params = Vec::new();
     let mut plain = true;
@@ -251,8 +622,7 @@ fn api_methods(store: &DataStore, lib: &str, ctl: &str, ctl_id: &str) -> String 
     let sig = if plain { params.join(", ") } else { "...args: any[]".to_string() };
     let returntype = if impl_data.has("returntype") { impl_data.get_string("returntype") } else { String::new() };
     let mut ret = match returntype.as_str() { "" | "NULL" => "any", t => ts_type(t) }.to_string();
-    let is_js = JS_LANGS.contains(&typ.as_str());
-    if is_js && JS_LANGS.iter().any(|k| impl_data.has(k) && uses_await(&impl_data.get_string(k))) {
+    if is_lang(&typ) && JS_LANGS.iter().chain(TS_LANGS.iter()).any(|k| impl_data.has(k) && uses_await(&impl_data.get_string(k))) {
       ret = format!("Promise<{}>", ret);
     }
     out.push_str(&format!("      /** {}:{}:{} ({}) */\n      {}({}): {};\n", lib, ctl, name, typ, method, sig, ret));
@@ -267,8 +637,10 @@ mod tests {
   fn src(params: &[(&str, &str)], returntype: &str, body: &str) -> JsSource {
     JsSource {
       name: "cmd".into(),
+      lang: "javascript".into(),
       params: params.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
       returntype: returntype.into(),
+      imports: String::new(),
       body: body.into(),
     }
   }
@@ -287,9 +659,9 @@ mod tests {
     assert!(f.starts_with("// @ts-check\n"), "{}", f);
     assert!(f.contains(" * @param {string} who\n * @param {number} n\n"), "{}", f);
     assert!(f.contains(" * @returns {Record<string, any> | PromiseLike<Record<string, any>>}\n"), "{}", f);
-    assert!(f.contains("\nfunction cmd(who, n) {\nreturn {who, n};\n}\n"), "{}", f);
+    assert!(f.contains("\nexport default function cmd(who, n) {\nreturn {who, n};\n}\n"), "{}", f);
     let a = command_file(&src(&[], "String", "return await f()"), "x.d.ts");
-    assert!(a.contains(" * @returns {Promise<string>}\n") && a.contains("\nasync function cmd() {\n"), "{}", a);
+    assert!(a.contains(" * @returns {Promise<string>}\n") && a.contains("\nexport default async function cmd() {\n"), "{}", a);
   }
 
   /// The generated declarations are valid TypeScript for this crate's own
@@ -314,6 +686,48 @@ mod tests {
       Err(e) => panic!("tsc: {}", e),
       Ok(o) => assert!(o.status.success(), "{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)),
     }
+  }
+
+  #[test]
+  fn imports_come_first_and_lines_are_described_in_the_authors_terms() {
+    let mut s = src(&[("n", "Integer")], "Any", "const x = _.range(n);\nreturn x;");
+    s.imports = "import _ from \"lodash\";\nimport { a } from \"./a.js\";".into();
+    let f = command_file(&s, "flowlang.d.ts");
+    let lines: Vec<&str> = f.lines().collect();
+    let l = layout(&s);
+    assert_eq!(lines[l.imports_first - 1], "import _ from \"lodash\";", "{}", f);
+    assert_eq!(lines[l.imports_first], "import { a } from \"./a.js\";");
+    assert_eq!(lines[l.body_first - 1], "const x = _.range(n);");
+    assert_eq!(l.describe(l.imports_first + 1), "imports line 2");
+    assert_eq!(l.describe(l.body_first + 1), "body line 2");
+    assert_eq!(l.describe(l.body_first + 2), "the end of the body");
+    assert!(s.needs_bundle() && !src(&[], "Any", "return 1").needs_bundle());
+  }
+
+  #[test]
+  fn typescript_writes_its_types_out() {
+    let mut s = src(&[("who", "String"), ("n", "Integer")], "String", "return await f(who, n)");
+    s.lang = "typescript".into();
+    let f = command_file(&s, "flowlang.d.ts");
+    assert!(!f.contains("@ts-check") && !f.contains("@param"), "{}", f);
+    assert!(f.contains("\nexport default async function cmd(who: string, n: number): Promise<string> {\nreturn await f(who, n)\n}\n"), "{}", f);
+    assert_eq!(s.extension(), "ts");
+    assert!(s.needs_bundle());
+    assert_eq!(layout(&s).describe(layout(&s).body_first), "body line 1");
+  }
+
+  #[test]
+  fn esbuild_errors_become_diagnostics() {
+    let text = "✘ [ERROR] Could not resolve \"fs\"\n\n    src/lib/ctl/cmd.js:4:15:\n      4 │ import fs from \"fs\";\n        ╵                ~~~~\n\n  The package \"fs\" wasn't found on the file system but is built into node.\n\n✘ [ERROR] Expected \";\" but found \")\"\n\n    node_modules/x/index.js:1:2:\n      1 │ a)\n\n";
+    let d = parse_esbuild_errors(text, "cmd.js");
+    assert_eq!(d.len(), 2, "{:?}", d);
+    assert_eq!((d[0].line, d[0].column), (Some(4), Some(15)));
+    assert_eq!(d[0].message, "Could not resolve \"fs\"");
+    assert_eq!(d[0].notes.len(), 1, "{:?}", d[0]);
+    assert!(d[0].notes[0].contains("Node's built-in modules") && !d[0].notes[0].contains("--platform"), "{:?}", d[0]);
+    assert_eq!(d[0].full(Some("imports line 1")).lines().next(), Some("Could not resolve \"fs\" (imports line 1)"));
+    assert_eq!(d[1].line, None);
+    assert!(d[1].message.contains("(in x/index.js:1:2)"), "{:?}", d[1]);
   }
 
   #[test]

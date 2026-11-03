@@ -26,6 +26,7 @@ fn ret(body: &str) -> Result<DataObject, String> {
     returntype: "Any".to_string(),
     args: DataObject::new(),
     timeout: None,
+    module: None,
   })
 }
 

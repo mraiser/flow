@@ -59,9 +59,9 @@ impl Command {
         return true;
       },
       // "js" and "javascript" are the same language (newbound's dev.code
-      // writes the latter).
+      // writes the latter); "typescript"/"ts" run in the same engine.
       #[cfg(feature="javascript_runtime")]
-      "js" | "javascript" => {
+      "js" | "javascript" | "typescript" | "ts" => {
         return JSCmd::exists(lib, id);
       },
       "python" => {
@@ -115,7 +115,7 @@ impl Command {
         Source::Java(JavaCmd::new(lib, id))
       },
       #[cfg(feature="javascript_runtime")]
-      "js" | "javascript" => {
+      "js" | "javascript" | "typescript" | "ts" => {
         Source::JavaScript(JSCmd::new(lib, id))
       },
       "python" => {
