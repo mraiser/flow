@@ -2,11 +2,19 @@
 //! (fetch, URL, crypto, performance). `jsweb.js` builds the standard
 //! classes on these; the engine installs it before its prelude.
 //!
-//! `fetch` runs the request with `ureq` on tokio's blocking pool, so the
-//! engine keeps serving other calls while a request is in flight. TLS
-//! verification uses the operating system's trust store (and
-//! `SSL_CERT_FILE`); `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` /
-//! `NO_PROXY` are honoured. A body is read whole (up to 256 MiB).
+//! `fetch` runs the request on tokio's blocking pool, so the engine keeps
+//! serving other calls while a request is in flight. `blocking_fetch` is the
+//! only place flowlang makes an outbound HTTP request, and the only code that
+//! knows the client: it is interim - outbound HTTP(S) is to be consolidated
+//! into a newbound control with no third-party code - so it is kept small
+//! and behind that one function. Today it is `ureq` with rustls: TLS is
+//! verified against Mozilla's root certificates, or - the OpenSSL
+//! convention - against the certificates in `SSL_CERT_FILE` instead, when it
+//! is set (for a private CA or an intercepting proxy). `HTTPS_PROXY` /
+//! `HTTP_PROXY` / `ALL_PROXY` / `NO_PROXY` are honoured. Responses are not
+//! decompressed (no `Accept-Encoding` is sent unless the command sends one).
+//! A body is read whole (up to 256 MiB). Client side only: newbound's own
+//! server does not do TLS (a reverse proxy does).
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -173,11 +181,29 @@ fn agent() -> &'static ureq::Agent {
       .http_status_as_error(false)
       .allow_non_standard_methods(true)
       .save_redirect_history(true)
-      .tls_config(ureq::tls::TlsConfig::builder().root_certs(ureq::tls::RootCerts::PlatformVerifier).build())
+      .tls_config(ureq::tls::TlsConfig::builder().root_certs(root_certs()).build())
       .proxy(ureq::Proxy::try_from_env())
       .build()
       .into()
   })
+}
+
+/// Mozilla's roots, or the certificates in `SSL_CERT_FILE` instead when it
+/// is set and holds any (as OpenSSL treats it).
+fn root_certs() -> ureq::tls::RootCerts {
+  if let Some(path) = std::env::var("SSL_CERT_FILE").ok().filter(|p| !p.trim().is_empty()) {
+    match std::fs::read(&path) {
+      Ok(pem) => {
+        let certs: Vec<_> = ureq::tls::parse_pem(&pem)
+          .filter_map(|item| match item { Ok(ureq::tls::PemItem::Certificate(c)) => Some(c), _ => None })
+          .collect();
+        if !certs.is_empty() { return ureq::tls::RootCerts::new_with_certs(&certs); }
+        eprintln!("[js] SSL_CERT_FILE {} holds no certificates: fetch uses Mozilla's roots", path);
+      }
+      Err(e) => eprintln!("[js] SSL_CERT_FILE {} cannot be read ({}): fetch uses Mozilla's roots", path, e),
+    }
+  }
+  ureq::tls::RootCerts::WebPki
 }
 
 fn blocking_fetch(url: &str, method: &str, headers: &[(String, String)], body: Option<Vec<u8>>, redirect: &str) -> Result<FetchResponse, String> {

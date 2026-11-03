@@ -473,8 +473,9 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
   Web platform APIs are built in: `fetch` (with `Headers`, `Request`,
   `Response` and `AbortController`; requests run off the engine thread, TLS
-  through the OS trust store and `SSL_CERT_FILE`, `*_PROXY`/`NO_PROXY`
-  honoured, bodies read whole), `URL`/`URLSearchParams`,
+  against Mozilla's roots or `SSL_CERT_FILE`'s certificates, `*_PROXY`/
+  `NO_PROXY` honoured, bodies read whole and not decompressed; a small
+  interim client, `ureq` with rustls, behind one function), `URL`/`URLSearchParams`,
   `TextEncoder`/`TextDecoder`, `atob`/`btoa`, `crypto.getRandomValues` /
   `randomUUID`, `structuredClone`, `performance.now`, `EventTarget` and
   `DOMException`. Node's built-ins (`fs`, `process`, `Buffer`, `require`) are

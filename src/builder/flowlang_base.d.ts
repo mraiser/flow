@@ -201,7 +201,8 @@ declare class Response implements Body {
   clone(): Response;
 }
 /**
- * HTTP(S) through the OS trust store and the *_PROXY variables. An HTTP error
- * status is a Response (check `ok`); a network failure rejects with TypeError.
+ * HTTP(S): TLS against Mozilla's roots (or SSL_CERT_FILE's), the *_PROXY
+ * variables honoured, responses not decompressed. An HTTP error status is a
+ * Response (check `ok`); a network failure rejects with TypeError.
  */
 declare function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;

@@ -41,7 +41,10 @@ jni = { version = "^0.21.1", features = ["invocation"], optional = true }
 pyo3 = { version = "0.30", features = ["auto-initialize"], optional = true }
 deno_core = { version = "0.413", optional = true }
 tokio = { version = "1", features = ["rt", "time", "sync"], optional = true }
-ureq = { version = "3.5", features = ["platform-verifier"], optional = true }
+# fetch's HTTP client, kept small: rustls + Mozilla's roots only (no gzip,
+# no platform verifier). Interim: outbound HTTP(S) is to move into a
+# newbound control with no third-party code.
+ureq = { version = "3.5", default-features = false, features = ["rustls"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
