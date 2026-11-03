@@ -54,7 +54,7 @@ The `flowmcp` binary is a Model Context Protocol server speaking JSON-RPC over
 stdin/stdout. It implements `initialize`, `tools/list`, `tools/call`,
 `prompts/list`, and `resources/list`. Tools are named
 `library-control-command`, and `tools/call` invokes the corresponding Flow,
-Rust, or Python command directly.
+Rust, Python, or JavaScript command directly.
 
 A real session (run from a directory containing a `data/` folder; note that
 requests must carry a numeric `id`):
@@ -466,7 +466,8 @@ cargo build --features java_runtime        # loads a JVM via JNI
   than disabling JavaScript. `console.log`/`info`/`debug` write to stdout
   (stderr under `flowmcp`, whose stdout is the JSON-RPC channel) and
   `console.warn`/`error`/`trace` to stderr, as complete lines labelled with
-  the command: `[js testflow:testflow:report] building totals`.
+  the command: `[js testflow:testflow:report] building totals` (a timer's
+  output carries the label of the command that set it, whenever it fires).
 
   `jscmd::check(lib, id)` checks a command without running it: a V8 syntax
   check (esbuild's bundle, for a command with imports or in TypeScript),
@@ -580,13 +581,14 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp
 ```
 
 The suite covers JavaScript commands (with `javascript_runtime`: the result
 envelope, value conversion, error reports, async commands and timers, calls
 that await without holding each other up, time limits, `flowlang.call`
-across languages and back into JavaScript, records under both language tags, `check` with and
+across languages and back into JavaScript, JavaScript tools over a real
+`flowmcp` session with stdout kept to JSON-RPC, records under both language tags, `check` with and
 without tsc, `flow jstest`, `fetch` against a local server and the other web
 APIs, and imports — CommonJS and ESM packages, source-mapped errors,
 resolution errors — and TypeScript commands, through esbuild), the builder's wrapper guarantees, synchro ordering under

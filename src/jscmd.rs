@@ -1045,10 +1045,18 @@ const PRELUDE: &str = r#"
   });
 
   // Timers. A timer's callback runs on the engine's event loop: during a
-  // call that awaits, or while the engine waits for its next call.
+  // call that awaits, or while the engine waits for its next call. What it
+  // prints is labelled with the command that set it, whichever call is
+  // running when it fires.
   const timer = (repeat) => (callback, delay, ...args) => {
     if (typeof callback !== "function") throw new TypeError("the callback must be a function");
-    return core.createTimer(callback, delay, args.length ? args : undefined, repeat, true, false);
+    const label = state.label;
+    const run = (...a) => {
+      const outer = state.label;
+      state.label = label;
+      try { return callback(...a); } finally { state.label = outer; }
+    };
+    return core.createTimer(run, delay, args.length ? args : undefined, repeat, true, false);
   };
   const clear = (t) => { if (t && typeof t === "object") core.cancelTimer(t); };
   define("setTimeout", timer(false));
