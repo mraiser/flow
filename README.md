@@ -481,7 +481,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
   typed `flowlang.api` tree of every command in the store) and each command
   as `<lib>/<ctl>/<cmd>.js` into the library's crate `src/`, for editors.
 
-  `flow jstest [files or directories]` runs `*.test.js` and `*.test.ts` files in the same
+  `flow jstest [--no-check] [files or directories]` runs `*.test.js` and `*.test.ts` files in the same
   engine, so tests call any command; each file gets `test(name, fn)`
   (`fn` may be async; `test.skip`) and `assert` (`equal`, `notEqual`,
   `deepEqual`, `throws`, `rejects`). Exit status: 0 all passed, 1 a failure,
@@ -491,8 +491,19 @@ cargo build --features java_runtime        # loads a JVM via JNI
   and then runs from an esbuild bundle, with its lines, top-level `await`
   and `test`/`assert` unchanged; an import that does not resolve fails the
   file at its own line. A `*.test.ts` file is TypeScript and always runs
-  that way, so it needs esbuild; as for TypeScript commands, esbuild strips
-  its types without checking them.
+  that way, so it needs esbuild.
+
+  Before anything runs, tsc type-checks every `*.test.ts` file (strictly)
+  and every `*.test.js` that starts with `// @ts-check` (as JavaScript), in
+  one run, in place: against `flowlang.d.ts` (so `flowlang.api` calls are
+  checked against the callees' declared parameters), with `test`/`assert`
+  typed (`assert.equal`'s two sides must be comparable), top-level `await`
+  allowed, and `flowlang:` imports resolved to their commands. A file with
+  type errors is reported at its lines and its tests do not run; errors in
+  a helper file the tests import are reported under its name, while an
+  imported command's are left to its own check. `--no-check` skips this.
+  tsc is found as for `jscmd::check`; without it, a note says the files
+  were not checked and the tests run.
 
   Web platform APIs are built in: `fetch` (with `Headers`, `Request`,
   `Response` and `AbortController`; requests run off the engine thread, TLS

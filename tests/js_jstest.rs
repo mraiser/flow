@@ -227,7 +227,8 @@ fn typescript_test_files_run() {
   std::fs::write(dir.join("broken.test.ts"), "test('t', () => {});\n\nconst x: = 1;\n").unwrap();
   // Found beside the JavaScript ones.
   std::fs::write(dir.join("plain.test.js"), "test('plain', () => assert.ok(true));\n").unwrap();
-  let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").arg(&dir).current_dir(env!("CARGO_MANIFEST_DIR")).output().unwrap();
+  // The run itself: the type check has a test of its own.
+  let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").arg("--no-check").arg(&dir).current_dir(env!("CARGO_MANIFEST_DIR")).output().unwrap();
   let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
   let _ = std::fs::remove_dir_all(&dir);
   assert_eq!(out.status.code(), Some(1), "{}", text);
@@ -236,4 +237,56 @@ fn typescript_test_files_run() {
   assert!(text.contains("broken.test.ts") && text.contains("the file failed") && text.contains("(line 3)"), "{}", text);
   assert!(text.contains("3 passed, 2 failed"), "{}", text);
   assert!(!text.contains("flowlang:jstest"), "{}", text);
+}
+
+// ---- type-checking test files (tsc), before they run ----
+
+fn have_tsc() -> bool {
+  let exe = std::env::var("FLOWLANG_TSC").unwrap_or_else(|_| "tsc".to_string());
+  Command::new(exe).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+#[test]
+fn test_files_are_type_checked() {
+  if !esbuild_or_skip() { return; }
+  let dir = std::env::temp_dir().join(format!("flowlang_jstest_tsc_{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).unwrap();
+  let w = |name: &str, src: &str| std::fs::write(dir.join(name), src).unwrap();
+  // Clean: top-level await, test.skip, assert narrowing, flowlang.api.
+  w("good.test.ts", "const ready = await Promise.resolve(1);\nconst v: string | undefined = 'x';\n\ntest('ok', () => {\n  assert(v);\n  const s: string = v;\n  assert.equal(s.length + ready, 2);\n  assert.equal(flowlang.api.testflow.testflow.test_add(1, 1), '1+1=2');\n});\ntest.skip('later', async () => {});\n");
+  w("bad.test.ts", "const n: number = 'two';\n\ntest('never runs', () => {\n  assert.equal(n, 2);\n  assert.equal(flowlang.api.testflow.testflow.test_add(1, 2), 3);\n});\n");
+  // JavaScript is checked when it asks to be.
+  w("checked.test.js", "// @ts-check\nconst s = 'x';\ntest('checked js', () => { s.nope(); });\n");
+  w("plain.test.js", "const s = 'x';\ntest('unchecked js', () => { assert.ok(typeof s.nope === 'undefined'); });\n");
+  // A helper the tests import, with a type error of its own.
+  w("helper.ts", "export const half = (n: number): number => n / 2;\nexport const wrong: string = 1;\n");
+  w("uses.test.ts", "import { half } from './helper.ts';\n\ntest('half', () => assert.equal(half(4), 2));\n");
+  let run = |extra: &[&str]| {
+    let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").args(extra).arg(&dir).current_dir(env!("CARGO_MANIFEST_DIR")).output().unwrap();
+    (out.status.code(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+  };
+  let (code, text) = run(&[]);
+  let (unchecked_code, unchecked) = run(&["--no-check"]);
+  let _ = std::fs::remove_dir_all(&dir);
+  if !have_tsc() {
+    assert!(std::env::var("FLOWLANG_REQUIRE_TSC").is_err(), "tsc is required (FLOWLANG_REQUIRE_TSC)");
+    assert!(text.contains("tsc not found, so the test files were not type-checked"), "{}", text);
+    return;
+  }
+  assert_eq!(code, Some(1), "{}", text);
+  // A file with type errors does not run, and says where they are.
+  assert!(text.contains("✗ type errors (tsc) - its tests did not run"), "{}", text);
+  assert!(text.contains("line 1:7  Type 'string' is not assignable to type 'number'."), "{}", text);
+  // assert.equal's two sides must be comparable: a string never equals 3.
+  assert!(text.contains("line 5:63  Argument of type 'number' is not assignable to parameter of type 'string'."), "{}", text);
+  assert!(text.contains("line 3:30  Property 'nope' does not exist"), "{}", text);
+  assert!(!text.contains("never runs") && !text.contains("✗ checked js") && !text.contains("✓ checked js"), "{}", text);
+  // A helper's own errors are reported, under its name.
+  assert!(text.contains("helper.ts\n  ✗ type errors (tsc), in a file the tests import:") && text.contains("line 2:14"), "{}", text);
+  assert!(text.contains("✓ ok") && text.contains("- later (skipped)") && text.contains("✓ unchecked js") && text.contains("✓ half"), "{}", text);
+  assert!(text.contains("3 passed, 3 failed, 1 skipped"), "{}", text);
+  // --no-check runs them all.
+  assert_eq!(unchecked_code, Some(1), "{}", unchecked);
+  assert!(unchecked.contains("✗ never runs") && unchecked.contains("✗ checked js") && !unchecked.contains("type errors"), "{}", unchecked);
 }

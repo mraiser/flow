@@ -1633,13 +1633,20 @@ fn syntax_problem(call: &JsCall, reg: &Registration) -> Option<(String, Option<i
 
 /// Runs tsc in `dir`: `None` when no tsc is found, else its diagnostics for
 /// `file` as (file line, column, message).
-fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Result<Vec<(i64, i64, String)>, String>> {
+/// Where tsc may be: `$FLOWLANG_TSC`, node_modules/.bin/tsc next to data/,
+/// then the PATH.
+fn tsc_candidates(store: &DataStore) -> Vec<std::path::PathBuf> {
   let mut candidates: Vec<std::path::PathBuf> = Vec::new();
   if let Ok(t) = std::env::var("FLOWLANG_TSC") { candidates.push(t.into()); }
   if let Ok(root) = store.root.canonicalize() {
     if let Some(parent) = root.parent() { candidates.push(parent.join("node_modules").join(".bin").join("tsc")); }
   }
   candidates.push("tsc".into());
+  candidates
+}
+
+fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Result<Vec<(i64, i64, String)>, String>> {
+  let candidates = tsc_candidates(store);
   let prefix = format!("{}(", file);
   for exe in candidates {
     if exe.components().count() > 1 && !exe.exists() { continue; }
@@ -1684,7 +1691,7 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Resul
 
 // ---- flow jstest ---------------------------------------------------------------------------
 
-/// `flow jstest [files or directories]`: runs JavaScript test files in the
+/// `flow jstest [--no-check] [files or directories]`: runs JavaScript test files in the
 /// engine commands run in, so tests call any command through `flowlang.call`
 /// / `flowlang.api` and see the same globals. A directory is searched for
 /// `*.test.js` and `*.test.ts` (skipping `node_modules`, `target` and hidden
@@ -1694,11 +1701,15 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Resul
 /// `equal`, `notEqual`, `deepEqual`, `throws`, `rejects`) as locals; tests
 /// run in order, and each file has the engine's time limit. A file that
 /// starts with `import` statements, or is TypeScript, runs from an esbuild
-/// bundle
-/// (`gen::bundle_test`), its lines unchanged. Prints one line
+/// bundle (`gen::bundle_test`) that keeps its lines. Unless `--no-check`,
+/// the TypeScript files and the JavaScript ones with `// @ts-check` are
+/// type-checked first (`typecheck_tests`); a file with type errors does not
+/// run. Prints one line
 /// per test and returns the exit status: 0 all passed, 1 a test or file
 /// failed, 2 nothing to run.
 pub fn run_tests(args: Vec<String>) -> i32 {
+  let no_check = args.iter().any(|a| a == "--no-check");
+  let args: Vec<String> = args.into_iter().filter(|a| a != "--no-check").collect();
   let roots: Vec<std::path::PathBuf> = if args.is_empty() { vec![".".into()] } else { args.iter().map(Into::into).collect() };
   let mut files = Vec::new();
   for r in &roots {
@@ -1713,9 +1724,24 @@ pub fn run_tests(args: Vec<String>) -> i32 {
     return 2;
   }
   let (mut passed, mut failed, mut skipped) = (0, 0, 0);
+  // Type-checked first, all in one tsc run: *.test.ts, and *.test.js that
+  // ask for it with // @ts-check.
+  let checked = if no_check { TypeCheck::default() } else { typecheck_tests(&DataStore::new(), &files) };
+  if let Some(note) = &checked.note { println!("{}\n", note); }
+  for (path, problems) in &checked.elsewhere {
+    println!("{}\n  ✗ type errors (tsc), in a file the tests import:", path.display());
+    for p in problems { println!("      {}", indent(p)); }
+    failed += 1;
+  }
   for file in &files {
     let shown = file.display().to_string();
     println!("{}", shown);
+    if let Some(problems) = file.canonicalize().ok().and_then(|f| checked.files.get(&f)) {
+      println!("  ✗ type errors (tsc) - its tests did not run (--no-check runs them anyway):");
+      for p in problems { println!("      {}", indent(p)); }
+      failed += 1;
+      continue;
+    }
     let source = match std::fs::read_to_string(file) {
       Ok(s) => s,
       Err(e) => { println!("  ✗ could not be read: {}", e); failed += 1; continue; }
@@ -1767,6 +1793,161 @@ pub fn run_tests(args: Vec<String>) -> i32 {
   }
   println!("\n{} passed, {} failed, {} skipped", passed, failed, skipped);
   if failed > 0 { 1 } else if passed + skipped == 0 { 2 } else { 0 }
+}
+
+/// `test` and `assert` as a test file sees them, for its type check only
+/// (commands never see them).
+const JSTEST_DTS: &str = r#"// flow jstest's locals, for type-checking test files.
+type FlowlangTestFn = () => void | Promise<void>;
+declare function test(name: string, fn: FlowlangTestFn): void;
+declare namespace test {
+  function skip(name: string, fn: FlowlangTestFn): void;
+}
+type FlowlangExpected = (new (...args: any[]) => any) | RegExp | string;
+interface FlowlangAssert {
+  (cond: unknown, message?: string): asserts cond;
+  ok(cond: unknown, message?: string): asserts cond;
+  /** Object.is */
+  equal<T>(actual: T, expected: T, message?: string): void;
+  notEqual<T>(actual: T, expected: T, message?: string): void;
+  deepEqual<T>(actual: T, expected: T, message?: string): void;
+  throws(fn: () => unknown, expected?: FlowlangExpected, message?: string): any;
+  rejects(promise: Promise<unknown> | (() => Promise<unknown>), expected?: FlowlangExpected, message?: string): Promise<any>;
+  readonly AssertionError: new (message?: string) => Error;
+}
+declare const assert: FlowlangAssert;
+"#;
+
+/// The type check of a jstest run: problems by test file (canonical path),
+/// problems in other files the tests import, and a note to print (tsc not
+/// found, or it could not run).
+#[derive(Default)]
+struct TypeCheck {
+  files: std::collections::HashMap<std::path::PathBuf, Vec<String>>,
+  elsewhere: Vec<(std::path::PathBuf, Vec<String>)>,
+  note: Option<String>,
+}
+
+/// Type-checks the test files that are TypeScript (strictly) or ask for it
+/// with `// @ts-check` (as JavaScript), in place - relative imports resolve
+/// and lines are the file's own - with flowlang.d.ts, `test`/`assert`, and
+/// imported commands by exact path. Problems inside an imported command are
+/// its own check's.
+fn typecheck_tests(store: &DataStore, files: &[std::path::PathBuf]) -> TypeCheck {
+  let mut out = TypeCheck::default();
+  let mut groups: [(bool, Vec<(std::path::PathBuf, String)>); 2] = [(true, Vec::new()), (false, Vec::new())];
+  for f in files {
+    let Ok(abs) = f.canonicalize() else { continue };
+    let Ok(source) = std::fs::read_to_string(&abs) else { continue };
+    let ts = abs.extension().map_or(false, |e| e == "ts");
+    // // @ts-check counts in the file's leading comments, as for tsc.
+    let opted = !ts && source.lines().take_while(|l| { let t = l.trim(); t.is_empty() || t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') })
+      .any(|l| l.trim().trim_start_matches('/').trim().starts_with("@ts-check"));
+    if ts { groups[0].1.push((abs, source)); } else if opted { groups[1].1.push((abs, source)); }
+  }
+  if groups.iter().all(|(_, g)| g.is_empty()) { return out; }
+  let candidates = tsc_candidates(store);
+  let parent = store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.to_path_buf()));
+  let node_modules = parent.as_ref().map(|p| p.join("node_modules")).filter(|p| p.is_dir());
+  for (strict, group) in &groups {
+    if group.is_empty() { continue; }
+    // Imported commands, by exact path.
+    let probe = JsSource {
+      name: "test".to_string(), lang: "javascript".to_string(), params: Vec::new(), returntype: "Any".to_string(),
+      imports: group.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>().join("\n"), body: String::new(),
+    };
+    let modules = gen::shared_modules(store, &probe, ("", "", "")).unwrap_or_default();
+    gen::write_modules(store, &modules);
+    let module_files: Vec<std::path::PathBuf> = modules.iter().filter_map(|m| m.path.canonicalize().ok()).collect();
+    let mut paths = gen::module_paths(&modules);
+    // Packages in node_modules next to data/, for test files outside it.
+    if let Some(nm) = &node_modules {
+      let mut a = DataArray::new();
+      a.push_string(&format!("{}/*", nm.display()));
+      a.push_string(&format!("{}/@types/*", nm.display()));
+      paths.put_array("*", a);
+    }
+    let dir = std::env::temp_dir().join(format!(".flowlang_jstest_check_{}_{}", std::process::id(), strict));
+    let _ = std::fs::create_dir_all(&dir);
+    let file_list: Vec<String> = ["flowlang.d.ts".to_string(), "jstest.d.ts".to_string()].into_iter()
+      .chain(group.iter().map(|(p, _)| p.display().to_string())).collect();
+    let mut options = DataObject::from_string(&format!(r#"{{"target":"es2022","lib":["es2022"],"types":[],"module":"esnext",
+      "moduleResolution":"bundler","moduleDetection":"force","esModuleInterop":true,"allowSyntheticDefaultImports":true,
+      "allowJs":true,"checkJs":true,"allowImportingTsExtensions":true,"noEmit":true,"strict":{s},"noImplicitAny":{s},"skipLibCheck":true}}"#, s = strict));
+    options.put_object("paths", paths);
+    let mut config = DataObject::new();
+    config.put_object("compilerOptions", options);
+    let mut list = DataArray::new();
+    for f in &file_list { list.push_string(f); }
+    config.put_array("files", list);
+    let written = std::fs::write(dir.join("flowlang.d.ts"), gen::flowlang_dts(store))
+      .and_then(|_| std::fs::write(dir.join("jstest.d.ts"), JSTEST_DTS))
+      .and_then(|_| std::fs::write(dir.join("tsconfig.json"), config.to_string()));
+    if let Err(e) = written {
+      out.note = Some(format!("note: the test files were not type-checked: could not write the check's files: {}", e));
+      let _ = std::fs::remove_dir_all(&dir);
+      return out;
+    }
+    let mut ran = None;
+    for exe in &candidates {
+      if exe.components().count() > 1 && !exe.exists() { continue; }
+      match std::process::Command::new(exe).args(["-p", "tsconfig.json", "--pretty", "false"]).current_dir(&dir).output() {
+        Ok(o) => { ran = Some(o); break; }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+        Err(e) => { out.note = Some(format!("note: the test files were not type-checked: could not start {}: {}", exe.display(), e)); break; }
+      }
+    }
+    let Some(output) = ran else {
+      let _ = std::fs::remove_dir_all(&dir);
+      if out.note.is_none() {
+        out.note = Some("note: tsc not found, so the test files were not type-checked (npm install typescript next to data/, set FLOWLANG_TSC, or pass --no-check)".to_string());
+      }
+      return out;
+    };
+    // path(line,col): error TSnnnn: message, then indented continuation lines.
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut last: Option<(std::path::PathBuf, usize)> = None;
+    for l in text.lines() {
+      if l.starts_with(' ') {
+        if let Some((f, i)) = &last {
+          let target = if let Some(v) = out.files.get_mut(f) { v } else if let Some((_, v)) = out.elsewhere.iter_mut().find(|(p, _)| p == f) { v } else { continue };
+          if let Some(p) = target.get_mut(*i) { p.push('\n'); p.push_str(l.trim_end()); }
+        }
+        continue;
+      }
+      let parsed = l.split_once("): error ").and_then(|(head, msg)| {
+        let (path, pos) = head.rsplit_once('(')?;
+        let (line, col) = pos.split_once(',')?;
+        Some((path.to_string(), line.parse::<u32>().ok()?, col.parse::<u32>().ok()?, msg.split_once(": ").map(|(_, m)| m).unwrap_or(msg).to_string()))
+      });
+      let Some((path, line, col, msg)) = parsed else {
+        if !l.trim().is_empty() && !output.status.success() && out.files.is_empty() && out.elsewhere.is_empty() {
+          out.note = Some(format!("note: the test files were not type-checked: tsc failed: {}", text.trim()));
+        }
+        last = None;
+        continue;
+      };
+      let p = dir.join(&path);
+      let p = p.canonicalize().unwrap_or(p);
+      if module_files.contains(&p) { last = None; continue; }
+      let problem = format!("line {}:{}  {}", line, col, msg);
+      if group.iter().any(|(f, _)| *f == p) {
+        let v = out.files.entry(p.clone()).or_default();
+        v.push(problem);
+        last = Some((p, v.len() - 1));
+      } else {
+        let i = match out.elsewhere.iter().position(|(f, _)| *f == p) {
+          Some(i) => i,
+          None => { out.elsewhere.push((p.clone(), Vec::new())); out.elsewhere.len() - 1 }
+        };
+        out.elsewhere[i].1.push(problem);
+        last = Some((p, out.elsewhere[i].1.len() - 1));
+      }
+    }
+    // tsc's paths are relative to the check's directory: removed only now.
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+  out
 }
 
 fn find_tests(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
