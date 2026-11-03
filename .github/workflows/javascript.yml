@@ -1,0 +1,34 @@
+name: javascript
+
+# JavaScript commands (javascript_runtime: V8 via deno_core). The feature
+# went uncompiled for two years without anyone noticing; this job keeps it
+# building and its contract tested.
+on:
+  push:
+  pull_request:
+
+jobs:
+  javascript-commands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: js-${{ runner.os }}-${{ hashFiles('Cargo.toml') }}
+      - name: Build with javascript_runtime
+        run: cargo build --release --features=javascript_runtime
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: TypeScript (check_js's type check) and esbuild (imports, TypeScript commands)
+        run: npm install --global typescript@5 esbuild@0
+      - name: Generated declarations (flowlang.d.ts compiles)
+        run: FLOWLANG_REQUIRE_TSC=1 cargo test --release --lib builder::javascript
+      - name: JavaScript command tests
+        run: FLOWLANG_REQUIRE_TSC=1 FLOWLANG_REQUIRE_ESBUILD=1 cargo test --release --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared

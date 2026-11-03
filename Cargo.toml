@@ -1,6 +1,6 @@
 [package]
 name = "flowlang"
-version = "0.3.42"
+version = "0.3.43"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -27,7 +27,7 @@ include = [
 serde_support = ["serde","serde_json","ndata/serde_support"]
 java_runtime = ["jni"]
 python_runtime = ["pyo3"]
-javascript_runtime = ["deno_core","serde_v8","serde_support"]
+javascript_runtime = ["deno_core","serde_support","tokio","ureq"]
 mirror = []
 python_no_singleton = []
 gag = ["dep:gag"]
@@ -39,8 +39,12 @@ libc = "0.2"
 gag = { version = "1.0", optional = true }
 jni = { version = "^0.21.1", features = ["invocation"], optional = true }
 pyo3 = { version = "0.30", features = ["auto-initialize"], optional = true }
-deno_core = { version = "0.249.0", optional = true }
-serde_v8 = { version = "0.158.0", optional = true }
+deno_core = { version = "0.413", optional = true }
+tokio = { version = "1", features = ["rt", "time", "sync"], optional = true }
+# fetch's HTTP client, kept small: rustls + Mozilla's roots only (no gzip,
+# no platform verifier). Interim: outbound HTTP(S) is to move into a
+# newbound control with no third-party code.
+ureq = { version = "3.5", default-features = false, features = ["rustls"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 

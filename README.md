@@ -10,8 +10,9 @@ mix nodes written in any of them. It also speaks the
 the `flowmcp` binary exposes every command as an MCP tool that any MCP client
 can call.
 
-> **Note:** Support for back-end commands written in Java and JavaScript is
-> kind of broken for now. Contact me if you'd like to help fix it.
+> **Note:** Support for back-end commands written in Java is kind of broken
+> for now. Contact me if you'd like to help fix it. JavaScript and TypeScript
+> commands work (see *Language runtimes*).
 
 A Flow program is a directed graph of operations ("commands") in which data
 flows along connections between nodes. Using an IDE like
@@ -53,7 +54,7 @@ The `flowmcp` binary is a Model Context Protocol server speaking JSON-RPC over
 stdin/stdout. It implements `initialize`, `tools/list`, `tools/call`,
 `prompts/list`, and `resources/list`. Tools are named
 `library-control-command`, and `tools/call` invokes the corresponding Flow,
-Rust, or Python command directly.
+Rust, Python, or JavaScript command directly.
 
 A real session (run from a directory containing a `data/` folder; note that
 requests must carry a numeric `id`):
@@ -402,8 +403,168 @@ cargo build --features java_runtime        # loads a JVM via JNI
   rules and error reports; the difference is that data crosses by value as
   JSON — arguments arrive as plain `dict`/`list`, and bytes as ndata's hex
   string.
-- **JavaScript** — commands run in a Deno/V8 isolate, with `serde_v8`
-  bridging `DataObject` to V8 values.
+- **JavaScript** — commands run in one embedded V8 isolate (`deno_core`),
+  owned by a thread of its own: callers on any thread hand their call to it
+  and wait. A command record's language is `"js"` or `"javascript"`
+  (newbound's `dev.code` writes the latter). The body is the body of a
+  function whose parameters are the declared params, in order (each must be
+  a JavaScript identifier); a body that uses `await` is an `async` function.
+  A declared param missing from the call is an error. A JavaScript command
+  returns exactly what a Rust command returns — `{"a": value}`, or
+  `{"a": {"status": "err", "msg": ...}}` on failure — so it works anywhere a
+  Rust or Python command does.
+
+  Data is live, as for Python: a `JSONObject` or `JSONArray` argument — and
+  every object or array read from one — is a handle on the caller's own
+  ndata, so changes are seen by the caller and by any Rust or Python command
+  holding it, with no copying. A handle behaves like a plain object or array
+  (property access, `in`, `delete`, `Object.keys`, spread, `for…of`,
+  `JSON.stringify`; for arrays `Array.isArray`, `length`, indexing and the
+  `Array` methods). Writing a plain object or array stores new ndata (as a
+  `dict` does from Python); writing a handle stores the same object;
+  `toJSON` (Date, URL) is honoured; `undefined` removes an object's key; bytes
+  (`InputStream`) cross as `Uint8Array`. Returning a handle returns the same
+  object. A function, symbol, BigInt, `Map`, `Set`, Promise or cyclic
+  structure is a TypeError that names it, and a `FLAT` command must return an
+  object. Each read makes a new handle, so compare contents, not identity;
+  `ndata.isHandle`, `ndata.toJS` (a plain deep copy), `ndata.object()` and
+  `ndata.array()` are the global `ndata`'s helpers. A command that returns a
+  Promise answers with what it resolves to; a rejection is its error.
+
+  The engine works like Node's event loop: a call's synchronous part runs to
+  completion, and a call that awaits leaves the engine free for other calls
+  while it waits, so many awaiting calls progress together. `setTimeout`,
+  `setInterval`, `clearTimeout`, `clearInterval` and `queueMicrotask` exist;
+  timers a command leaves behind keep running between calls, and global
+  state persists between calls. A promise that can never settle is an
+  error, not a hang. Every call has a time limit — 30 s, or
+  `FLOWLANG_JS_TIMEOUT_MS` (`0`: none), or `jscmd::set_default_timeout` —
+  covering its synchronous part and its awaiting; JavaScript running past
+  it is stopped and the engine carries on. (Stopping JavaScript discards the
+  microtasks V8 had queued behind it; an awaiting call that loses its work
+  that way says so.)
+
+  `flowlang.call(lib, ctl, cmd, {name: value})` and
+  `flowlang.api.<lib>.<ctl>.<cmd>(positional...)` run any command — Rust,
+  Python, flow or JavaScript — and return its value, as Python's
+  `flowlang.call` does (handles passed along are the same objects for the
+  callee); they throw `ReferenceError` for an unknown command,
+  `TypeError` for arguments that do not fit, and `flowlang.CommandError` when
+  the command fails. A JavaScript callee runs in the same isolate and returns
+  its value as is (a Promise if it is async). Any other callee runs on a
+  worker thread while the caller waits, so it can call JavaScript in turn —
+  JavaScript → Rust, Python or flow → JavaScript, to any depth: the inner
+  command runs in the same isolate (same globals), its exception reaches the
+  outer one as the middle command's `CommandError`, and the outer call's time
+  limit covers it all. The inner command must finish without the event loop
+  (the middle command is waiting for it): one that awaits fails, saying so.
+
+  An exception's `msg` is the exception, its location in the command body
+  (`body line N`) and the stack, in the body's own line numbers. A syntax
+  error is reported on every call until the body is fixed — the old code
+  never runs silently — and a panic inside the engine restarts it rather
+  than disabling JavaScript. `console.log`/`info`/`debug` write to stdout
+  (stderr under `flowmcp`, whose stdout is the JSON-RPC channel) and
+  `console.warn`/`error`/`trace` to stderr, as complete lines labelled with
+  the command: `[js testflow:testflow:report] building totals` (a timer's
+  output carries the label of the command that set it, whenever it fires).
+
+  `jscmd::check(lib, id)` checks a command without running it: a V8 syntax
+  check (esbuild's bundle, for a command with imports or in TypeScript),
+  plus a TypeScript type check when `tsc` is found (`$FLOWLANG_TSC`,
+  `node_modules/.bin/tsc` next to `data/`, or `tsc` on the PATH) — the body
+  as `// @ts-check` JavaScript with JSDoc types from its declared params,
+  against `flowlang.d.ts`, so names the engine does not provide (`fetch`,
+  `require`) are errors and `flowlang.api` calls are checked against the
+  callee. Problems are reported at body lines; `check_quick` is the syntax
+  check alone. `flowb` writes `flowlang.d.ts` (the engine's globals and a
+  typed `flowlang.api` tree of every command in the store) and each command
+  as `<lib>/<ctl>/<cmd>.js` into the library's crate `src/`, for editors.
+
+  `flow jstest [--no-check] [files or directories]` runs `*.test.js` and `*.test.ts` files in the same
+  engine, so tests call any command; each file gets `test(name, fn)`
+  (`fn` may be async; `test.skip`) and `assert` (`equal`, `notEqual`,
+  `deepEqual`, `throws`, `rejects`). Exit status: 0 all passed, 1 a failure,
+  2 nothing ran. A test file may start with `import` statements — npm
+  packages, files beside it (`./fixtures.js`), and commands' modules
+  (`flowlang:<lib>/<ctl>/<cmd>`, to test a command's helpers directly) —
+  and then runs from an esbuild bundle, with its lines, top-level `await`
+  and `test`/`assert` unchanged; an import that does not resolve fails the
+  file at its own line. A `*.test.ts` file is TypeScript and always runs
+  that way, so it needs esbuild.
+
+  Before anything runs, tsc type-checks every `*.test.ts` file (strictly)
+  and every `*.test.js` that starts with `// @ts-check` (as JavaScript), in
+  one run, in place: against `flowlang.d.ts` (so `flowlang.api` calls are
+  checked against the callees' declared parameters), with `test`/`assert`
+  typed (`assert.equal`'s two sides must be comparable), top-level `await`
+  allowed, and `flowlang:` imports resolved to their commands. A file with
+  type errors is reported at its lines and its tests do not run; errors in
+  a helper file the tests import are reported under its name, while an
+  imported command's are left to its own check. `--no-check` skips this.
+  tsc is found as for `jscmd::check`; without it, a note says the files
+  were not checked and the tests run.
+
+  Web platform APIs are built in: `fetch` (with `Headers`, `Request`,
+  `Response` and `AbortController`; requests run off the engine thread, TLS
+  against Mozilla's roots or `SSL_CERT_FILE`'s certificates, `*_PROXY`/
+  `NO_PROXY` honoured, bodies read whole and not decompressed; a small
+  interim client, `ureq` with rustls, behind one function), `URL`/`URLSearchParams`,
+  `TextEncoder`/`TextDecoder`, `atob`/`btoa`, `crypto.getRandomValues` /
+  `randomUUID`, `structuredClone`, `performance.now`, `EventTarget` and
+  `DOMException`. Node's built-ins (`fs`, `process`, `Buffer`, `require`) are
+  not there.
+
+  **Imports and npm packages.** A command's `import` field holds ES `import`
+  statements; packages resolve from `node_modules` next to `data/` (`npm
+  install lodash` there), CommonJS and ESM alike. Such a command runs from
+  an esbuild bundle: `flowb` (or the first call) writes the command as
+  `<lib>/<ctl>/<cmd>.js` — its imports, then the body as the module's
+  default export — and bundles it into `<cmd>.bundle.js`, rebuilt when the
+  command, its imports or the npm lockfile's content change. esbuild is
+  found as `$FLOWLANG_ESBUILD` (alone, when set), else
+  `node_modules/.bin/esbuild` next to `data/`, or `esbuild` on the PATH
+  (`npm install esbuild`).
+
+  Bundles are build output, like compiled Rust: `flowb BUNDLES` builds every
+  one a store needs (and fails if any cannot be built), and a deployment
+  that ships them next to `data/`, at the same paths, needs neither esbuild
+  nor `node_modules` — a bundle built from the command's current code is
+  used as is when there is no lockfile to contradict it. A bundle built from
+  other code is never run: without esbuild to rebuild it, the command
+  reports that it needs one. Problems surface before anything runs — a missing package, or one
+  that needs Node's built-ins, is an error at its `imports line N` — and
+  errors at run time point into the author's code through the bundle's
+  source map (`body line N`, `flowlang:<lib>/<ctl>/<cmd>.js:L:C`) and into
+  packages as `npm:<path>`.
+
+  **Sharing code between commands.** A command imports another JavaScript or
+  TypeScript command, in any library, as a module — the counterpart of a
+  Python command's `from lib.ctl import other`:
+
+  ```js
+  import format, { slugify } from "flowlang:mylib/text/format";
+  ```
+
+  The default export is the command's function (called directly: no casting,
+  no envelope), and whatever the imported command's own `import` field
+  `export`s comes with it, so a command can be a library of helpers as well
+  as a command. Imports chain, and JavaScript and TypeScript import each
+  other. An edit to an imported command rebuilds the bundles of the commands
+  that import it, and tsc (`jscmd::check`) checks types across the import;
+  an imported command's own type errors are its own check's to report. A
+  frame inside one reads `flowlang:<lib>/<ctl>/<cmd>.js:L:C`. Each importing
+  command bundles its own copy, so module-level state is per importing
+  command; state shared between commands belongs in ndata. An import that
+  names no JavaScript or TypeScript command is an error at its
+  `imports line N` — a Rust, Python or flow command is called with
+  `flowlang.call` instead.
+
+  **TypeScript.** A command whose language is `"typescript"` (or `"ts"`) is
+  TypeScript: the same body, params typed from the declarations
+  (`<cmd>.ts`), compiled by esbuild — so TypeScript commands need esbuild
+  too. esbuild does not type-check; `jscmd::check` runs tsc on them in
+  strict mode.
 - **Java** — requires the Java helper classes on the classpath and `libjvm`
   on the library path (e.g. `LD_LIBRARY_PATH`).
 - **Rust** — statically linked by default: `flowb` generates a wrapper and
@@ -460,9 +621,17 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared
 ```
 
-The suite covers the builder's wrapper guarantees, synchro ordering under
+The suite covers JavaScript commands (with `javascript_runtime`: the result
+envelope, value conversion, error reports, async commands and timers, calls
+that await without holding each other up, time limits, `flowlang.call`
+across languages and back into JavaScript, JavaScript tools over a real
+`flowmcp` session with stdout kept to JSON-RPC, records under both language tags, `check` with and
+without tsc, `flow jstest` (test files that import, and TypeScript ones, included), `fetch` against a local server and the other web
+APIs, and imports — CommonJS and ESM packages, source-mapped errors,
+resolution errors — TypeScript commands, and commands importing each other, through esbuild), the builder's wrapper guarantees, synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when
 `syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values

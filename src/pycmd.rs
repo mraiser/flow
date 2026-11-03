@@ -137,7 +137,7 @@ impl PyCmd {
 }
 
 /// The name of the control in `lib` that lists command `id`.
-fn control_of(store: &DataStore, lib: &str, id: &str) -> Option<String> {
+pub(crate) fn control_of(store: &DataStore, lib: &str, id: &str) -> Option<String> {
   let list = store.get_data(lib, "controls").get_object("data").get_array("list");
   for c in list.objects() {
     let c = c.object();

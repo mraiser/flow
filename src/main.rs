@@ -40,8 +40,19 @@ pub fn main() {
         std::process::exit(2);
       }
     }
+    // flow jstest [--no-check] [files or directories]: run *.test.js and
+    // *.test.ts in the JavaScript engine, type-checked first.
+    if params.len() > 1 && params[1] == "jstest" {
+      #[cfg(feature = "javascript_runtime")]
+      std::process::exit(::flowlang::jscmd::run_tests(params[2..].to_vec()));
+      #[cfg(not(feature = "javascript_runtime"))]
+      {
+        eprintln!("flow jstest needs the JavaScript runtime: build with --features=javascript_runtime");
+        std::process::exit(2);
+      }
+    }
     if params.len() < 4 {
-      eprintln!("usage: flow <lib> <ctl> <cmd>  (JSON arguments on stdin)\n       flow pytest [pytest arguments]");
+      eprintln!("usage: flow <lib> <ctl> <cmd>  (JSON arguments on stdin)\n       flow pytest [pytest arguments]\n       flow jstest [--no-check] [files or directories]");
       std::process::exit(2);
     }
     let lib = &params[1];

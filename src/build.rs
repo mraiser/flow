@@ -18,6 +18,16 @@ fn main() {
     else if &params[1] == "API" {  // library names are lower case by convention
       rebuild_rust_api();
     }
+    else if &params[1] == "BUNDLES" {
+      // The esbuild bundle of every JavaScript/TypeScript command that runs
+      // from one (imports, or TypeScript): what a deployment ships so that it
+      // needs no esbuild or node_modules.
+      let (done, failed) = builder::javascript::build_bundles(&DataStore::new());
+      for label in &done { println!("bundled {}", label); }
+      for (label, why) in &failed { eprintln!("FAILED {}: {}", label, why); }
+      println!("{} bundled, {} failed", done.len(), failed.len());
+      if !failed.is_empty() { std::process::exit(1); }
+    }
     else {
       let store = DataStore::new();
       let root = store.get_lib_root(&params[1]);

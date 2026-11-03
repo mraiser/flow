@@ -58,10 +58,11 @@ impl Command {
         // FIXME
         return true;
       },
+      // "js" and "javascript" are the same language (newbound's dev.code
+      // writes the latter); "typescript"/"ts" run in the same engine.
       #[cfg(feature="javascript_runtime")]
-      "js" => {
-        // FIXME
-        return true;
+      "js" | "javascript" | "typescript" | "ts" => {
+        return JSCmd::exists(lib, id);
       },
       "python" => {
         // Runnable when its generated source exists (flowb writes it).
@@ -114,7 +115,7 @@ impl Command {
         Source::Java(JavaCmd::new(lib, id))
       },
       #[cfg(feature="javascript_runtime")]
-      "js" => {
+      "js" | "javascript" | "typescript" | "ts" => {
         Source::JavaScript(JSCmd::new(lib, id))
       },
       "python" => {

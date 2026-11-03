@@ -3,6 +3,7 @@ pub mod flowlang;
 pub mod code;
 pub mod case;
 pub mod command;
+pub mod callapi;
 pub mod datastore;
 pub mod hotswap;
 pub mod primitives;
@@ -26,6 +27,10 @@ pub mod cmdinit;
 pub mod javacmd;
 #[cfg(feature="javascript_runtime")]
 pub mod jscmd;
+#[cfg(feature="javascript_runtime")]
+mod jsweb;
+#[cfg(feature="javascript_runtime")]
+mod jsndata;
 #[cfg(feature="python_runtime")]
 pub mod pyenv;
 #[cfg(feature="python_runtime")]
