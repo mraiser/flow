@@ -42,7 +42,7 @@ fn checks_report_at_body_lines() {
   let ab = r#"[{"name":"a","type":"Integer"},{"name":"b","type":"Integer"}]"#;
   js(0, ab, "Integer", "return a + b");
   js(1, "[]", "Any", "let x = 1;\nreturn (");
-  js(2, "[]", "Any", "const r = 1;\nreturn fetch('https://example.com')");
+  js(2, "[]", "Any", "const r = await fetch('https://example.com');\nreturn process.env.HOME");
   js(3, "[]", "String", "\n\nreturn 42");
   js(4, "[]", "Integer", "return flowlang.api.jc.tools.add(1)");
   js(5, "[]", "Integer", "const n = await flowlang.api.jc.tools.add(1, 2);\nreturn n");
@@ -77,7 +77,8 @@ fn checks_report_at_body_lines() {
 
   // Names the engine does not provide.
   let p = problems(&check("jc", "cmd2"));
-  assert!(p.iter().any(|(t, w, m)| t == "tsc" && w == "body line 2" && m.contains("fetch")), "{:?}", p);
+  assert!(p.iter().any(|(t, w, m)| t == "tsc" && w == "body line 2" && m.contains("process")), "{:?}", p);
+  assert!(!p.iter().any(|(_, _, m)| m.contains("fetch")), "{:?}", p);
   // A return that does not match the declared type.
   let p = problems(&check("jc", "cmd3"));
   assert!(p.iter().any(|(t, w, m)| t == "tsc" && w == "body line 3" && m.contains("number")), "{:?}", p);

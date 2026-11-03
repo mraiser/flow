@@ -53,8 +53,12 @@
 //! returns its value as is (a Promise, if it is async).
 //!
 //! The JavaScript globals are V8's plus `console`, `setTimeout`,
-//! `setInterval`, `clearTimeout`, `clearInterval`, `queueMicrotask` and
-//! `flowlang`. `console.log`/`info`/`debug` write to stdout (stderr when
+//! `setInterval`, `clearTimeout`, `clearInterval`, `queueMicrotask`,
+//! `flowlang`, and the web platform APIs of `jsweb`: `fetch`, `Headers`,
+//! `Request`, `Response`, `URL`, `URLSearchParams`, `TextEncoder`,
+//! `TextDecoder`, `atob`, `btoa`, `crypto` (`getRandomValues`,
+//! `randomUUID`), `structuredClone`, `performance`, `Event`, `EventTarget`,
+//! `AbortController`, `AbortSignal` and `DOMException`. `console.log`/`info`/`debug` write to stdout (stderr when
 //! stdout carries a protocol, as under `flowmcp`), `console.warn`/`error`/
 //! `trace` to stderr, as complete lines labelled with the command:
 //! `[js lib:ctl:cmd] message`.
@@ -611,7 +615,11 @@ impl Watchdog {
   }
 }
 
-deno_core::extension!(flowlang_js, ops = [op_flowlang_call]);
+use crate::jsweb::{op_flowlang_fetch, op_flowlang_now, op_flowlang_random, op_flowlang_url_parse, op_flowlang_url_set};
+deno_core::extension!(flowlang_js, ops = [
+  op_flowlang_call,
+  op_flowlang_fetch, op_flowlang_now, op_flowlang_random, op_flowlang_url_parse, op_flowlang_url_set,
+]);
 
 /// `flowlang.call` / `flowlang.api`: resolves the command and, unless it is
 /// JavaScript, runs it here and returns `{"ok": value}`. A JavaScript callee
@@ -909,6 +917,7 @@ impl Engine {
       extensions: vec![flowlang_js::init()],
       ..Default::default()
     });
+    runtime.execute_script("<flowlang web>", crate::jsweb::WEB_JS).map_err(|e| e.to_string())?;
     runtime.execute_script("<flowlang prelude>", PRELUDE).map_err(|e| e.to_string())?;
     watchdog.set_handle(runtime.v8_isolate().thread_safe_handle());
     Ok(Engine { runtime, background: false })
@@ -1009,7 +1018,7 @@ fn report(e: &deno_core::error::JsError, reg: Option<&Registration>) -> String {
     }
   }
   for l in e.to_string().lines() {
-    let engine_frame = l.contains("<flowlang prelude>") || l.contains("<flowlang call>") || l.contains("(ext:core/");
+    let engine_frame = l.contains("<flowlang ") || l.contains("(ext:core/");
     if l.trim_start().starts_with("at ") && !engine_frame {
       msg += "\n";
       msg += l;

@@ -27,7 +27,7 @@ include = [
 serde_support = ["serde","serde_json","ndata/serde_support"]
 java_runtime = ["jni"]
 python_runtime = ["pyo3"]
-javascript_runtime = ["deno_core","serde_support","tokio"]
+javascript_runtime = ["deno_core","serde_support","tokio","ureq"]
 mirror = []
 python_no_singleton = []
 gag = ["dep:gag"]
@@ -41,6 +41,7 @@ jni = { version = "^0.21.1", features = ["invocation"], optional = true }
 pyo3 = { version = "0.30", features = ["auto-initialize"], optional = true }
 deno_core = { version = "0.413", optional = true }
 tokio = { version = "1", features = ["rt", "time", "sync"], optional = true }
+ureq = { version = "3.5", features = ["platform-verifier"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
