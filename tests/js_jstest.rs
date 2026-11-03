@@ -77,3 +77,110 @@ fn nothing_to_run_exits_2() {
   let (code, out) = jstest(&[]);
   assert_eq!(code, 2, "{}", out);
 }
+
+// ---- test files that import (bundled with esbuild) ----
+
+fn have_esbuild() -> bool {
+  let exe = std::env::var("FLOWLANG_ESBUILD").unwrap_or_else(|_| "esbuild".to_string());
+  Command::new(exe).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Whether to run the esbuild cases; without esbuild, checks that saying so
+/// is the failure (unless FLOWLANG_REQUIRE_ESBUILD makes it a test failure).
+fn esbuild_or_skip() -> bool {
+  if have_esbuild() { return true; }
+  assert!(std::env::var("FLOWLANG_REQUIRE_ESBUILD").is_err(), "esbuild is required (FLOWLANG_REQUIRE_ESBUILD)");
+  let (code, out) = jstest(&[("i.test.js", "import x from './x.js';\ntest('t', () => {});\n")]);
+  assert!(code == 1 && out.contains("there is no esbuild"), "{}", out);
+  eprintln!("esbuild not installed: only the error that says so was checked");
+  false
+}
+
+const IMPORTING: &str = r#"// Helpers and a package, before the tests.
+/* a block
+   comment */
+import greet, { fail } from "greet";
+import {
+  double,
+  explode,
+} from "./fixtures.js";
+
+const ready = await Promise.resolve("top-level await");
+
+test("uses its imports", () => {
+  assert.equal(greet(double(2)), "hello 4");
+  assert.equal(ready, "top-level await");
+  assert.equal(flowlang.api.testflow.testflow.test_add(1, 2), "1+2=3");
+});
+
+test("a failure keeps the file's line", () => {
+  assert.equal(double(1), 3);
+});
+
+test("a frame in a helper is named for it", () => {
+  explode();
+});
+"#;
+
+#[test]
+fn a_test_file_imports_packages_and_files_beside_it() {
+  if !esbuild_or_skip() { return; }
+  let dir = std::env::temp_dir().join(format!("flowlang_jstest_imports_{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(dir.join("node_modules/greet")).unwrap();
+  std::fs::write(dir.join("node_modules/greet/package.json"), r#"{"name":"greet","version":"1.0.0","main":"index.js"}"#).unwrap();
+  std::fs::write(dir.join("node_modules/greet/index.js"), "module.exports = (who) => 'hello ' + who;\nmodule.exports.fail = () => { throw new Error('pkg'); };\n").unwrap();
+  std::fs::write(dir.join("fixtures.js"), "export const double = (n) => n * 2;\nexport function explode() {\n  throw new Error('from the fixture');\n}\n").unwrap();
+  std::fs::write(dir.join("imp.test.js"), IMPORTING).unwrap();
+  std::fs::write(dir.join("missing.test.js"), "// nothing here\n\nimport nope from \"no-such-package\";\ntest('t', () => {});\n").unwrap();
+  std::fs::write(dir.join("late.test.js"), "import { double } from './fixtures.js';\ntest('t', () => {});\nimport greet from 'greet';\n").unwrap();
+  let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").arg(&dir).current_dir(env!("CARGO_MANIFEST_DIR")).output().unwrap();
+  let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+  let _ = std::fs::remove_dir_all(&dir);
+  assert_eq!(out.status.code(), Some(1), "{}", text);
+  assert!(text.contains("✓ uses its imports"), "{}", text);
+  // Line 19 of the file, though its imports moved.
+  assert!(text.contains("✗ a failure keeps the file's line") && text.contains("imp.test.js:19:10)") && text.contains("imp.test.js:23:3)"), "{}", text);
+  assert!(text.contains("from the fixture") && text.contains("fixtures.js:3:9)"), "{}", text);
+  // An import that does not resolve, at its own line.
+  assert!(text.contains(r#"Could not resolve "no-such-package""#) && text.contains("(line 3)"), "{}", text);
+  assert!(text.contains("imports must come first in a test file") && text.contains("(line 3)"), "{}", text);
+  assert!(text.contains("1 passed, 4 failed"), "{}", text);
+  assert!(!text.contains("flowlang:jstest"), "{}", text);
+}
+
+/// A test file imports a command's helpers - `flowlang:<lib>/<ctl>/<cmd>` -
+/// to test them directly. A store of its own, with one JavaScript command.
+#[test]
+fn a_test_file_imports_a_command() {
+  if !esbuild_or_skip() { return; }
+  let root = std::env::temp_dir().join(format!("flowlang_jstest_cmd_{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&root);
+  let w = |p: &str, s: &str| {
+    let p = root.join(p);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, s).unwrap();
+  };
+  let rec = |v: serde_json::Value| serde_json::json!({ "data": v }).to_string();
+  // Records as files, in the store's layout (an id under 16 characters is
+  // padded with _ for its directories).
+  let put = |id: &str, v: serde_json::Value| {
+    let padded = format!("{:_<16}", id);
+    let path = format!("data/jt/{}/{}/{}/{}/{}", &padded[0..4], &padded[4..8], &padded[8..12], &padded[12..16], id);
+    w(&path, &rec(v));
+  };
+  w("data/jt/meta.json", "{}");
+  put("controls", serde_json::json!({"list": [{"name": "text", "id": "ctl"}]}));
+  put("ctl", serde_json::json!({"cmd": [{"name": "fmt", "id": "c_fmt"}]}));
+  put("c_fmt", serde_json::json!({"type": "javascript", "javascript": "i_fmt", "name": "fmt"}));
+  put("i_fmt", serde_json::json!({"type": "javascript", "javascript": "return slug(s);", "params": [{"name": "s", "type": "String"}],
+    "returntype": "String", "import": "export const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-');"}));
+  w("t/fmt.test.js", "import fmt, { slug } from \"flowlang:jt/text/fmt\";\n\ntest('the helper', () => assert.equal(slug('Hello World'), 'hello-world'));\ntest('the function', () => assert.equal(fmt('A B'), 'a-b'));\ntest('the command', () => assert.equal(flowlang.api.jt.text.fmt('C D'), 'c-d'));\n");
+  w("t/bad.test.js", "import x from \"flowlang:jt/text/nope\";\ntest('t', () => {});\n");
+  let out = Command::new(env!("CARGO_BIN_EXE_flow")).arg("jstest").arg("t").current_dir(&root).output().unwrap();
+  let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+  let _ = std::fs::remove_dir_all(&root);
+  assert!(text.contains("✓ the helper") && text.contains("✓ the function") && text.contains("✓ the command"), "{}", text);
+  assert!(text.contains("cannot import \"flowlang:jt/text/nope\": there is no command jt:text:nope (line 1)"), "{}", text);
+  assert!(text.contains("3 passed, 1 failed"), "{}", text);
+}

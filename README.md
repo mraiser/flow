@@ -485,7 +485,12 @@ cargo build --features java_runtime        # loads a JVM via JNI
   engine, so tests call any command; each file gets `test(name, fn)`
   (`fn` may be async; `test.skip`) and `assert` (`equal`, `notEqual`,
   `deepEqual`, `throws`, `rejects`). Exit status: 0 all passed, 1 a failure,
-  2 nothing ran.
+  2 nothing ran. A test file may start with `import` statements — npm
+  packages, files beside it (`./fixtures.js`), and commands' modules
+  (`flowlang:<lib>/<ctl>/<cmd>`, to test a command's helpers directly) —
+  and then runs from an esbuild bundle, with its lines, top-level `await`
+  and `test`/`assert` unchanged; an import that does not resolve fails the
+  file at its own line.
 
   Web platform APIs are built in: `fetch` (with `Headers`, `Request`,
   `Response` and `AbortController`; requests run off the engine thread, TLS
@@ -611,7 +616,7 @@ envelope, value conversion, error reports, async commands and timers, calls
 that await without holding each other up, time limits, `flowlang.call`
 across languages and back into JavaScript, JavaScript tools over a real
 `flowmcp` session with stdout kept to JSON-RPC, records under both language tags, `check` with and
-without tsc, `flow jstest`, `fetch` against a local server and the other web
+without tsc, `flow jstest` (test files that import included), `fetch` against a local server and the other web
 APIs, and imports — CommonJS and ESM packages, source-mapped errors,
 resolution errors — TypeScript commands, and commands importing each other, through esbuild), the builder's wrapper guarantees, synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when

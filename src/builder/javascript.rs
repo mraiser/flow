@@ -730,27 +730,47 @@ fn node_modules(store: &DataStore) -> Option<std::path::PathBuf> {
 }
 
 fn run_esbuild(store: &DataStore, entry: &Path, out: &Path, banner: &str, modules: &[SharedModule]) -> Result<(), BundleError> {
-  // Imported commands resolve through a tsconfig naming each one's file.
-  let tsconfig = if modules.is_empty() { None } else {
-    let mut options = ndata::dataobject::DataObject::new();
-    options.put_object("paths", module_paths(modules));
-    let mut config = ndata::dataobject::DataObject::new();
-    config.put_object("compilerOptions", options);
-    let path = out.with_extension("tsconfig.json");
-    std::fs::write(&path, config.to_string())
-      .map_err(|e| BundleError::Other(format!("could not write {}: {}", path.display(), e)))?;
-    Some(path)
-  };
-  let result = run_esbuild_with(store, entry, out, banner, tsconfig.as_deref());
+  let tsconfig = module_tsconfig(modules, &out.with_extension("tsconfig.json"))?;
+  let result = run_esbuild_with(store, Input::File(entry), out, banner, tsconfig.as_deref());
   if let Some(p) = tsconfig { let _ = std::fs::remove_file(p); }
   result
 }
 
-fn run_esbuild_with(store: &DataStore, entry: &Path, out: &Path, banner: &str, tsconfig: Option<&Path>) -> Result<(), BundleError> {
+/// Imported commands resolve through a tsconfig naming each one's file:
+/// written at `path` when there are any.
+fn module_tsconfig(modules: &[SharedModule], path: &Path) -> Result<Option<std::path::PathBuf>, BundleError> {
+  if modules.is_empty() { return Ok(None); }
+  let mut options = ndata::dataobject::DataObject::new();
+  options.put_object("paths", module_paths(modules));
+  let mut config = ndata::dataobject::DataObject::new();
+  config.put_object("compilerOptions", options);
+  std::fs::write(path, config.to_string())
+    .map_err(|e| BundleError::Other(format!("could not write {}: {}", path.display(), e)))?;
+  Ok(Some(path.to_path_buf()))
+}
+
+/// What esbuild bundles: a file, or source given on stdin under a file name,
+/// whose imports resolve from a directory.
+enum Input<'a> {
+  File(&'a Path),
+  Stdin { text: &'a str, dir: &'a Path, name: &'a str },
+}
+
+fn run_esbuild_with(store: &DataStore, input: Input, out: &Path, banner: &str, tsconfig: Option<&Path>) -> Result<(), BundleError> {
   for exe in esbuild_candidates(store) {
     if exe.components().count() > 1 && !exe.exists() { continue; }
     let mut command = std::process::Command::new(&exe);
-    command.arg(entry)
+    let file = match &input {
+      Input::File(entry) => {
+        command.arg(entry).stdin(std::process::Stdio::null());
+        entry.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+      }
+      Input::Stdin { dir, name, .. } => {
+        command.arg(format!("--sourcefile={}", name)).current_dir(dir).stdin(std::process::Stdio::piped());
+        name.to_string()
+      }
+    };
+    command
       .args(["--bundle", "--format=iife", "--global-name=__flowlang_module", "--platform=neutral",
              "--main-fields=module,main", "--target=es2022", "--sourcemap=inline", "--sources-content=false",
              "--log-level=error", "--color=false", "--log-limit=0"])
@@ -758,14 +778,21 @@ fn run_esbuild_with(store: &DataStore, entry: &Path, out: &Path, banner: &str, t
       .arg(format!("--outfile={}", out.display()));
     if let Some(t) = tsconfig { command.arg(format!("--tsconfig={}", t.display())); }
     if let Some(nm) = node_modules(store) { command.env("NODE_PATH", nm); }
-    let output = match command.output() {
-      Ok(o) => o,
+    command.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child = match command.spawn() {
+      Ok(c) => c,
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
       Err(e) => return Err(BundleError::Other(format!("could not start {}: {}", exe.display(), e))),
     };
+    if let Input::Stdin { text, .. } = &input {
+      use std::io::Write;
+      // Dropped at the end of the statement: esbuild sees the end of input.
+      let _ = child.stdin.take().map(|mut i| i.write_all(text.as_bytes()));
+    }
+    let output = child.wait_with_output()
+      .map_err(|e| BundleError::Other(format!("{} did not finish: {}", exe.display(), e)))?;
     if output.status.success() { return Ok(()); }
     let text = String::from_utf8_lossy(&output.stderr).to_string();
-    let file = entry.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
     let ds = parse_esbuild_errors(&text, &file);
     return Err(if ds.is_empty() { BundleError::Other(format!("esbuild failed: {}", text.trim())) } else { BundleError::Failed(ds) });
   }
@@ -831,6 +858,36 @@ pub(crate) fn parse_esbuild_errors(text: &str, file: &str) -> Vec<Diagnostic> {
 /// the map's sources: the generated file as `source_name`, packages as
 /// `npm:<path inside node_modules>`.
 fn split_bundle(text: &str, file_name: &str, source_name: &str, key: String) -> Result<Bundle, BundleError> {
+  split_bundle_naming(text, source_name, key, &|s: &str| command_source_name(s, file_name, source_name))
+}
+
+/// A command bundle's name for a source in its map: the command itself,
+/// `npm:<path>` for a package, `flowlang:<lib>/<ctl>/<cmd>.<ext>` for an
+/// imported command.
+fn command_source_name(s: &str, file_name: &str, source_name: &str) -> String {
+  if s == file_name || s.ends_with(&format!("/{}", file_name)) {
+    source_name.to_string()
+  } else if let Some((_, inside)) = s.rsplit_once("node_modules/") {
+    format!("npm:{}", inside)
+  } else {
+    // Anything else is a generated command file, <lib>/<ctl>/<cmd>.<ext>
+    // under its library's root: an imported command. The map's paths are
+    // relative to the bundle's directory, <lib>/<ctl>: resolve them from
+    // there.
+    let dir = source_name.strip_prefix(MODULE_PREFIX).unwrap_or(source_name).rsplit_once('/').map(|x| x.0).unwrap_or("");
+    let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+    for p in s.split('/') {
+      match p {
+        "" | "." => {}
+        ".." => { parts.pop(); }
+        p => parts.push(p),
+      }
+    }
+    format!("{}{}", MODULE_PREFIX, parts[parts.len().saturating_sub(3)..].join("/"))
+  }
+}
+
+fn split_bundle_naming(text: &str, source_name: &str, key: String, name: &dyn Fn(&str) -> String) -> Result<Bundle, BundleError> {
   const MARK: &str = "//# sourceMappingURL=data:application/json;base64,";
   let (code, encoded) = text.rsplit_once(MARK)
     .ok_or_else(|| BundleError::Other("the bundle has no inline source map".to_string()))?;
@@ -843,26 +900,7 @@ fn split_bundle(text: &str, file_name: &str, source_name: &str, key: String) -> 
   if map.has("sources") {
     for s in map.get_array("sources").objects() {
       let s = s.string();
-      let name = if s == file_name || s.ends_with(&format!("/{}", file_name)) {
-        source_name.to_string()
-      } else if let Some((_, inside)) = s.rsplit_once("node_modules/") {
-        format!("npm:{}", inside)
-      } else {
-        // Anything else is a generated command file, <lib>/<ctl>/<cmd>.<ext>
-        // under its library's root: an imported command.
-        // The map's paths are relative to the bundle's directory,
-        // <lib>/<ctl>: resolve them from there.
-        let dir = source_name.strip_prefix(MODULE_PREFIX).unwrap_or(source_name).rsplit_once('/').map(|x| x.0).unwrap_or("");
-        let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
-        for p in s.split('/') {
-          match p {
-            "" | "." => {}
-            ".." => { parts.pop(); }
-            p => parts.push(p),
-          }
-        }
-        format!("{}{}", MODULE_PREFIX, parts[parts.len().saturating_sub(3)..].join("/"))
-      };
+      let name = name(&s);
       renamed.push_string(&name);
     }
   }
@@ -1056,4 +1094,167 @@ mod tests {
     assert_eq!(lines[h], "line one");
     assert_eq!(lines[h + 1], "line two");
   }
+}
+
+// ---- flow jstest files that import -----------------------------------------------------------
+
+/// A test file that imports, as the module esbuild bundles. Its import
+/// statements move to line 1 (their own lines left blank), followed there by
+/// the opening of the async function the rest of the file is the body of -
+/// so every other line keeps its number, `test`/`assert` stay locals, and
+/// top-level `await` still works.
+pub struct TestEntry {
+  pub text: String,
+  /// The import statements, joined.
+  pub imports: String,
+  /// Each import: its first line in the file, and the columns it occupies
+  /// on line 1 of `text`.
+  pub spans: Vec<(usize, usize, usize)>,
+}
+
+fn starts_import(t: &str) -> bool {
+  t.strip_prefix("import").and_then(|r| r.chars().next()).map_or(false, |c| matches!(c, ' ' | '\t' | '{' | '*' | '"' | '\''))
+}
+
+/// True once an import statement's text names its module.
+fn import_complete(stmt: &str) -> bool {
+  let quoted = |r: &str| {
+    let r = r.trim_start();
+    r.chars().next().filter(|q| *q == '"' || *q == '\'').map_or(false, |q| r[1..].contains(q))
+  };
+  let rest = stmt.trim_start()["import".len()..].trim_start();
+  if quoted(rest) { return true; }
+  let mut from = rest;
+  while let Some(i) = from.find("from") {
+    if quoted(&from[i + 4..]) { return true; }
+    from = &from[i + 4..];
+  }
+  false
+}
+
+/// The entry for a test file, or None when it has no import statements.
+/// An error is (file line, message).
+pub fn test_entry(source: &str) -> Result<Option<TestEntry>, (usize, String)> {
+  let mut lines: Vec<String> = source.split('\n').map(str::to_string).collect();
+  let mut statements: Vec<(usize, String)> = Vec::new();
+  let mut i = 0;
+  let mut in_comment = false;
+  // The header: imports, blank lines and comments.
+  while i < lines.len() {
+    let t = lines[i].trim().to_string();
+    if in_comment { if t.contains("*/") { in_comment = false; } i += 1; continue; }
+    if t.is_empty() || t.starts_with("//") { i += 1; continue; }
+    if t.starts_with("/*") { in_comment = !t.contains("*/"); i += 1; continue; }
+    if !starts_import(&t) { break; }
+    let first = i;
+    let mut stmt = t;
+    while !import_complete(&stmt) {
+      i += 1;
+      if i >= lines.len() { return Err((first + 1, "this import statement does not end".to_string())); }
+      stmt.push(' ');
+      stmt.push_str(lines[i].trim());
+    }
+    for l in &mut lines[first..=i] { l.clear(); }
+    if !stmt.trim_end().ends_with(';') { stmt.push(';'); }
+    statements.push((first + 1, stmt));
+    i += 1;
+  }
+  for (n, l) in lines.iter().enumerate().skip(i) {
+    if starts_import(l) {
+      return Err((n + 1, "imports must come first in a test file, before its tests and other statements".to_string()));
+    }
+  }
+  if statements.is_empty() { return Ok(None); }
+  let mut first_line = String::new();
+  let mut spans = Vec::new();
+  for (line, stmt) in &statements {
+    let start = first_line.len();
+    first_line.push_str(stmt);
+    spans.push((*line, start, first_line.len()));
+    first_line.push(' ');
+  }
+  let imports = first_line.trim_end().to_string();
+  first_line.push_str("export default async function () { const { test, assert } = __flowlang.testing.begin(); ");
+  first_line.push_str(&lines[0]);
+  let mut text = first_line;
+  for l in &lines[1..] { text.push('\n'); text.push_str(l); }
+  text.push_str("\n;return await __flowlang.testing.finish(); }\n");
+  Ok(Some(TestEntry { text, imports, spans }))
+}
+
+/// Bundles a test file that imports - npm packages from node_modules next to
+/// data/ (or above the file), commands as `flowlang:<lib>/<ctl>/<cmd>`, and
+/// files relative to it. None when it does not import. `source_name` is
+/// the file's name in stack traces. Errors are ready to print, at the
+/// file's own lines.
+pub fn bundle_test(store: &DataStore, file: &Path, source: &str, source_name: &str) -> Result<Option<Bundle>, String> {
+  let entry = match test_entry(source) {
+    Ok(Some(e)) => e,
+    Ok(None) => return Ok(None),
+    Err((line, msg)) => return Err(format!("{} (line {})", msg, line)),
+  };
+  let line_of = |needle: &str| entry.spans.iter()
+    .find(|(_, a, b)| entry.imports.get(*a..*b).map_or(false, |stmt| stmt.contains(needle))).map(|(l, _, _)| *l);
+  let probe = JsSource {
+    name: "test".to_string(), lang: "javascript".to_string(), params: Vec::new(),
+    returntype: "Any".to_string(), imports: entry.imports.clone(), body: String::new(),
+  };
+  let modules = shared_modules(store, &probe, ("", "", "")).map_err(|(spec, why)| {
+    let at = line_of(&spec).map(|l| format!(" (line {})", l)).unwrap_or_default();
+    format!("cannot import \"{}\": {}{}", spec, why, at)
+  })?;
+  write_modules(store, &modules);
+
+  let dir = file.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+  let dir = dir.canonicalize().map_err(|e| format!("{}: {}", dir.display(), e))?;
+  let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+  let key = {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    (&entry.text, std::process::id(), source_name).hash(&mut h);
+    format!("{:016x}", h.finish())
+  };
+  let out = std::env::temp_dir().join(format!("flowlang_jstest_{}.js", key));
+  let failed = |e: BundleError| -> String {
+    match e {
+      BundleError::NoEsbuild => "this test file imports, so it runs from an esbuild bundle, and there is no esbuild: run `npm install esbuild` next to data/ (or set FLOWLANG_ESBUILD)".to_string(),
+      BundleError::Other(m) => m,
+      BundleError::Failed(ds) => ds.iter().map(|d| {
+        // Line 1 holds the imports: back to the line each came from.
+        let line = match (d.line, d.column) {
+          (Some(1), Some(c)) => entry.spans.iter().find(|(_, a, b)| c >= *a && c < *b).map(|(l, _, _)| *l).or(Some(1)),
+          (l, _) => l,
+        };
+        d.full(line.map(|l| format!("line {}", l)).as_deref())
+      }).collect::<Vec<_>>().join("\n"),
+    }
+  };
+  let tsconfig = module_tsconfig(&modules, &out.with_extension("tsconfig.json")).map_err(failed)?;
+  let built = run_esbuild_with(store, Input::Stdin { text: &entry.text, dir: &dir, name: &name }, &out, "// flowlang-jstest", tsconfig.as_deref());
+  if let Some(t) = tsconfig { let _ = std::fs::remove_file(t); }
+  built.map_err(failed)?;
+  let text = read_to_string(&out).map_err(|e| format!("could not read the bundle {}: {}", out.display(), e));
+  let _ = std::fs::remove_file(&out);
+  let text = text?;
+
+  // The map's paths are relative to the bundle's directory.
+  let out_dir = out.parent().map(Path::to_path_buf).unwrap_or_default();
+  let shown_dir = source_name.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_default();
+  let named = |s: &str| -> String {
+    if s == name { return source_name.to_string(); }
+    if let Some((_, inside)) = s.rsplit_once("node_modules/") { return format!("npm:{}", inside); }
+    let abs = out_dir.join(s);
+    let abs = abs.canonicalize().unwrap_or(abs);
+    for m in &modules {
+      if m.path.canonicalize().ok().as_ref() == Some(&abs) {
+        return format!("{}.{}", m.specifier, m.src.extension());
+      }
+    }
+    match abs.strip_prefix(&dir) {
+      Ok(rel) => format!("{}/{}", shown_dir, rel.display()),
+      Err(_) => abs.display().to_string(),
+    }
+  };
+  split_bundle_naming(&text, source_name, key, &named).map(Some).map_err(failed)
 }

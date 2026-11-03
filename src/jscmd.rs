@@ -1691,7 +1691,9 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Resul
 /// with no arguments, the current directory is. Each file gets `test(name,
 /// fn)` (`fn` may be async; `test.skip` skips) and `assert` (`assert(cond)`,
 /// `equal`, `notEqual`, `deepEqual`, `throws`, `rejects`) as locals; tests
-/// run in order, and each file has the engine's time limit. Prints one line
+/// run in order, and each file has the engine's time limit. A file that
+/// starts with `import` statements runs from an esbuild bundle
+/// (`gen::bundle_test`), its lines unchanged. Prints one line
 /// per test and returns the exit status: 0 all passed, 1 a test or file
 /// failed, 2 nothing to run.
 pub fn run_tests(args: Vec<String>) -> i32 {
@@ -1717,6 +1719,17 @@ pub fn run_tests(args: Vec<String>) -> i32 {
       Err(e) => { println!("  ✗ could not be read: {}", e); failed += 1; continue; }
     };
     let rel = shown.trim_start_matches("./").trim_end_matches(".js").replace(':', "_");
+    // A file that imports runs from an esbuild bundle (its imports resolve as
+    // a command's do, plus files beside it); its lines keep their numbers.
+    let module = if source.contains("import") {
+      match gen::bundle_test(&DataStore::new(), file, &source, &format!("flowlang:jstest/{}.js", rel)) {
+        Ok(m) => m.map(|bundle| Module {
+          bundle: Arc::new(bundle),
+          layout: Layout { imports_first: 0, imports_lines: 0, body_first: 1, body_lines: source.lines().count().max(1) },
+        }),
+        Err(e) => { println!("  ✗ the file failed: {}", indent(&e)); failed += 1; continue; }
+      }
+    } else { None };
     // The file starts on body line 1, so its line numbers are the file's own.
     let call = JsCall {
       label: format!("jstest:{}", rel),
@@ -1725,7 +1738,7 @@ pub fn run_tests(args: Vec<String>) -> i32 {
       returntype: "JSONArray".to_string(),
       args: DataObject::new(),
       timeout: None,
-      module: None,
+      module,
     };
     match run(&call) {
       Err(e) => { println!("  ✗ the file failed: {}", indent(&clean_stack(&e))); failed += 1; }
