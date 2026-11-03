@@ -1540,9 +1540,17 @@ fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
       let mut h = DefaultHasher::new(); (&label, Instant::now()).hash(&mut h); h.finish()
     }));
     let _ = std::fs::create_dir_all(&dir);
+    // Imported commands are checked through their generated files; their
+    // own problems are their own check's to report.
+    let modules = {
+      let mut parts = label.splitn(3, ':');
+      let own = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+      gen::shared_modules(&store, &src, own).unwrap_or_default()
+    };
+    gen::write_modules(&store, &modules);
     let written = std::fs::write(dir.join("flowlang.d.ts"), gen::flowlang_dts(&store))
       .and_then(|_| std::fs::write(dir.join(&file), gen::command_file(&src, "flowlang.d.ts")))
-      .and_then(|_| std::fs::write(dir.join("tsconfig.json"), tsconfig(&src, &file)));
+      .and_then(|_| std::fs::write(dir.join("tsconfig.json"), tsconfig(&src, &file, &modules)));
     let state = match written {
       Err(e) => { let _ = std::fs::remove_dir_all(&dir); err.put_string("msg", &format!("could not write the check files: {}", e)); return err; }
       Ok(()) => match run_tsc(&store, &dir, &file) {
@@ -1574,7 +1582,8 @@ fn check_with(lib: &str, id: &str, type_check: bool) -> DataObject {
 /// The check's tsconfig: JavaScript is checked loosely (`checkJs`, not
 /// strict), TypeScript strictly; a module resolves its imports the way a
 /// bundler does.
-fn tsconfig(src: &JsSource, file: &str) -> String {
+fn tsconfig(src: &JsSource, file: &str, modules: &[gen::SharedModule]) -> String {
+  let paths = if modules.is_empty() { String::new() } else { format!(",\n    \"paths\": {}", gen::module_paths(modules).to_string()) };
   format!(r#"{{
   "compilerOptions": {{
     "target": "es2022",
@@ -1589,11 +1598,11 @@ fn tsconfig(src: &JsSource, file: &str) -> String {
     "noEmit": true,
     "strict": {strict},
     "noImplicitAny": {strict},
-    "skipLibCheck": true
+    "skipLibCheck": true{paths}
   }},
   "files": ["flowlang.d.ts", "{file}"]
 }}
-"#, strict = src.is_typescript(), file = file)
+"#, strict = src.is_typescript(), file = file, paths = paths)
 }
 
 /// Compiles the command as the engine would install it, in a short-lived
@@ -1645,6 +1654,11 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Resul
     };
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let mut found: Vec<(i64, i64, String)> = Vec::new();
+    // In another file - an imported command's - which its own check reports.
+    let mut elsewhere = false;
+    let other_file = |l: &str| !l.starts_with(' ') && l.split_once("): error TS").map_or(false, |(head, _)| {
+      head.rsplit_once('(').map_or(false, |(f, pos)| !f.is_empty() && pos.split(',').all(|n| n.parse::<u32>().is_ok()))
+    });
     for l in text.lines() {
       // command.js(12,5): error TS2304: Cannot find name 'process'.
       if let Some(rest) = l.strip_prefix(prefix.as_str()) {
@@ -1652,8 +1666,10 @@ fn run_tsc(store: &DataStore, dir: &std::path::Path, file: &str) -> Option<Resul
           let (line, col) = pos.split_once(',')?;
           Some((line.parse().ok()?, col.parse().ok()?, msg.split_once(": ").map(|(_, m)| m).unwrap_or(msg).to_string()))
         });
-        if let Some(p) = parsed { found.push(p); continue; }
+        if let Some(p) = parsed { found.push(p); elsewhere = false; continue; }
       }
+      if other_file(l) { elsewhere = true; continue; }
+      if l.starts_with(' ') && elsewhere { continue; }
       if l.starts_with(' ') {
         // A continuation of the previous message.
         if let Some(last) = found.last_mut() { last.2.push('\n'); last.2.push_str(l.trim_end()); }

@@ -394,7 +394,12 @@ pub fn bundle(store: &DataStore, src_root: &Path, lib: &str, ctl: &str, cmd: &st
   let dir = src_root.join(lib).join(ctl);
   let entry = dir.join(format!("{}.{}", cmd, src.extension()));
   let out = dir.join(format!("{}.bundle.js", cmd));
-  let source = source_key(src);
+  let modules = shared_modules(store, src, (lib, ctl, cmd)).map_err(|(spec, why)| {
+    let lay = layout(src);
+    let line = src.imports.lines().position(|l| l.contains(spec.as_str())).map(|i| lay.imports_first + i);
+    BundleError::Failed(vec![Diagnostic { line, column: None, message: format!("cannot import \"{}\": {}", spec, why), notes: Vec::new() }])
+  })?;
+  let source = bundle_key(src, &modules);
   let packages = packages_key(store);
   let source_name = format!("flowlang:{}/{}/{}.{}", lib, ctl, cmd, src.extension());
   let file_name = format!("{}.{}", cmd, src.extension());
@@ -434,7 +439,8 @@ pub fn bundle(store: &DataStore, src_root: &Path, lib: &str, ctl: &str, cmd: &st
   let banner = format!("// flowlang-bundle {} {}", source, packages_word);
   write_if_changed(&entry, &command_file(src, "../../flowlang.d.ts"));
   write_if_changed(&src_root.join("flowlang.d.ts"), &flowlang_dts(store));
-  match run_esbuild(store, &entry, &out, &banner) {
+  write_modules(store, &modules);
+  match run_esbuild(store, &entry, &out, &banner, &modules) {
     Ok(()) => {
       let text = read_to_string(&out).map_err(|e| BundleError::Other(format!("could not read the bundle {}: {}", out.display(), e)))?;
       Ok(remember(split_bundle(&text, &file_name, &source_name, format!("{}-{}", source, packages_word))?))
@@ -463,6 +469,156 @@ fn source_key(src: &JsSource) -> String {
   use std::hash::{Hash, Hasher};
   let mut h = DefaultHasher::new();
   (&src.lang, &src.imports, &src.params, &src.returntype, &src.body, &src.name).hash(&mut h);
+  format!("{:016x}", h.finish())
+}
+
+/// Another JavaScript or TypeScript command imported as a module:
+/// `import other, { helper } from "flowlang:<lib>/<ctl>/<cmd>"`. Its default
+/// export is the command's function; whatever its imports section exports
+/// comes with it. The bundler and tsc find it at `path`, its generated file.
+pub struct SharedModule {
+  /// `flowlang:<lib>/<ctl>/<cmd>`
+  pub specifier: String,
+  pub src: JsSource,
+  pub path: std::path::PathBuf,
+}
+
+/// The prefix of an import that names a command.
+pub const MODULE_PREFIX: &str = "flowlang:";
+
+/// The `flowlang:` specifiers in an imports section, in order, once each.
+pub fn command_imports(imports: &str) -> Vec<String> {
+  let mut found: Vec<String> = Vec::new();
+  for q in ['"', '\'', '`'] {
+    let opening = format!("{}{}", q, MODULE_PREFIX);
+    let mut rest = imports;
+    while let Some(i) = rest.find(&opening) {
+      let after = &rest[i + 1..];
+      let Some(end) = after.find(q) else { break };
+      let spec = after[..end].to_string();
+      if !found.contains(&spec) { found.push(spec); }
+      rest = &after[end..];
+    }
+  }
+  // In the order they appear.
+  found.sort_by_key(|s| imports.find(s.as_str()).unwrap_or(usize::MAX));
+  found
+}
+
+/// The commands `src` (the command `lib:ctl:cmd`) imports, directly or
+/// through each other, each once. An import that names no JavaScript or
+/// TypeScript command is an error: (the specifier, why).
+pub fn shared_modules(store: &DataStore, src: &JsSource, own: (&str, &str, &str)) -> Result<Vec<SharedModule>, (String, String)> {
+  let own_spec = format!("{}{}/{}/{}", MODULE_PREFIX, own.0, own.1, own.2);
+  let mut out: Vec<SharedModule> = Vec::new();
+  let mut queue: Vec<String> = command_imports(&src.imports);
+  let mut i = 0;
+  while i < queue.len() {
+    let spec = queue[i].clone();
+    i += 1;
+    if spec == own_spec || out.iter().any(|m| m.specifier == spec) { continue; }
+    let m = resolve_module(store, &spec).map_err(|why| (spec.clone(), why))?;
+    for s in command_imports(&m.src.imports) {
+      if !queue.contains(&s) { queue.push(s); }
+    }
+    out.push(m);
+  }
+  Ok(out)
+}
+
+/// `resolve_module`, remembered: an import is resolved again only when one
+/// of the records it was read from (the library's meta and controls, the
+/// control, the command and its implementation) changes size or time.
+fn resolve_module(store: &DataStore, spec: &str) -> Result<SharedModule, String> {
+  use std::collections::HashMap;
+  use std::sync::Mutex;
+  type Stamp = Vec<(std::path::PathBuf, Option<(u64, Option<std::time::SystemTime>)>)>;
+  static MEMO: Mutex<Option<HashMap<(std::path::PathBuf, String), (Stamp, JsSource, std::path::PathBuf)>>> = Mutex::new(None);
+  let stamp_of = |files: &[std::path::PathBuf]| -> Stamp {
+    files.iter().map(|f| (f.clone(), std::fs::metadata(f).ok().map(|m| (m.len(), m.modified().ok())))).collect()
+  };
+  let key = (store.root.clone(), spec.to_string());
+  if let Some((stamp, src, path)) = MEMO.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key)) {
+    let files: Vec<std::path::PathBuf> = stamp.iter().map(|(f, _)| f.clone()).collect();
+    if stamp_of(&files) == *stamp {
+      return Ok(SharedModule { specifier: spec.to_string(), src: src.clone(), path: path.clone() });
+    }
+  }
+  let (m, files) = resolve_module_from_store(store, spec)?;
+  let stamp = stamp_of(&files);
+  MEMO.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new)
+    .insert(key, (stamp, m.src.clone(), m.path.clone()));
+  Ok(m)
+}
+
+/// Resolves an import from the store; also returns the record files it read.
+fn resolve_module_from_store(store: &DataStore, spec: &str) -> Result<(SharedModule, Vec<std::path::PathBuf>), String> {
+  let name = &spec[MODULE_PREFIX.len()..];
+  let parts: Vec<&str> = name.split('/').collect();
+  if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
+    return Err(format!("a command is imported as \"{}<lib>/<ctl>/<cmd>\"", MODULE_PREFIX));
+  }
+  let (lib, ctl, cmd) = (parts[0], parts[1], parts[2]);
+  let no_such = || format!("there is no command {}:{}:{}", lib, ctl, cmd);
+  // The ids on the way to the command, for the memo's stamp.
+  let (ctl_id, id) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    if !store.exists(lib, "controls") { return None; }
+    let list = store.get_data(lib, "controls").get_object("data").get_array("list");
+    let ctl_id = list.objects().into_iter().map(|c| c.object()).find(|c| c.get_string("name") == ctl)?.get_string("id");
+    let cmds = store.get_data(lib, &ctl_id).get_object("data").get_array("cmd");
+    let id = cmds.objects().into_iter().map(|c| c.object()).find(|c| c.get_string("name") == cmd)?.get_string("id");
+    if store.exists(lib, &id) { Some((ctl_id, id)) } else { None }
+  })).ok().flatten().ok_or_else(no_such)?;
+  let record = store.get_data(lib, &id).get_object("data");
+  let typ = record.get_string("type");
+  if !is_lang(&typ) {
+    return Err(format!("{}:{}:{} is a {} command; only JavaScript and TypeScript commands can be imported (call it with flowlang.call)", lib, ctl, cmd, if typ.is_empty() { "non-JavaScript" } else { typ.as_str() }));
+  }
+  let src = JsSource::read(store, lib, &id).ok_or_else(|| format!("{}:{}:{} has no JavaScript body", lib, ctl, cmd))?;
+  let path = store.get_lib_root(lib).join("src").join(lib).join(ctl).join(format!("{}.{}", cmd, src.extension()));
+  let impl_id = if record.has(&typ) { record.get_string(&typ) } else { String::new() };
+  let files = vec![
+    store.root.join(lib).join("meta.json"),
+    store.get_data_file(lib, "controls"),
+    store.get_data_file(lib, &ctl_id),
+    store.get_data_file(lib, &id),
+    store.get_data_file(lib, &impl_id),
+  ];
+  Ok((SharedModule { specifier: spec.to_string(), src, path }, files))
+}
+
+/// Writes the imported commands' generated files (and the flowlang.d.ts
+/// beside them), so the bundler and tsc can read them.
+pub fn write_modules(store: &DataStore, modules: &[SharedModule]) {
+  for m in modules {
+    write_if_changed(&m.path, &command_file(&m.src, "../../flowlang.d.ts"));
+    if let Some(root) = m.path.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+      write_if_changed(&root.join("flowlang.d.ts"), &flowlang_dts(store));
+    }
+  }
+}
+
+/// `compilerOptions.paths` for the imported commands: each specifier to its
+/// generated file, by absolute path.
+pub fn module_paths(modules: &[SharedModule]) -> ndata::dataobject::DataObject {
+  let mut paths = ndata::dataobject::DataObject::new();
+  for m in modules {
+    let file = m.path.canonicalize().unwrap_or_else(|_| m.path.clone());
+    let mut a = ndata::dataarray::DataArray::new();
+    a.push_string(&file.to_string_lossy());
+    paths.put_array(&m.specifier, a);
+  }
+  paths
+}
+
+/// A bundle's key: its own code and that of every command it imports.
+fn bundle_key(src: &JsSource, modules: &[SharedModule]) -> String {
+  if modules.is_empty() { return source_key(src); }
+  use std::collections::hash_map::DefaultHasher;
+  use std::hash::{Hash, Hasher};
+  let mut h = DefaultHasher::new();
+  source_key(src).hash(&mut h);
+  for m in modules { (&m.specifier, source_key(&m.src)).hash(&mut h); }
   format!("{:016x}", h.finish())
 }
 
@@ -573,7 +729,24 @@ fn node_modules(store: &DataStore) -> Option<std::path::PathBuf> {
   store.root.canonicalize().ok().and_then(|r| r.parent().map(|p| p.join("node_modules")))
 }
 
-fn run_esbuild(store: &DataStore, entry: &Path, out: &Path, banner: &str) -> Result<(), BundleError> {
+fn run_esbuild(store: &DataStore, entry: &Path, out: &Path, banner: &str, modules: &[SharedModule]) -> Result<(), BundleError> {
+  // Imported commands resolve through a tsconfig naming each one's file.
+  let tsconfig = if modules.is_empty() { None } else {
+    let mut options = ndata::dataobject::DataObject::new();
+    options.put_object("paths", module_paths(modules));
+    let mut config = ndata::dataobject::DataObject::new();
+    config.put_object("compilerOptions", options);
+    let path = out.with_extension("tsconfig.json");
+    std::fs::write(&path, config.to_string())
+      .map_err(|e| BundleError::Other(format!("could not write {}: {}", path.display(), e)))?;
+    Some(path)
+  };
+  let result = run_esbuild_with(store, entry, out, banner, tsconfig.as_deref());
+  if let Some(p) = tsconfig { let _ = std::fs::remove_file(p); }
+  result
+}
+
+fn run_esbuild_with(store: &DataStore, entry: &Path, out: &Path, banner: &str, tsconfig: Option<&Path>) -> Result<(), BundleError> {
   for exe in esbuild_candidates(store) {
     if exe.components().count() > 1 && !exe.exists() { continue; }
     let mut command = std::process::Command::new(&exe);
@@ -583,6 +756,7 @@ fn run_esbuild(store: &DataStore, entry: &Path, out: &Path, banner: &str) -> Res
              "--log-level=error", "--color=false", "--log-limit=0"])
       .arg(format!("--banner:js={}", banner))
       .arg(format!("--outfile={}", out.display()));
+    if let Some(t) = tsconfig { command.arg(format!("--tsconfig={}", t.display())); }
     if let Some(nm) = node_modules(store) { command.env("NODE_PATH", nm); }
     let output = match command.output() {
       Ok(o) => o,
@@ -674,7 +848,20 @@ fn split_bundle(text: &str, file_name: &str, source_name: &str, key: String) -> 
       } else if let Some((_, inside)) = s.rsplit_once("node_modules/") {
         format!("npm:{}", inside)
       } else {
-        format!("{}/{}", source_name.rsplit_once('/').map(|x| x.0).unwrap_or(source_name), s.trim_start_matches("./"))
+        // Anything else is a generated command file, <lib>/<ctl>/<cmd>.<ext>
+        // under its library's root: an imported command.
+        // The map's paths are relative to the bundle's directory,
+        // <lib>/<ctl>: resolve them from there.
+        let dir = source_name.strip_prefix(MODULE_PREFIX).unwrap_or(source_name).rsplit_once('/').map(|x| x.0).unwrap_or("");
+        let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+        for p in s.split('/') {
+          match p {
+            "" | "." => {}
+            ".." => { parts.pop(); }
+            p => parts.push(p),
+          }
+        }
+        format!("{}{}", MODULE_PREFIX, parts[parts.len().saturating_sub(3)..].join("/"))
       };
       renamed.push_string(&name);
     }

@@ -520,6 +520,28 @@ cargo build --features java_runtime        # loads a JVM via JNI
   source map (`body line N`, `flowlang:<lib>/<ctl>/<cmd>.js:L:C`) and into
   packages as `npm:<path>`.
 
+  **Sharing code between commands.** A command imports another JavaScript or
+  TypeScript command, in any library, as a module — the counterpart of a
+  Python command's `from lib.ctl import other`:
+
+  ```js
+  import format, { slugify } from "flowlang:mylib/text/format";
+  ```
+
+  The default export is the command's function (called directly: no casting,
+  no envelope), and whatever the imported command's own `import` field
+  `export`s comes with it, so a command can be a library of helpers as well
+  as a command. Imports chain, and JavaScript and TypeScript import each
+  other. An edit to an imported command rebuilds the bundles of the commands
+  that import it, and tsc (`jscmd::check`) checks types across the import;
+  an imported command's own type errors are its own check's to report. A
+  frame inside one reads `flowlang:<lib>/<ctl>/<cmd>.js:L:C`. Each importing
+  command bundles its own copy, so module-level state is per importing
+  command; state shared between commands belongs in ndata. An import that
+  names no JavaScript or TypeScript command is an error at its
+  `imports line N` — a Rust, Python or flow command is called with
+  `flowlang.call` instead.
+
   **TypeScript.** A command whose language is `"typescript"` (or `"ts"`) is
   TypeScript: the same body, params typed from the declarations
   (`<cmd>.ts`), compiled by esbuild — so TypeScript commands need esbuild
@@ -581,7 +603,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp
+cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared
 ```
 
 The suite covers JavaScript commands (with `javascript_runtime`: the result
@@ -591,7 +613,7 @@ across languages and back into JavaScript, JavaScript tools over a real
 `flowmcp` session with stdout kept to JSON-RPC, records under both language tags, `check` with and
 without tsc, `flow jstest`, `fetch` against a local server and the other web
 APIs, and imports — CommonJS and ESM packages, source-mapped errors,
-resolution errors — and TypeScript commands, through esbuild), the builder's wrapper guarantees, synchro ordering under
+resolution errors — TypeScript commands, and commands importing each other, through esbuild), the builder's wrapper guarantees, synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when
 `syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values
