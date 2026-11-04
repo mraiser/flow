@@ -581,6 +581,20 @@ cargo build --features java_runtime        # loads a JVM via JNI
   until the graph is quiescent — a topological sort performed on the fly. A
   single flow executes on one thread, but ndata's thread-safety means separate
   `Command::execute` calls can safely run concurrently on different threads.
+- **Stepper and fast path:** `flowlang::stepper` defines execution one step at
+  a time, as events over a frame stack kept in ndata, so a debugger can pause,
+  inspect and resume a run. `Code::execute` takes the same steps through
+  `flowlang::fastrun`, which keeps its bookkeeping native and builds no
+  events. `tests/fastrun_parity.rs` checks that the two agree on results,
+  side effects, errors and step counts, over the testflow commands and
+  thousands of generated flows. `tests/fastrun_speed.rs` checks that
+  `Code::execute` stays at least 3x faster than the stepper.
+- **Step budget:** a run that takes more than 1,000,000 steps ends with an
+  error ("did not finish within 1000000 steps"), so an open loop cannot run
+  forever. A step is one wire, synchro, op evaluation or loop iteration
+  (roughly). A long but legitimate loop can reach it too: testflow's
+  `test_speed` loop (five ops, 17 steps a pass) stops after about 58,800
+  passes.
 - **Synchros:** a case may carry `syncs: [{"src": i, "dest": j}]`, data-less
   edges between two of its operations meaning "op `i` finishes before op `j`
   starts". An operation with an incoming synchro never runs at case start;
@@ -621,6 +635,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
+cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed
 cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared
 ```
 
@@ -631,7 +646,10 @@ across languages and back into JavaScript, JavaScript tools over a real
 `flowmcp` session with stdout kept to JSON-RPC, records under both language tags, `check` with and
 without tsc, `flow jstest` (test files that import, and TypeScript ones, included), `fetch` against a local server and the other web
 APIs, and imports — CommonJS and ESM packages, source-mapped errors,
-resolution errors — TypeScript commands, and commands importing each other, through esbuild), the builder's wrapper guarantees, synchro ordering under
+resolution errors — TypeScript commands, and commands importing each other, through esbuild), the builder's wrapper guarantees, `Code::execute` against the stepper
+(`tests/fastrun_parity.rs`: same results, errors and step counts on the
+testflow commands and on generated flows; `FASTRUN_PARITY_SEEDS=N` widens the
+sweep), synchro ordering under
 `Code::execute` (`tests/synchros.rs`: each fixture's result differs when
 `syncs` is ignored), `hex_encode`/`hex_decode`
 compatibility with `encodeURIComponent`/`decodeURIComponent` (expected values

@@ -185,9 +185,8 @@ impl Command {
   
   pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
     if let Source::Flow(f) = &self.src { 
-      let mut code = Code::new(f.duplicate());
-      //println!("executing: {:?}", self.src);
-      let o = code.execute(args);
+      let mut finish = false;
+      let o = Code::execute_case(f, args, &mut finish);
       DataStore::gc();
       return o;
     }
