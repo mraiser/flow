@@ -1,9 +1,14 @@
-//! The flow stepper: the single source of truth for flow execution (Flow step debugger P6).
+//! The flow stepper: the definition of flow execution (Flow step debugger P6).
 //!
 //! A ready-set scheduler over a FRAME STACK, one event per step. `step_stack` advances a frame
-//! stack one step; `run` continues on the default pick (flowlang's sweep order) to the end, which
-//! is exactly `Code::execute`. The interpreter (`code.rs`) is a thin wrapper over this, so the
-//! debugger and the runtime share one execution semantics (spec: docs/flow-language.md 1.5.4).
+//! stack one step; `run` continues on the default pick (flowlang's sweep order) to the end
+//! (spec: docs/flow-language.md 1.5.4). The debugger drives `step_stack` directly.
+//!
+//! `Code::execute` does not drive this stepper: it runs `crate::fastrun`, which takes the same
+//! steps with native bookkeeping instead of ndata frames and events (driving the stepper made
+//! ordinary execution about 13x slower). tests/fastrun_parity.rs holds fastrun to this module's
+//! results, errors, messages and step counts, so a change to the semantics here must be made in
+//! fastrun too, and that test fails until it is.
 //!
 //! Execution state lives in ndata frames (see `new_frame`): a frame is a case of a flow being run,
 //! with the fired/done flags, the delivered inputs, the per-op results, the shared `out`, the
@@ -25,7 +30,7 @@ use crate::datastore::DataStore;
 pub type Fault = (String, String);
 
 fn fault(code: &str, msg: String) -> Fault { (code.to_string(), msg) }
-fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
+pub(crate) fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
   if let Some(s) = p.downcast_ref::<&str>() { s.to_string() }
   else if let Some(s) = p.downcast_ref::<String>() { s.clone() }
   else { "unknown panic".to_string() }
@@ -349,7 +354,7 @@ fn fire_sync(case: &DataObject, f: &mut DataObject, k: usize) -> DataObject {
   if valid && op_ready(case, f, b as usize) { prio_front(f, b as usize); e.put_int("ready_op", b); }
   e
 }
-fn match_flag(ctype: &str, v: &str, d: Data) -> Result<bool, Fault> {
+pub(crate) fn match_flag(ctype: &str, v: &str, d: Data) -> Result<bool, Fault> {
   let bad = |t: &str| fault("panic", format!("match literal '{}' does not parse as {}", v, t));
   Ok(match ctype {
     "int" => { if !d.is_int() { false } else { match v.parse::<i64>() { Ok(x) => d.int() == x, Err(_) => return Err(bad("int")) } } }
@@ -832,10 +837,11 @@ pub struct StepRun {
   pub max_depth: i64,
 }
 
-/// Continue a frame stack to its end on the default pick: this IS `Code::execute`. The stack must
-/// already hold a seeded root frame (see `new_frame`, phase "enter"). Runs `step_stack` with an
-/// empty pick until the root frame's phase is "ended", then reads the outcome off it. Fast: no
-/// events, ready sets, or state copies are produced here.
+/// Continue a frame stack to its end on the default pick: the run `Code::execute` reproduces
+/// (through `crate::fastrun`). The stack must already hold a seeded root frame (see `new_frame`,
+/// phase "enter"). Runs `step_stack` with an empty pick until the root frame's phase is "ended",
+/// then reads the outcome off it. Every step still builds its event (with deep copies of the
+/// values it reports) and drops it, so this is the slow path; use `Code::execute` to just run.
 pub fn run(frames: &mut DataArray, budget: i64) -> StepRun {
   let max = if budget <= 0 { 1_000_000 } else { budget };
   let pick = DataObject::new();

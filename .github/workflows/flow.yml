@@ -1,0 +1,24 @@
+name: flow
+
+# The flow language itself: the stepper (the semantics, step by step), synchros, and
+# Code::execute's fast path, held to the stepper's results, errors and step counts and
+# required to stay several times faster than it.
+on:
+  push:
+  pull_request:
+
+jobs:
+  flow-language:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["", "serde_support"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Stepper, synchros, fast-path parity and speed
+        run: cargo test --release --features=${{ matrix.features }} --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed
+      - name: Fast-path parity, wide sweep
+        run: FASTRUN_PARITY_SEEDS=20000 cargo test --release --features=${{ matrix.features }} --test fastrun_parity

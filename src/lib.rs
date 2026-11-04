@@ -20,6 +20,7 @@ pub mod blake2b;
 pub mod aes;
 pub mod mcp;
 pub mod stepper;
+pub mod fastrun;
 
 pub mod cmdinit;
 

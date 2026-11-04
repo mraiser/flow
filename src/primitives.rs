@@ -112,6 +112,16 @@ impl Primitive {
     }
   }
   
+  /// The primitive's function, or None when no primitive has that name (`new` panics instead).
+  #[allow(static_mut_refs)]
+  pub fn find(name: &str) -> Option<Transform> {
+    Primitive::init();
+    unsafe {
+      let map = PRIMITIVES.read().unwrap();
+      map.as_ref().unwrap().get(name).map(|t| t.0)
+    }
+  }
+
   pub fn execute(&self, args:DataObject) -> DataObject {
     (self.func)(args)
   }
