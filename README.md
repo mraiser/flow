@@ -604,6 +604,26 @@ cargo build --features java_runtime        # loads a JVM via JNI
   (roughly). A long but legitimate loop can reach it too: testflow's
   `test_speed` loop (five ops, 17 steps a pass) stops after about 58,800
   passes.
+- **Inputs, outputs and literals** (flowlang 0.3.47 and later):
+  - An op input is awaited only when a wire targets that input; an unwired
+    input is null. (Before, an input was awaited when its *name* was any
+    wire's destination in the case, so an unwired input that shared a name
+    with a wired terminal waited forever.)
+  - A command op's outputs take the callee's outputs of the same name. Only
+    when each side has exactly one output do they map by position, whatever
+    the names. (Before, every mapping was by position over unordered keys, so
+    a callee with several outputs filled the op's outputs at random.) An op
+    output the callee lacks is an `absent-output` error naming it.
+  - A string constant has its escapes read (`\n`, `\t`, `\"`, `\\`,
+    `\uXXXX` and so on). Anything else is kept as written, such as a bare
+    quote or a lone backslash; before, such text failed as "bad string
+    literal".
+  - An op of an unknown type is an error naming the type; before, it yielded
+    `{}`.
+
+  No flow that ran deterministically before changes its result.
+  `tests/flow_semantics.rs` pins each rule in the stepper and in
+  `Code::execute`.
 - **Synchros:** a case may carry `syncs: [{"src": i, "dest": j}]`, data-less
   edges between two of its operations meaning "op `i` finishes before op `j`
   starts". An operation with an incoming synchro never runs at case start;
@@ -666,7 +686,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors --test cast_params
+cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors --test cast_params --test flow_semantics
 cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared
 ```
 
