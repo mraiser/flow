@@ -19,6 +19,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Stepper, synchros, fast-path parity and speed
-        run: cargo test --release --features=${{ matrix.features }} --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors
+        run: cargo test --release --features=${{ matrix.features }} --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors --test cast_params
       - name: Fast-path parity, wide sweep
         run: FASTRUN_PARITY_SEEDS=20000 cargo test --release --features=${{ matrix.features }} --test fastrun_parity
