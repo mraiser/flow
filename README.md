@@ -642,7 +642,10 @@ cargo build --features java_runtime        # loads a JVM via JNI
   failure is returned, never printed. `Command::try_cast_params` checks
   arguments against the declared types and names the one that does not fit
   (`parameter 'b' of testflow:test_add must be an Integer, not "x7"`).
-  `cast_params` panics with the same message.
+  `cast_params` panics with the same message. Both cast each argument to what
+  the command's generated wrapper reads. Integer, Float, Boolean, JSONObject and
+  JSONArray are converted (from strings too). Any and InputStream pass through
+  unchanged. String and every other type become strings.
 - **Code generation over macros:** `flowb` writes ordinary Rust source
   (command wrappers, registries, the typed API) rather than using procedural
   macros — what runs is readable code checked into your tree.
@@ -663,7 +666,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors
+cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors --test cast_params
 cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared
 ```
 

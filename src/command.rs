@@ -147,9 +147,11 @@ impl Command {
     Command::new(lib, &id)
   }
   
-  /// Cast `params` in place to this command's declared parameter types (Integer, Float,
-  /// Boolean, JSONObject, JSONArray; anything else becomes a string). A missing `Any`
-  /// parameter becomes null. Panics with `try_cast_params`'s message when a value does not fit.
+  /// Cast `params` in place to this command's declared parameter types, as the generated
+  /// wrapper reads them (`builder::util::lookup_rust_api_data_type`): Integer, Float, Boolean,
+  /// JSONObject and JSONArray are converted; Any and InputStream pass through unchanged; String
+  /// and every other type become a string. A missing `Any` parameter becomes null. Panics with
+  /// `try_cast_params`'s message when a value does not fit.
   pub fn cast_params(&self, params:DataObject) {
     if let Err(e) = self.try_cast_params(params) { panic!("{}", e); }
   }
@@ -198,6 +200,11 @@ impl Command {
               _ => return Err(bad(&d)),
             }
           }
+        }
+        else if t == "Any" || t == "InputStream" {
+          // As is: the generated wrapper reads Any with get_property (any value) and
+          // InputStream with get_bytes. Both used to fall through to the string cast below,
+          // so a list passed as Any arrived as the text "[1,2,3]" and bytes broke get_bytes.
         }
         else { 
           if d.is_string() { params.put_string(&n, &d.string()); }
