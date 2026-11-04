@@ -81,10 +81,73 @@ pub fn case_at(body: &DataObject, idx: i64) -> Option<DataObject> {
 fn n_syncs(case: &DataObject) -> usize { if case.has("syncs") { case.get_array("syncs").len() } else { 0 } }
 fn sync_valid(s: i64, d: i64, n: usize) -> bool { s >= 0 && d >= 0 && s != d && (s as usize) < n && (d as usize) < n }
 fn bools(n: usize) -> DataArray { let mut a = DataArray::new(); for _ in 0..n { a.push_boolean(false); } a }
-fn dest_names(case: &DataObject) -> Vec<String> {
+/// The op inputs some wire targets, as (op index, input name). An op input is AWAITED only
+/// when it is one of these; every other input is pre-delivered as null at case start.
+/// (Before flowlang 0.3.47 an input was awaited when its NAME was any wire's dest name in the
+/// case, so an unwired input sharing a name with a wired terminal waited forever.)
+pub(crate) fn wired_inputs(case: &DataObject) -> Vec<(i64, String)> {
   let mut v = Vec::new();
-  for c in case.get_array("cons").objects() { v.push(c.object().get_array("dest").get_string(1)); }
+  for c in case.get_array("cons").objects() { let d = c.object().get_array("dest"); v.push((d.get_int(0), d.get_string(1))); }
   v
+}
+
+/// A command op's result from its callee's (flowlang 0.3.47): when the op and the callee each
+/// have exactly one output they map by position, whatever their names; otherwise each of the
+/// op's outputs takes the callee's output of the same name. `keys` are the callee's outputs
+/// (a flow callee's return bar; `a` for a Rust, Python or JavaScript callee).
+pub(crate) fn map_outputs(outs: &[String], keys: &[String], res: &DataObject) -> Result<DataObject, Fault> {
+  let mut out = DataObject::new();
+  if outs.len() == 1 && keys.len() == 1 {
+    let (key1, key2) = (&outs[0], &keys[0]);
+    if !res.has(key2) { return Err(fault("absent-output", format!("the callee's result lacks '{}' (flowlang panics in get_property)", key2))); }
+    out.set_property(key1, res.get_property(key2));
+    return Ok(out);
+  }
+  for key1 in outs {
+    if !keys.contains(key1) {
+      let mut ks = keys.to_vec(); ks.sort();
+      return Err(fault("absent-output", format!("command op output '{}' names no output of the callee (its outputs: {})", key1, ks.join(", "))));
+    }
+    if !res.has(key1) { return Err(fault("absent-output", format!("the callee's result lacks '{}' (flowlang panics in get_property)", key1))); }
+    out.set_property(key1, res.get_property(key1));
+  }
+  Ok(out)
+}
+
+/// A string constant's value: its escapes read (\n \t \r \b \f \/ \\ \" and \uXXXX,
+/// surrogate pairs included), everything else as written - a bare quote, a lone or unknown
+/// backslash. (Before flowlang 0.3.47 the literal was parsed as the inside of a JSON string,
+/// so text that was not a valid one failed as "bad string literal".)
+pub(crate) fn string_literal(v: &str) -> String {
+  let cs: Vec<char> = v.chars().collect();
+  let mut out = String::with_capacity(v.len());
+  let hex4 = |i: usize| -> Option<u32> {
+    if i + 4 > cs.len() { return None; }
+    let h: String = cs[i..i + 4].iter().collect();
+    u32::from_str_radix(&h, 16).ok()
+  };
+  let mut i = 0;
+  while i < cs.len() {
+    let c = cs[i];
+    if c != '\\' || i + 1 >= cs.len() { out.push(c); i += 1; continue; }
+    let e = cs[i + 1];
+    let simple = match e { 'n' => Some('\n'), 't' => Some('\t'), 'r' => Some('\r'), 'b' => Some('\u{8}'), 'f' => Some('\u{c}'), '/' => Some('/'), '\\' => Some('\\'), '"' => Some('"'), _ => None };
+    if let Some(x) = simple { out.push(x); i += 2; continue; }
+    if e == 'u' {
+      if let Some(u) = hex4(i + 2) {
+        if (0xD800..0xDC00).contains(&u) && i + 7 < cs.len() && cs[i + 6] == '\\' && cs[i + 7] == 'u' {
+          if let Some(lo) = hex4(i + 8) {
+            if (0xDC00..0xE000).contains(&lo) {
+              if let Some(ch) = char::from_u32(0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00)) { out.push(ch); i += 12; continue; }
+            }
+          }
+        }
+        if let Some(ch) = char::from_u32(u) { out.push(ch); i += 6; continue; }
+      }
+    }
+    out.push(c); i += 1; // not an escape: the backslash as written
+  }
+  out
 }
 fn syncs_ok(case: &DataObject, f: &DataObject, i: usize) -> bool {
   if !case.has("syncs") { return true; }
@@ -163,13 +226,11 @@ fn diag_case(case: &DataObject) -> DataArray {
   let mut a = DataArray::new();
   let cmds = case.get_array("cmds");
   let mut exact: Vec<(i64, String)> = Vec::new();
-  let mut names: Vec<String> = Vec::new();
-  for c in case.get_array("cons").objects() { let d = c.object().get_array("dest"); exact.push((d.get_int(0), d.get_string(1))); names.push(d.get_string(1)); }
+  for c in case.get_array("cons").objects() { let d = c.object().get_array("dest"); exact.push((d.get_int(0), d.get_string(1))); }
   for i in 0..cmds.len() {
     for name in cmds.get_object(i).get_object("in").keys() {
       let fan = exact.iter().filter(|(x, y)| *x == i as i64 && *y == name).count();
       if fan > 1 { a.push_string(&format!("I-1 op {} input '{}' has {} incoming wires: it runs once (flowlang would re-run it)", i, name, fan)); }
-      if fan == 0 && names.contains(&name) { a.push_string(&format!("I-1 op {} input '{}' is awaited by name but no wire targets it: the op can never be ready", i, name)); }
     }
   }
   a
@@ -203,14 +264,14 @@ pub fn new_frame(args: DataObject, kind: &str, body: DataObject, path: DataArray
   f.put_string("outcome", "");
   f
 }
-// seed: fresh case state; inputs whose NAME is no wire's dest name anywhere in the case are pre-delivered (null).
+// seed: fresh case state; an op input no wire targets is pre-delivered (null) (wired_inputs).
 fn seed_case(case: &DataObject, f: &mut DataObject) -> DataArray {
   let cmds = case.get_array("cmds");
   let n = cmds.len();
   f.put_array("wires", bools(case.get_array("cons").len()));
   f.put_array("syncs", bools(n_syncs(case)));
   f.put_array("done", bools(n));
-  let dn = dest_names(case);
+  let wi = wired_inputs(case);
   let mut results = DataArray::new(); let mut inputs = DataArray::new(); let mut dlv = DataArray::new();
   let mut pre = DataArray::new();
   for i in 0..n {
@@ -218,7 +279,7 @@ fn seed_case(case: &DataObject, f: &mut DataObject) -> DataArray {
     let op = cmds.get_object(i);
     let mut iv = DataObject::new(); let mut dv = DataObject::new();
     for name in op.get_object("in").keys() {
-      if !dn.contains(&name) {
+      if !wi.iter().any(|(x, y)| *x == i as i64 && *y == name) {
         iv.put_null(&name); dv.put_boolean(&name, true);
         let mut p = DataArray::new(); p.push_int(i as i64); p.push_string(&name); pre.push_array(p);
       }
@@ -461,7 +522,7 @@ fn op_body(op: &DataObject, in1: DataObject) -> Result<(DataObject, bool), Fault
         "int" => match v.parse::<i64>() { Ok(x) => out.put_int(k, x), Err(e) => return Err(bad(e.to_string())) },
         "decimal" => match v.parse::<f64>() { Ok(x) => out.put_float(k, x), Err(e) => return Err(bad(e.to_string())) },
         "boolean" => match v.parse::<bool>() { Ok(x) => out.put_boolean(k, x), Err(e) => return Err(bad(e.to_string())) },
-        "string" => match DataObject::try_from_string(&format!("{{\"v\":\"{}\"}}", v)) { Ok(o) => out.put_string(k, &o.get_string("v")), Err(_) => return Err(bad("bad string literal".to_string())) },
+        "string" => out.put_string(k, &string_literal(&v)),
         "object" => { let vv = v.clone(); match panic::catch_unwind(panic::AssertUnwindSafe(move || DataObject::from_string(&vv))) { Ok(o) => out.put_object(k, o), Err(p) => return Err(bad(panic_text(&p))) } },
         "array" => { let vv = v.clone(); match panic::catch_unwind(panic::AssertUnwindSafe(move || DataArray::from_string(&vv))) { Ok(o) => out.put_array(k, o), Err(p) => return Err(bad(panic_text(&p))) } },
         _ => out.put_null(k),
@@ -489,14 +550,7 @@ fn op_body(op: &DataObject, in1: DataObject) -> Result<(DataObject, bool), Fault
     };
     match res {
       None => { b = false; }
-      Some(r) => {
-        for (i, key1) in outs.iter().enumerate() {
-          if i >= keys.len() { return Err(fault("absent-output", format!("command op output '{}' has no positional counterpart among the callee's {} output(s) (I-7)", key1, keys.len()))); }
-          let key2 = &keys[i];
-          if !r.has(key2) { return Err(fault("absent-output", format!("the callee's result lacks '{}' (flowlang panics in get_property)", key2))); }
-          out.set_property(key1, r.get_property(key2));
-        }
-      }
+      Some(r) => { out = map_outputs(&outs, &keys, &r)?; }
     }
   } else if typ == "persistent" {
     let mut g = DataStore::globals();
@@ -510,10 +564,13 @@ fn op_body(op: &DataObject, in1: DataObject) -> Result<(DataObject, bool), Fault
     if !op.has("ctype") { return Err(fault("panic", "match op has no ctype".to_string())); }
     b = match_flag(&op.get_string("ctype"), &v, in1.get_property(&ks[0]))?;
   }
-  // undefined and unknown types: flowlang prints UNIMPLEMENTED and the op yields {}
+  // undefined yields {}; an unknown type is an error (before flowlang 0.3.47 it yielded {} too)
+  else if typ != "undefined" && typ != "local" {
+    return Err(fault("panic", format!("op type '{}' is unknown", typ)));
+  }
   Ok((out, b))
 }
-// A closed frame's result as the op's result: fail = b false + EMPTY result; a command maps by position (I-7).
+// A closed frame's result as the op's result: fail = b false + EMPTY result; a command's outputs map by name (map_outputs).
 fn closing_result(op: &DataObject, ip: &DataObject) -> Result<(DataObject, bool, bool), Fault> {
   let r = ip.get_object("res");
   if r.get_string("oc") == "fail" { return Ok((DataObject::new(), false, false)); }
@@ -521,14 +578,7 @@ fn closing_result(op: &DataObject, ip: &DataObject) -> Result<(DataObject, bool,
   if op.get_string("type") == "local" { return Ok((o, true, r.get_boolean("fin"))); }
   let keys = strs(&ip.get_array("keys"));
   let outs: Vec<String> = op.get_object("out").keys();
-  let mut out = DataObject::new();
-  for (i, key1) in outs.iter().enumerate() {
-    if i >= keys.len() { return Err(fault("absent-output", format!("command op output '{}' has no positional counterpart among the callee's {} output(s) (I-7)", key1, keys.len()))); }
-    let key2 = &keys[i];
-    if !o.has(key2) { return Err(fault("absent-output", format!("the callee's result lacks '{}' (flowlang panics in get_property)", key2))); }
-    out.set_property(key1, o.get_property(key2));
-  }
-  Ok((out, true, false))
+  Ok((map_outputs(&outs, &keys, &o)?, true, false))
 }
 // The op's condition; a finish rule on it marks the ENCLOSING frame's flag (via ffin and the finish effect).
 fn condition(op: &DataObject, b: bool, ffin: &mut bool) -> Option<String> {

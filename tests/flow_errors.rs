@@ -58,12 +58,12 @@ fn outer_body() -> String {
     "cons":[{{"src":[-1,"vs"],"dest":[0,"v"]}}]}}"#, n = N, l = L, p = P, inner = check_body())
 }
 
-/// Op 1's input x is awaited by name (a wire into the return bar is named x) but no wire reaches it.
+/// A wire cycle (I-2): op 0 waits for op 1 and op 1 for op 0, so the case can never finish.
 fn stuck_body() -> String {
-  format!(r#"{{"input":{{"a":{n}}},"output":{{"x":{n},"y":{n}}},"cmds":[
-    {{"type":"constant","ctype":"int","name":"1","in":{{}},"out":{{"a":{n}}},{p}}},
-    {{"type":"local","name":"orphan","in":{{"x":{n}}},"out":{{"y":{n}}},{p}}}],
-    "cons":[{{"src":[0,"a"],"dest":[-2,"x"]}},{{"src":[1,"y"],"dest":[-2,"y"]}}]}}"#, n = N, p = P)
+  format!(r#"{{"input":{{}},"output":{{"r":{n}}},"cmds":[
+    {{"type":"local","name":"a","in":{{"x":{n}}},"out":{{"y":{n}}},{p}}},
+    {{"type":"local","name":"b","in":{{"x":{n}}},"out":{{"y":{n}}},{p}}}],
+    "cons":[{{"src":[0,"y"],"dest":[1,"x"]}},{{"src":[1,"y"],"dest":[0,"x"]}},{{"src":[1,"y"],"dest":[-2,"r"]}}]}}"#, n = N, p = P)
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn flow_errors() {
   let e = failure(&stuck_body(), "{}");
   check(e.code == "stall", format!("code: {}", e));
   check(e.at.len() == 1 && e.at[0].op.is_none(), format!("a stall belongs to the case: {:?}", e.at));
-  check(e.msg.starts_with("the case is stuck: wires [1] never fired, and ops [1] never ran"), format!("stall msg: {}", e.msg));
+  check(e.msg == "the case is stuck: wires [0, 1, 2] never fired, and ops [0, 1] never ran (a cycle of wires and synchros, I-2)", format!("stall msg: {}", e.msg));
 
   // 4. The envelope callers hand back.
   let env = CodeException::Fail(e.clone()).to_envelope();

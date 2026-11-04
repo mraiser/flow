@@ -39,7 +39,7 @@ use crate::code::{CodeException, FlowError, FlowSite};
 use crate::command::{Command, Source};
 use crate::datastore::DataStore;
 use crate::primitives::Primitive;
-use crate::stepper::{match_flag, panic_text};
+use crate::stepper::{map_outputs, match_flag, panic_text, string_literal};
 
 /// The step budget `Code::execute` runs under (the same cap as `stepper::run` with budget <= 0).
 pub const DEFAULT_BUDGET: i64 = 1_000_000;
@@ -94,11 +94,12 @@ fn sync_valid(s: i64, d: i64, n: usize) -> bool { s >= 0 && d >= 0 && s != d && 
 
 fn compile(c: &Case) -> CCase {
   let n = c.cmds.len();
-  let dest_names: HashSet<&str> = c.cons.iter().map(|x| x.dest.name.as_str()).collect();
+  // an op input is awaited only when a wire targets it (stepper::wired_inputs)
+  let wired: HashSet<(i64, &str)> = c.cons.iter().map(|x| (x.dest.index, x.dest.name.as_str())).collect();
   let mut ops = Vec::with_capacity(n);
   for (i, op) in c.cmds.iter().enumerate() {
     let ins: Vec<String> = op.input.keys().cloned().collect();
-    let pre = ins.iter().map(|k| !dest_names.contains(k.as_str())).collect();
+    let pre = ins.iter().map(|k| !wired.contains(&(i as i64, k.as_str()))).collect();
     let outs: Vec<String> = op.output.keys().cloned().collect();
     let list_in = op.input.iter().filter(|(_, nd)| nd.mode == "list").map(|(k, _)| k.clone()).collect();
     let mut list_out = Vec::new();
@@ -412,7 +413,7 @@ fn op_body(op: &COp, body: Body, in1: DataObject) -> Result<(DataObject, bool), 
           "int" => match v.parse::<i64>() { Ok(x) => out.put_int(k, x), Err(e) => return Err(bad(e.to_string())) },
           "decimal" => match v.parse::<f64>() { Ok(x) => out.put_float(k, x), Err(e) => return Err(bad(e.to_string())) },
           "boolean" => match v.parse::<bool>() { Ok(x) => out.put_boolean(k, x), Err(e) => return Err(bad(e.to_string())) },
-          "string" => match DataObject::try_from_string(&format!("{{\"v\":\"{}\"}}", v)) { Ok(o) => out.put_string(k, &o.get_string("v")), Err(_) => return Err(bad("bad string literal".to_string())) },
+          "string" => out.put_string(k, &string_literal(v)),
           "object" => { let vv = v.clone(); match panic::catch_unwind(panic::AssertUnwindSafe(move || DataObject::from_string(&vv))) { Ok(o) => out.put_object(k, o), Err(p) => return Err(bad(panic_text(&p))) } },
           "array" => { let vv = v.clone(); match panic::catch_unwind(panic::AssertUnwindSafe(move || DataArray::from_string(&vv))) { Ok(o) => out.put_array(k, o), Err(p) => return Err(bad(panic_text(&p))) } },
           _ => out.put_null(k),
@@ -435,13 +436,7 @@ fn op_body(op: &COp, body: Body, in1: DataObject) -> Result<(DataObject, bool), 
       };
       match res {
         None => { b = false; }
-        Some(r) => {
-          for (i, key1) in op.outs.iter().enumerate() {
-            if i >= 1 { return Err(fault("absent-output", format!("command op output '{}' has no positional counterpart among the callee's {} output(s) (I-7)", key1, 1))); }
-            if !r.has("a") { return Err(fault("absent-output", "the callee's result lacks 'a' (flowlang panics in get_property)".to_string())); }
-            out.set_property(key1, r.get_property("a"));
-          }
-        }
+        Some(r) => { out = map_outputs(&op.outs, &["a".to_string()], &r)?; }
       }
     }
     OpType::Persistent => {
@@ -457,27 +452,20 @@ fn op_body(op: &COp, body: Body, in1: DataObject) -> Result<(DataObject, bool), 
       let ctype = match &op.ctype { Some(c) => c, None => return Err(fault("panic", "match op has no ctype".to_string())) };
       b = match_flag(ctype, v, in1.get_property(&ks[0]))?;
     }
-    // undefined and unknown types yield {}
-    OpType::Undefined | OpType::Other => {}
+    OpType::Undefined => {}
+    OpType::Other => return Err(fault("panic", format!("op type '{}' is unknown", op.type_name))),
   }
   Ok((out, b))
 }
 
-/// A closed frame's result as the op's result: fail = b false + EMPTY result; a command maps by position (I-7).
+/// A closed frame's result as the op's result: fail = b false + EMPTY result; a command's outputs map by name (map_outputs).
 fn closing_result(op: &COp, spec: &Spec, child: FrameEnd) -> Result<(DataObject, bool, bool), Fault> {
   if child.oc == Oc::Fail { return Ok((DataObject::new(), false, false)); }
   let keys = match spec {
     Spec::Local(_) => return Ok((child.out, true, child.finish)),
     Spec::Callee(cc) => &cc.out_keys,
   };
-  let mut out = DataObject::new();
-  for (i, key1) in op.outs.iter().enumerate() {
-    if i >= keys.len() { return Err(fault("absent-output", format!("command op output '{}' has no positional counterpart among the callee's {} output(s) (I-7)", key1, keys.len()))); }
-    let key2 = &keys[i];
-    if !child.out.has(key2) { return Err(fault("absent-output", format!("the callee's result lacks '{}' (flowlang panics in get_property)", key2))); }
-    out.set_property(key1, child.out.get_property(key2));
-  }
-  Ok((out, true, false))
+  Ok((map_outputs(&op.outs, keys, &child.out)?, true, false))
 }
 
 fn list_count(in1: &DataObject, list_in: &[String]) -> Result<usize, Fault> {
@@ -686,7 +674,7 @@ fn stall(ctx: &mut Ctx, st: &St) -> Fatal {
   if !us.is_empty() { parts.push(format!("synchros {:?}", us)); }
   let mut msg = format!("the case is stuck: {} never fired", parts.join(" and "));
   if !nr.is_empty() { msg.push_str(&format!(", and ops {:?} never ran", nr)); }
-  msg.push_str(" (an op input awaited by name that no wire reaches, I-1, or a cycle of wires and synchros, I-2)");
+  msg.push_str(" (a cycle of wires and synchros, I-2)");
   ctx.stall = Some((uw, us, nr));
   fatal("stall", msg)
 }

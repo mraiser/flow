@@ -35,7 +35,9 @@ fn i4_next_in_last_case_is_an_error_not_a_panic() {
   }
 }
 
-const STUCK: &str = "{\"cmds\":[{\"in\":{\"x\":{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}},\"name\":\"takes_x\",\"out\":{\"y\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":0}},\"pos\":{\"x\":-1,\"y\":0,\"z\":0},\"type\":\"local\",\"width\":1.5},{\"in\":{\"x\":{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}},\"name\":\"orphan\",\"out\":{\"z\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":0}},\"pos\":{\"x\":1,\"y\":0,\"z\":0},\"type\":\"local\",\"width\":1.5}],\"cons\":[{\"dest\":[0,\"x\"],\"src\":[-1,\"a\"]},{\"dest\":[-2,\"q\"],\"src\":[0,\"y\"]},{\"dest\":[-2,\"r\"],\"src\":[1,\"z\"]}],\"input\":{\"a\":{\"mode\":\"in\",\"type\":\"String\",\"x\":0}},\"output\":{\"q\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":-0.3},\"r\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":0.3}}}";
+// A wire cycle (I-2): op 0 waits for op 1 and op 1 for op 0. (This fixture used to be an unwired
+// input sharing a wired name; since flowlang 0.3.47 such an input is null, not awaited.)
+const STUCK: &str = "{\"cmds\":[{\"in\":{\"x\":{\"mode\":\"regular\",\"type\":\"Any\",\"x\":0}},\"name\":\"a\",\"out\":{\"y\":{\"mode\":\"regular\",\"type\":\"Any\",\"x\":0}},\"pos\":{\"x\":0,\"y\":0,\"z\":0},\"width\":1.5,\"type\":\"local\"},{\"in\":{\"x\":{\"mode\":\"regular\",\"type\":\"Any\",\"x\":0}},\"name\":\"b\",\"out\":{\"y\":{\"mode\":\"regular\",\"type\":\"Any\",\"x\":0}},\"pos\":{\"x\":0,\"y\":0,\"z\":0},\"width\":1.5,\"type\":\"local\"}],\"cons\":[{\"dest\":[1,\"x\"],\"src\":[0,\"y\"]},{\"dest\":[0,\"x\"],\"src\":[1,\"y\"]},{\"dest\":[-2,\"r\"],\"src\":[1,\"y\"]}],\"input\":{},\"output\":{\"r\":{\"mode\":\"regular\",\"type\":\"Any\",\"x\":0}}}";
 
 #[test]
 fn stuck_flow_is_an_error_not_a_hang() {

@@ -19,9 +19,9 @@
 //!
 //! The generator stays away from what is random in BOTH implementations, because two runs of
 //! it would not agree even with the same implementation: the order of an ndata object's keys
-//! (`keys`, `to_json`, `to_string` and `set` could expose it), a command op with more than one
-//! output (mapped by position over unordered keys, I-7), and a persistent or match op with
-//! more than one input. It also never feeds a loop output into a list input, because that
+//! (`keys`, `to_json`, `to_string` and `set` could expose it), and a persistent or match op
+//! with more than one input. (Command ops with several outputs map by name since flowlang
+//! 0.3.47, so they are generated too.) It also never feeds a loop output into a list input, because that
 //! panics flowlang outside any guard, and never builds cyclic data (no `push`).
 //!
 //! One #[test] on purpose: the store and ndata globals initialize once per process.
@@ -147,7 +147,7 @@ fn norm(s: &str) -> String {
 /// op's key order, which is random in both runs; compare those messages without the name.
 fn norm_msg(s: &str) -> String {
   let mut m = norm(s);
-  for lead in ["lacks output '", "list input '", "loop output '", "command op output '"] {
+  for lead in ["lacks output '", "list input '", "loop output '", "command op output '", "result lacks '"] {
     if let Some(p) = m.find(lead) {
       let start = p + lead.len();
       if let Some(q) = m[start..].find('\'') { m.replace_range(start..start + q, "*"); }
@@ -208,8 +208,9 @@ const PRIMS: [(&str, &[&str]); 20] = [
   ("no_such_primitive", &["a"]),
 ];
 
-// command op callees in data/testflow (one output each), and broken references
-const CALLEES: [(&str, &[&str]); 6] = [
+// command op callees in data/testflow, and broken references
+const CALLEES: [(&str, &[&str]); 7] = [
+  ("testflow:testflow:izmuzm18037d796f1i467", &["a"]),     // test_loop (flow, two outputs: a and b)
   ("testflow:testflow:zkuwhn1802d57cb8ak1c", &["a", "b"]), // test_add (flow)
   ("testflow:testflow:ooizjt1803765b08ak212", &["a"]),     // test_conditionals (flow, case chain)
   ("testflow:testflow:nrnlzl1807a95053fz96c", &["a"]),     // test_rust (rust)
@@ -302,7 +303,9 @@ fn gen_case(rng: &mut Rng, depth: usize, inputs: &[String], outputs: &[String]) 
       if !cmd.is_empty() { op.put_string("cmd", cmd); }
       op.put_string("name", "call");
       ins = ar.iter().map(|s| s.to_string()).collect();
-      outs = vec![rng.pick(&["result", "a"]).to_string()];
+      // one output (mapped by position to a one-output callee) or several (mapped by name;
+      // "result" and "x" are no callee's output)
+      outs = if rng.chance(60) { vec![rng.pick(&["result", "a"]).to_string()] } else { subset(rng, &["a", "b", "x", "result"], 2, 3) };
     } else if kind < 96 {
       typ = "undefined";
       op.put_string("name", "undefined");
@@ -324,7 +327,6 @@ fn gen_case(rng: &mut Rng, depth: usize, inputs: &[String], outputs: &[String]) 
       in_o.put_object(k, node(m));
     }
     let mut out_o = DataObject::new();
-    if typ == "command" { outs.truncate(1); }
     for k in &outs {
       let r = rng.below(100);
       if r < 12 { out_o.put_object(k, node("list")); }
