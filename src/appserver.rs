@@ -152,7 +152,7 @@ pub fn event_loop() {
           let data = data.clone();
           thread::spawn(move || {
             let command = Command::new(&lib, &id);
-            let  _ = command.execute(data);
+            if let Err(e) = command.execute(data) { eprintln!("{}:{} (event hook) {}", command.lib, command.name, e); }
           });
         }
       }
@@ -186,7 +186,9 @@ fn timer_loop() {
           let mut ts = timers.clone();
           thread::spawn(move || {
             let cmd = Command::new(&db, &cmdid);
-            let _x = cmd.execute(params).unwrap();
+            // A failed run is reported and a repeating timer still runs again (an unwrap here
+            // used to kill the thread before it could reschedule).
+            if let Err(e) = cmd.execute(params) { eprintln!("{}:{} (timer) {}", cmd.lib, cmd.name, e); }
               
             if repeat {
               let next = now + timer.get_int("intervalmillis");

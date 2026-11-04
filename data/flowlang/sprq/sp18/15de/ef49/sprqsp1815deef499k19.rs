@@ -1,5 +1,5 @@
 thread::spawn(move || {
   let cmd = Command::lookup(&lib, &ctl, &cmd);
-  let _x = cmd.execute(params).unwrap();
+  if let Err(e) = cmd.execute(params) { eprintln!("{}:{} (in a thread) {}", cmd.lib, cmd.name, e); }
 });
 1

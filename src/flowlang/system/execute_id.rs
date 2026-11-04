@@ -52,7 +52,7 @@ pub fn execute(o: DataObject) -> DataObject {
 pub fn execute_id(lib: String, id: String, params: DataObject) -> DataObject {
 let cmd = Command::new(&lib, &id);
 let ret = cmd.return_type.to_owned();
-let o = cmd.execute(params).unwrap();
+let o = match cmd.execute(params) { Ok(o) => o, Err(e) => panic!("{}", e) };
 
 if ret == "FLAT" { return o; }
 

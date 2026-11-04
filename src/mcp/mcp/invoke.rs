@@ -78,7 +78,7 @@ pub fn invoke(data: DataObject) -> DataObject {
 
     match outcome {
         Ok((Ok(v), return_type)) => wrap_value(v, return_type),
-        Ok((Err(e), _)) => make_error(format!("{:?}", e)),
+        Ok((Err(e), _)) => make_error(format!("Tool '{}' failed: {}", tool, e)),
         Err(panic_payload) => {
             let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
                 (*s).to_string()

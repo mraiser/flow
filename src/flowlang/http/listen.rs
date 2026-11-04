@@ -290,7 +290,16 @@ for stream in listener.incoming() {
 
       let result = panic::catch_unwind(|| {
         let mut p = DataObject::get(dataref);
-        let o = command.execute(request).unwrap();
+        let o = match command.execute(request) {
+          Ok(o) => o,
+          Err(e) => {
+            let mut o = DataObject::new();
+            o.put_string("body", &e.to_envelope().to_string());
+            o.put_int("code", 500);
+            o.put_string("mimetype", "application/json");
+            o
+          }
+        };
         p.put_object("a", o);
       });
       

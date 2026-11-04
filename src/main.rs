@@ -66,9 +66,30 @@ pub fn main() {
       s = s + &line.unwrap();
     }
     
-    let args = DataObject::from_string(&s);
-    let cmd = Command::lookup(lib, ctl, cmd);
-    let res = cmd.execute(args).unwrap();
-    println!("{}", res.to_string());
+    // A failure prints {"status": "err", "msg": ...} (for a failed flow, with "flow_error":
+    // what failed and where) and exits with status 1.
+    let args = if s.trim().is_empty() { DataObject::new() } else {
+      match DataObject::try_from_string(&s) {
+        Ok(o) => o,
+        Err(e) => fail(format!("the arguments on stdin are not a JSON object: {}", e)),
+      }
+    };
+    let target = match callapi::resolve_command(lib, ctl, cmd) {
+      Ok(t) => t,
+      Err(e) => fail(e),
+    };
+    let cmd = Command::new(&target.lib, &target.id);
+    match cmd.execute(args) {
+      Ok(res) => println!("{}", res.to_string()),
+      Err(e) => { println!("{}", e.to_envelope().to_string()); std::process::exit(1); }
+    }
   }
+}
+
+fn fail(msg: String) -> ! {
+  let mut o = DataObject::new();
+  o.put_string("status", "err");
+  o.put_string("msg", &msg);
+  println!("{}", o.to_string());
+  std::process::exit(1);
 }
