@@ -35,7 +35,7 @@ use ndata::dataarray::DataArray;
 use ndata::databytes::DataBytes;
 use ndata::data::Data;
 use crate::case::Case;
-use crate::code::CodeException;
+use crate::code::{CodeException, FlowError, FlowSite};
 use crate::command::{Command, Source};
 use crate::datastore::DataStore;
 use crate::primitives::Primitive;
@@ -57,6 +57,8 @@ enum OpType { Primitive, Command, Local, Constant, Persistent, Match, Undefined,
 
 struct COp {
   typ: OpType,
+  /// the op's type as written (for error locations)
+  type_name: String,
   name: String,
   ctype: Option<String>,
   cmd: Option<String>,
@@ -121,7 +123,7 @@ fn compile(c: &Case) -> CCase {
       .filter(|s| s.dest == i as i64 && sync_valid(s.src, s.dest, n))
       .map(|s| s.src as usize).collect();
     ops.push(COp {
-      typ, name: op.name.clone(), ctype: op.ctype.clone(), cmd: op.cmd.clone(),
+      typ, type_name: op.cmd_type.clone(), name: op.name.clone(), ctype: op.ctype.clone(), cmd: op.cmd.clone(),
       localdata: op.localdata.as_ref().map(|l| Box::new(compile(l))),
       cond: op.condition.as_ref().map(|c| (c.value, c.rule.clone())),
       ins, pre, outs, list_in, list_out, loop_out, in_syncs, prim,
@@ -143,24 +145,41 @@ fn compile(c: &Case) -> CCase {
 // ---------------------------------------------------------------------------------------------
 // Run state
 
-/// Why a run cannot continue (the stepper's `stall` and `error` events). Either ends the whole run.
-enum Fatal { Stall, Error(String, String) }
-fn fatal(code: &str, msg: String) -> Fatal { Fatal::Error(code.to_string(), msg) }
+/// Why a run cannot continue (the stepper's `stall` and `error` events); it ends the whole run.
+/// `at` starts empty and gains a site in each frame it passes through: `run_op` puts the op
+/// first, `run_frame` the case for a failure of its own.
+type Fatal = FlowError;
+fn fatal(code: &str, msg: String) -> Fatal { FlowError { code: code.to_string(), msg, at: Vec::new(), cause: None } }
 type Fault = (String, String);
 fn fault(code: &str, msg: String) -> Fault { (code.to_string(), msg) }
-fn at_op(i: usize) -> impl Fn(Fault) -> Fatal { move |(c, m)| Fatal::Error(c, format!("op {}: {}", i, m)) }
+fn at_op(i: usize) -> impl Fn(Fault) -> Fatal { move |(c, m)| fatal(&c, format!("op {}: {}", i, m)) }
+fn site(c: &CCase, case: usize, op: Option<usize>, iter: Option<i64>) -> FlowSite {
+  let (op_type, op_name) = match op.and_then(|i| c.ops.get(i)) {
+    Some(o) => (o.type_name.clone(), o.name.clone()),
+    None => (String::new(), String::new()),
+  };
+  FlowSite { case, op, iter, op_type, op_name }
+}
+/// A failure of the case itself (not of an op it ran): its site is the case, or `op` in it.
+fn in_case(mut e: Fatal, c: &CCase, case: usize, op: Option<usize>) -> Fatal { e.within(site(c, case, op, None)); e }
 
 #[derive(PartialEq, Clone, Copy)]
 enum Oc { Ok, Terminate, Fail }
 
-/// How a frame ended: its outcome, its `out`, and its finish flag.
-struct FrameEnd { oc: Oc, out: DataObject, finish: bool }
+/// How a frame ended: its outcome, its `out`, its finish flag, and for a `fail` outcome, why.
+struct FrameEnd { oc: Oc, out: DataObject, finish: bool, fail: Option<FlowError> }
 
 /// A command op's callee, loaded once per run.
 #[derive(Clone)]
 enum Loaded { Failed(String), Native(Rc<Command>), Flow(Rc<CCase>) }
 
-struct Ctx { steps: i64, max: i64, cache: HashMap<String, Loaded> }
+struct Ctx {
+  steps: i64,
+  max: i64,
+  cache: HashMap<String, Loaded>,
+  /// a stuck case's unfired wires and synchros and its ops that never ran
+  stall: Option<(Vec<usize>, Vec<usize>, Vec<usize>)>,
+}
 
 impl Ctx {
   /// Take one step (one stepper event), or end the run when the budget is spent.
@@ -207,6 +226,8 @@ struct St {
   cur_wire: bool,
   cur_k: usize,
   pending: Option<(String, usize)>,
+  /// the failed local or flow command behind the pending `fail` rule, if one caused it
+  fail_cause: Option<FlowError>,
 }
 
 impl St {
@@ -224,7 +245,7 @@ impl St {
     let mut st = St {
       wires: vec![false; c.cons.len()], syncs: vec![false; c.syncs.len()], done: vec![false; n],
       inputs, dlv, ndlv, results: vec![None; n], prio: Vec::new(),
-      cur_wire: true, cur_k: 0, pending: None,
+      cur_wire: true, cur_k: 0, pending: None, fail_cause: None,
     };
     // case-start rule: no awaited input AND no incoming synchro, in index order
     st.prio = (0..n).filter(|&i| st.op_ready(c, i)).collect();
@@ -522,8 +543,27 @@ fn after_iter(st: &mut St, op: &COp, loop_out: &[(String, String)], i: usize, it
   Ok(false)
 }
 
-/// Run op `i` to completion (the stepper's `start_op` and every sub-step of its op in progress).
-fn run_op(ctx: &mut Ctx, c: &CCase, st: &mut St, i: usize, frame_finish: &mut bool, depth: usize) -> Result<(), Fatal> {
+/// Run op `i` of case `cidx` to completion (the stepper's `start_op` and every sub-step of its
+/// op in progress). A failure gets this op as its site; a failed local or flow command that
+/// makes the op's `fail` rule fire becomes that rule's cause.
+fn run_op(ctx: &mut Ctx, c: &CCase, st: &mut St, i: usize, frame_finish: &mut bool, depth: usize, cidx: usize) -> Result<(), Fatal> {
+  let mut iter = None;
+  let mut cause = None;
+  match run_op_inner(ctx, c, st, i, frame_finish, depth, cidx, &mut iter, &mut cause) {
+    Err(mut e) => { e.within(site(c, cidx, Some(i), iter)); Err(e) }
+    Ok(()) => {
+      if matches!(&st.pending, Some((r, j)) if r == "fail" && *j == i) { st.fail_cause = cause; }
+      Ok(())
+    }
+  }
+}
+
+/// The child frame's failure as a possible cause, placed inside op `i`'s site.
+fn child_cause(child: &FrameEnd, c: &CCase, cidx: usize, i: usize, iter: Option<i64>) -> Option<FlowError> {
+  child.fail.clone().map(|mut e| { e.within(site(c, cidx, Some(i), iter)); e })
+}
+
+fn run_op_inner(ctx: &mut Ctx, c: &CCase, st: &mut St, i: usize, frame_finish: &mut bool, depth: usize, cidx: usize, iter: &mut Option<i64>, cause: &mut Option<FlowError>) -> Result<(), Fatal> {
   let op = &c.ops[i];
   ctx.step()?; // start_op
   st.prio.retain(|&x| x != i);
@@ -538,6 +578,7 @@ fn run_op(ctx: &mut Ctx, c: &CCase, st: &mut St, i: usize, frame_finish: &mut bo
         if depth >= MAX_DEPTH { return Err(fatal("depth", "frames nested more than 64 deep (recursive flow?)".to_string())); }
         let child = run_frame(ctx, spec_case(&spec), in1, depth + 1)?;
         ctx.step()?; // the op's closing eval
+        *cause = child_cause(&child, c, cidx, i, None);
         let (res, b, _) = closing_result(op, &spec, child).map_err(at_op(i))?;
         (res, b)
       }
@@ -564,17 +605,21 @@ fn run_op(ctx: &mut Ctx, c: &CCase, st: &mut St, i: usize, frame_finish: &mut bo
   // each iteration's in3 is fresh and is not read after its body, so the body gets it as is
   let mut in3 = build_in3(&it.in1, &op.list_in, 0).map_err(at_op(i))?; // the first iter (same step)
   loop {
+    *iter = Some(it.iters);
     ctx.step()?; // the iteration's body
+    *cause = None;
     let (res, b, fin) = match resolve(ctx, op).map_err(at_op(i))? {
       Body::Frame(spec) => {
         if depth >= MAX_DEPTH { return Err(fatal("depth", "frames nested more than 64 deep (recursive flow?)".to_string())); }
         let child = run_frame(ctx, spec_case(&spec), in3, depth + 1)?;
         ctx.step()?; // the iteration's closing eval
+        *cause = child_cause(&child, c, cidx, i, *iter);
         closing_result(op, &spec, child).map_err(at_op(i))?
       }
       body => { let (r, b) = op_body(op, body, in3).map_err(at_op(i))?; (r, b, false) }
     };
     if after_iter(st, op, loop_out, i, &mut it, res, b, fin, frame_finish)? { return Ok(()); }
+    *iter = Some(it.iters);
     ctx.step()?; // the next iter
     in3 = build_in3(&it.in1, &op.list_in, it.idx).map_err(at_op(i))?;
   }
@@ -589,49 +634,78 @@ fn run_frame(ctx: &mut Ctx, chain: &CCase, args: DataObject, depth: usize) -> Re
   let mut case = chain;
   let mut cidx = 0;
   'cases: loop {
-    ctx.step()?; // seed
+    ctx.step().map_err(|e| in_case(e, case, cidx, None))?; // seed
     let mut st = St::seed(case);
     loop {
       if let Some((rule, op)) = st.pending.take() {
-        ctx.step()?; // the rule's effect
+        ctx.step().map_err(|e| in_case(e, case, cidx, Some(op)))?; // the rule's effect
         match rule.as_str() {
           "next" => {
             if let Some(nx) = &case.next { case = nx; cidx += 1; continue 'cases; }
-            return Err(fatal("I-4", format!("a next rule fired on op {} in case {} but the chain has no next case (flowlang panics: nextcase.unwrap())", op, cidx)));
+            let e = fatal("I-4", format!("a next rule fired on op {} in case {} but the chain has no next case (flowlang panics: nextcase.unwrap())", op, cidx));
+            return Err(in_case(e, case, cidx, Some(op)));
           }
           "terminate" | "fail" => {
-            ctx.step()?; // closing: leave (nested) or done (root)
-            let oc = if rule == "fail" { Oc::Fail } else { Oc::Terminate };
-            return Ok(FrameEnd { oc, out, finish });
+            ctx.step().map_err(|e| in_case(e, case, cidx, Some(op)))?; // closing: leave (nested) or done (root)
+            if rule == "terminate" { return Ok(FrameEnd { oc: Oc::Terminate, out, finish, fail: None }); }
+            // The cause is already placed inside op `op` (with its iteration) by `child_cause`,
+            // so the rule's own site is added to this error alone, not through `within`.
+            let mut e = fatal("fail", "its fail rule fired".to_string());
+            e.at.push(site(case, cidx, Some(op), None));
+            e.cause = st.fail_cause.take().map(Box::new);
+            return Ok(FrameEnd { oc: Oc::Fail, out, finish, fail: Some(e) });
           }
           _ => { finish = true; continue; }
         }
       }
       match st.default_pick(case) {
         None => {
-          ctx.step()?; // end of case: done/leave, or stall
-          if st.wires.iter().any(|w| !w) || st.syncs.iter().any(|s| !s) { return Err(Fatal::Stall); }
-          return Ok(FrameEnd { oc: Oc::Ok, out, finish });
+          ctx.step().map_err(|e| in_case(e, case, cidx, None))?; // end of case: done/leave, or stall
+          if st.wires.iter().any(|w| !w) || st.syncs.iter().any(|s| !s) {
+            return Err(in_case(stall(ctx, &st), case, cidx, None));
+          }
+          return Ok(FrameEnd { oc: Oc::Ok, out, finish, fail: None });
         }
-        Some(Pick::Wire(k)) => { ctx.step()?; st.deliver(case, k, &args, &mut out)?; }
-        Some(Pick::Sync(k)) => { ctx.step()?; st.fire_sync(case, k); }
-        Some(Pick::Op(i)) => { run_op(ctx, case, &mut st, i, &mut finish, depth)?; }
+        Some(Pick::Wire(k)) => {
+          ctx.step().map_err(|e| in_case(e, case, cidx, None))?;
+          st.deliver(case, k, &args, &mut out).map_err(|e| in_case(e, case, cidx, None))?;
+        }
+        Some(Pick::Sync(k)) => { ctx.step().map_err(|e| in_case(e, case, cidx, None))?; st.fire_sync(case, k); }
+        Some(Pick::Op(i)) => { run_op(ctx, case, &mut st, i, &mut finish, depth, cidx)?; }
       }
     }
   }
+}
+
+/// A stuck case (the stepper's `stall` event): what never fired and what never ran.
+fn stall(ctx: &mut Ctx, st: &St) -> Fatal {
+  let unset = |v: &Vec<bool>| v.iter().enumerate().filter(|(_, b)| !**b).map(|(i, _)| i).collect::<Vec<usize>>();
+  let (uw, us, nr) = (unset(&st.wires), unset(&st.syncs), unset(&st.done));
+  let mut parts = Vec::new();
+  if !uw.is_empty() { parts.push(format!("wires {:?}", uw)); }
+  if !us.is_empty() { parts.push(format!("synchros {:?}", us)); }
+  let mut msg = format!("the case is stuck: {} never fired", parts.join(" and "));
+  if !nr.is_empty() { msg.push_str(&format!(", and ops {:?} never ran", nr)); }
+  msg.push_str(" (an op input awaited by name that no wire reaches, I-1, or a cycle of wires and synchros, I-2)");
+  ctx.stall = Some((uw, us, nr));
+  fatal("stall", msg)
 }
 
 // ---------------------------------------------------------------------------------------------
 // Entry points
 
 /// The end of a fast run, in `stepper::StepRun`'s terms: `outcome` is "ok", "terminate" or
-/// "fail"; `code` is the stepper's terminal code for a failed run ("fail" for a fail rule,
-/// "stall", or an error event's code such as "I-4", "absent-output", "panic", "depth" or "budget").
+/// "fail". A failed run has its `error`; `code` and `msg` repeat its code and message, which
+/// are the stepper's terminal code and message ("fail" for a fail rule, "stall", or an error
+/// event's code such as "I-4", "absent-output", "panic", "depth" or "budget"). `stall` is a
+/// stuck case's unfired wires, unfired synchros and ops that never ran.
 pub struct FastRun {
   pub out: DataObject,
   pub outcome: String,
   pub code: String,
   pub msg: String,
+  pub error: Option<FlowError>,
+  pub stall: Option<(Vec<usize>, Vec<usize>, Vec<usize>)>,
   pub steps: i64,
   pub finish: bool,
 }
@@ -640,31 +714,37 @@ pub struct FastRun {
 /// The same run as `stepper::run_report(case.to_data(), args, budget)`.
 pub fn run_report(case: &Case, args: DataObject, budget: i64) -> FastRun {
   let max = if budget <= 0 { DEFAULT_BUDGET } else { budget };
-  let mut ctx = Ctx { steps: 0, max, cache: HashMap::new() };
+  let mut ctx = Ctx { steps: 0, max, cache: HashMap::new(), stall: None };
   let chain = compile(case);
   let r = ctx.step().and_then(|_| run_frame(&mut ctx, &chain, args, 1)); // the root's enter, then its frame
+  let failed = |e: FlowError, ctx: &mut Ctx| FastRun {
+    out: DataObject::new(), outcome: "fail".to_string(), code: e.code.clone(), msg: e.msg.clone(),
+    error: Some(e), stall: ctx.stall.take(), steps: ctx.steps, finish: false,
+  };
   match r {
-    Ok(fe) => {
-      let (outcome, code) = match fe.oc { Oc::Ok => ("ok", ""), Oc::Terminate => ("terminate", ""), Oc::Fail => ("fail", "fail") };
-      FastRun { out: fe.out, outcome: outcome.to_string(), code: code.to_string(), msg: String::new(), steps: ctx.steps, finish: fe.finish }
-    }
-    Err(Fatal::Stall) => FastRun { out: DataObject::new(), outcome: "fail".to_string(), code: "stall".to_string(), msg: String::new(), steps: ctx.steps, finish: false },
-    Err(Fatal::Error(code, msg)) => FastRun { out: DataObject::new(), outcome: "fail".to_string(), code, msg, steps: ctx.steps, finish: false },
+    Ok(fe) => match fe.oc {
+      Oc::Fail => {
+        let finish = fe.finish;
+        let mut f = failed(fe.fail.unwrap_or_else(|| fatal("fail", "its fail rule fired".to_string())), &mut ctx);
+        f.finish = finish;
+        f
+      }
+      oc => FastRun {
+        out: fe.out, outcome: (if oc == Oc::Ok { "ok" } else { "terminate" }).to_string(),
+        code: String::new(), msg: String::new(), error: None, stall: None, steps: ctx.steps, finish: fe.finish,
+      },
+    },
+    Err(e) => failed(e, &mut ctx),
   }
 }
 
-/// `Code::execute`'s run: the result, and the root frame's finish flag.
+/// `Code::execute`'s run: the result, and the root frame's finish flag. A failure is
+/// `CodeException::Fail` with what went wrong and where; nothing is printed.
 pub fn execute(case: &Case, args: DataObject) -> (Result<DataObject, CodeException>, bool) {
   let r = run_report(case, args, 0);
-  let res = match r.outcome.as_str() {
-    "fail" => {
-      match r.code.as_str() {
-        "fail" | "stall" | "I-4" => {}
-        _ => println!("FLOW ERROR [{}]: {}", r.code, r.msg),
-      }
-      Err(CodeException::Fail)
-    }
-    _ => Ok(r.out),
-  };
-  (res, r.finish)
+  let finish = r.finish;
+  match r.error {
+    Some(e) => (Err(CodeException::Fail(e)), finish),
+    None => (Ok(r.out), finish),
+  }
 }

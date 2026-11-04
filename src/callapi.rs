@@ -87,12 +87,14 @@ pub fn run_command(target: &Target, args: DataObject) -> Result<Value, CallFailu
     let command = catch_unwind(AssertUnwindSafe(|| crate::command::Command::new(&target.lib, &target.id)))
         .map_err(|p| CallFailure::Failed(format!("{} could not be loaded: {}", label, panic_text(&p))))?;
     let a2 = args.clone();
-    catch_unwind(AssertUnwindSafe(|| command.cast_params(a2))).map_err(|p| {
-        CallFailure::BadArgs(format!("arguments for {} do not match its declared parameter types: {}", label, panic_text(&p)))
-    })?;
+    match catch_unwind(AssertUnwindSafe(|| command.try_cast_params(a2))) {
+        Ok(Ok(())) => {}
+        Ok(Err(m)) => return Err(CallFailure::BadArgs(format!("arguments for {} do not match its declared parameter types: {}", label, m))),
+        Err(p) => return Err(CallFailure::BadArgs(format!("arguments for {} do not match its declared parameter types: {}", label, panic_text(&p)))),
+    }
     let result = match catch_unwind(AssertUnwindSafe(|| command.execute(args))) {
         Ok(Ok(o)) => o,
-        Ok(Err(e)) => return Err(CallFailure::Failed(format!("{} failed: {:?}", label, e))),
+        Ok(Err(e)) => return Err(CallFailure::Failed(format!("{}: {}", label, e))),
         Err(p) => return Err(CallFailure::Failed(format!("{} panicked: {}", label, panic_text(&p)))),
     };
     let value = if command.lang == "flow" {

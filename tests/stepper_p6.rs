@@ -1,5 +1,5 @@
 //! Flow step debugger P6: Code::execute is a continue-to-end over the stepper.
-//! I-4 (next with no next case) and a stuck case are now Err(CodeException::Fail),
+//! I-4 (next with no next case) and a stuck case are now Err(CodeException::Fail(..)),
 //! not a panic / hang.
 
 use flowlang::case::Case;
@@ -29,7 +29,10 @@ fn i4_next_in_last_case_is_an_error_not_a_panic() {
   init();
   let r = run(I4, "{}");
   assert!(r.is_err(), "I-4 must return Err");
-  assert_eq!(r.err(), Some(CodeException::Fail));
+  match r.err() {
+    Some(CodeException::Fail(e)) => assert_eq!(e.code, "I-4", "{}", e),
+    other => panic!("expected an I-4 Fail, got {:?}", other),
+  }
 }
 
 const STUCK: &str = "{\"cmds\":[{\"in\":{\"x\":{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}},\"name\":\"takes_x\",\"out\":{\"y\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":0}},\"pos\":{\"x\":-1,\"y\":0,\"z\":0},\"type\":\"local\",\"width\":1.5},{\"in\":{\"x\":{\"mode\":\"in\",\"type\":\"Any\",\"x\":0}},\"name\":\"orphan\",\"out\":{\"z\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":0}},\"pos\":{\"x\":1,\"y\":0,\"z\":0},\"type\":\"local\",\"width\":1.5}],\"cons\":[{\"dest\":[0,\"x\"],\"src\":[-1,\"a\"]},{\"dest\":[-2,\"q\"],\"src\":[0,\"y\"]},{\"dest\":[-2,\"r\"],\"src\":[1,\"z\"]}],\"input\":{\"a\":{\"mode\":\"in\",\"type\":\"String\",\"x\":0}},\"output\":{\"q\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":-0.3},\"r\":{\"mode\":\"out\",\"type\":\"Any\",\"x\":0.3}}}";

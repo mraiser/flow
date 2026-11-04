@@ -3,6 +3,8 @@
 //! definition, and this test is its oracle check: every flow here runs through both
 //! `stepper::run_report` and `fastrun::run_report`, and the two must agree on:
 //! - the outcome, the terminal code and its message;
+//! - where an error or a stall happened (the frame path and the case), and what a stall left
+//!   unfired;
 //! - the exact number of steps (so the step budget cuts both runs at the same point);
 //! - the result;
 //! - every persistent global the flow can touch, and the args after the run (primitives
@@ -74,7 +76,11 @@ fn snapshot_globals() -> String {
   GLOBALS.iter().map(|k| if g.has(k) { canon(&g.get_property(k)) } else { "<unset>".to_string() }).collect::<Vec<_>>().join("|")
 }
 
-struct Seen { outcome: String, code: String, msg: String, steps: i64, out: String, globals: String, args: String }
+/// `place` is where an error or stall happened: the frame path (each frame-opening op and its
+/// iteration) and the case of the frame it happened in, from the stepper's terminal event and
+/// from the fast path's FlowError. `stall` is a stuck case's unfired wires, unfired synchros
+/// and ops that never ran.
+struct Seen { outcome: String, code: String, msg: String, place: String, stall: String, steps: i64, out: String, globals: String, args: String }
 
 fn via_stepper(case: &Case, args: &DataObject, budget: i64) -> Seen {
   preset_globals();
@@ -87,7 +93,15 @@ fn via_stepper(case: &Case, args: &DataObject, budget: i64) -> Seen {
     else if et == "stall" { ("stall".to_string(), String::new()) }
     else { ("fail".to_string(), String::new()) };
   let out = if r.outcome == "fail" { String::new() } else { canon_obj(&r.out) };
-  Seen { outcome: r.outcome, code, msg, steps: r.steps, out, globals: snapshot_globals(), args: canon_obj(&a) }
+  // A fail rule ends in the "done" event and the budget in an event of run's own: neither has a place.
+  let place = if (et == "error" || et == "stall") && code != "budget" {
+    let frame = e.get_array("frame");
+    let path: Vec<String> = frame.objects().iter().map(|p| { let p = p.array(); format!("[{},{}]", p.get_int(0), canon(&p.get_property(1))) }).collect();
+    format!("{}|case {}", path.join(""), e.get_int("case"))
+  } else { String::new() };
+  let ints = |k: &str| -> Vec<usize> { e.get_array(k).objects().iter().map(|d| d.int() as usize).collect() };
+  let stall = if et == "stall" { format!("{:?} {:?} {:?}", ints("wires"), ints("syncs"), ints("ops")) } else { String::new() };
+  Seen { outcome: r.outcome, code, msg, place, stall, steps: r.steps, out, globals: snapshot_globals(), args: canon_obj(&a) }
 }
 
 fn via_fastrun(case: &Case, args: &DataObject, budget: i64) -> Seen {
@@ -95,7 +109,20 @@ fn via_fastrun(case: &Case, args: &DataObject, budget: i64) -> Seen {
   let a = args.deep_copy();
   let r = fastrun::run_report(case, a.clone(), budget);
   let out = if r.outcome == "fail" { String::new() } else { canon_obj(&r.out) };
-  Seen { outcome: r.outcome, code: r.code, msg: r.msg, steps: r.steps, out, globals: snapshot_globals(), args: canon_obj(&a) }
+  // The stepper has no message for a fail rule or a stall; the fast path describes them.
+  let msg = if r.code == "fail" || r.code == "stall" { String::new() } else { r.msg.clone() };
+  let place = match &r.error {
+    Some(err) if r.code != "fail" && r.code != "budget" => {
+      let n = err.at.len();
+      if n == 0 { "<no site>".to_string() } else {
+        let path: Vec<String> = err.at[..n - 1].iter().map(|s| format!("[{},{}]", s.op.map(|o| o as i64).unwrap_or(-1), s.iter.map(|i| i.to_string()).unwrap_or("null".to_string()))).collect();
+        format!("{}|case {}", path.join(""), err.at[n - 1].case)
+      }
+    }
+    _ => String::new(),
+  };
+  let stall = match &r.stall { Some((w, sy, o)) if r.code == "stall" => format!("{:?} {:?} {:?}", w, sy, o), _ => String::new() };
+  Seen { outcome: r.outcome, code: r.code, msg, place, stall, steps: r.steps, out, globals: snapshot_globals(), args: canon_obj(&a) }
 }
 
 /// ndata error texts name heap slots ("at ref 19390", "DArray(4048)"), which differ between
@@ -138,6 +165,7 @@ fn compare(case: &Case, args: &DataObject, budget: i64) -> Result<Seen, String> 
   let f = via_fastrun(case, args, budget);
   let fields = [
     ("outcome", &s.outcome, &f.outcome), ("code", &s.code, &f.code), ("msg", &s.msg, &f.msg),
+    ("place", &s.place, &f.place), ("stall", &s.stall, &f.stall),
     ("out", &s.out, &f.out), ("globals", &s.globals, &f.globals), ("args", &s.args, &f.args),
   ];
   for (name, a, b) in fields {
@@ -492,7 +520,10 @@ fn fastrun_matches_the_stepper() {
         (_, false) => 400, (_, true) => 30,
       };
       match compare(&case, &args, budget) {
-        Ok(s) => { *tally.entry(if s.outcome == "fail" { s.code } else { s.outcome }).or_default() += 1; }
+        Ok(s) => {
+          if s.place.starts_with('[') { *tally.entry("(in a nested frame)".to_string()).or_default() += 1; }
+          *tally.entry(if s.outcome == "fail" { s.code } else { s.outcome }).or_default() += 1;
+        }
         Err(e) => fail(format!("seed {} round {} budget {}: {}\nargs: {}\nbody: {}", seed, round, budget, e, canon_obj(&args), body.to_string())),
       }
     }
@@ -500,7 +531,7 @@ fn fastrun_matches_the_stepper() {
   eprintln!("fastrun parity: {} fixture runs, {} random flows x 3 runs; outcomes {:?}", fixture_runs, seeds, tally);
   let _ = std::panic::take_hook();
   // The generator must actually reach the interesting endings, or the check proves little.
-  for k in ["ok", "terminate", "fail", "stall", "budget", "I-4", "absent-output", "panic"] {
+  for k in ["ok", "terminate", "fail", "stall", "budget", "I-4", "absent-output", "panic", "(in a nested frame)"] {
     assert!(tally.get(k).copied().unwrap_or(0) > 0, "no random flow ended with '{}': {:?}", k, tally);
   }
 

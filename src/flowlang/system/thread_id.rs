@@ -54,7 +54,7 @@ pub fn execute(o: DataObject) -> DataObject {
 pub fn thread_id(lib: String, id: String, params: DataObject) -> i64 {
 thread::spawn(move || {
   let cmd = Command::new(&lib, &id);
-  let _x = cmd.execute(params).unwrap();
+  if let Err(e) = cmd.execute(params) { eprintln!("{}:{} (in a thread) {}", cmd.lib, cmd.name, e); }
 });
 1
 }

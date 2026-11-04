@@ -113,7 +113,16 @@ Output:
 ```
 
 The arguments are `<library> <control> <command>`, with the JSON input on
-stdin and the result printed to stdout as JSON.
+stdin and the result printed to stdout as JSON. When the flow fails, or the
+command or its input cannot be found or read, stdout is an error envelope
+instead and the exit status is 1:
+
+```json
+{"status":"err","msg":"flow failed (panic) at op 0 primitive \"+\": list input 'a' is not an array","flow_error":{"code":"panic","msg":"list input 'a' is not an array","at":[{"case":0,"op":0,"iter":null,"type":"primitive","name":"+"}],"cause":null}}
+```
+
+(A Rust, Python or JavaScript command that fails returns its own
+`{"a": {"status": "err", ...}}` result, and the exit status stays 0.)
 
 `flowb` regenerates source for Rust and Python commands from the `data/`
 definitions:
@@ -615,6 +624,25 @@ cargo build --features java_runtime        # loads a JVM via JNI
 - **Control flow:** the interpreter propagates Flow-level events ("fail",
   "terminate", "next case") as a `CodeException` enum through `Result`,
   keeping the core loop free of deeply nested conditionals.
+- **Errors say what and where:** a failed flow is
+  `Err(CodeException::Fail(FlowError))`. A `FlowError` has a `code` ("fail"
+  for a `fail` rule, "stall" for a stuck case, "I-4", "absent-output",
+  "panic", "depth" or "budget") and a `msg`. It also has `at`, the path of
+  sites from the root frame down to the failure: each site is the case, the
+  op, its type and name, and the iteration of a list or loop op. A `fail`
+  rule that fired because a local or flow command op failed carries that
+  failure as its `cause`. `to_string()` gives one line:
+
+  ```
+  flow failed (fail) at op 0 local "check": its fail rule fired; because flow failed (fail) at op 0 local "check" > op 0 match "ok": its fail rule fired
+  ```
+
+  `to_envelope()` gives the `{"status": "err", "msg", "flow_error"}` object
+  that the CLI, `flowmcp`, `flowlang.call` and the HTTP listener report. A
+  failure is returned, never printed. `Command::try_cast_params` checks
+  arguments against the declared types and names the one that does not fit
+  (`parameter 'b' of testflow:test_add must be an Integer, not "x7"`).
+  `cast_params` panics with the same message.
 - **Code generation over macros:** `flowb` writes ordinary Rust source
   (command wrappers, registries, the typed API) rather than using procedural
   macros — what runs is readable code checked into your tree.
@@ -635,7 +663,7 @@ cargo build --features java_runtime        # loads a JVM via JNI
 
 ```bash
 cargo test
-cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed
+cargo test --release --test stepper_p6 --test stepper_r1 --test synchros --test fastrun_parity --test fastrun_speed --test flow_errors
 cargo test --features=javascript_runtime --test js_commands --test js_records --test js_timeouts --test js_check --test js_jstest --test js_web --test js_modules --test js_deploy --test js_ndata --test js_refcounts --test js_reentry --test js_mcp --test js_shared
 ```
 

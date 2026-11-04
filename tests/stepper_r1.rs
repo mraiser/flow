@@ -197,7 +197,7 @@ fn r1a_nested_next_in_last_case_is_prompt_i4_not_budget() {
   assert_eq!(r.event.get_string("type"), "error");
   assert_eq!(ec(&r), "I-4", "the terminal event must be the real I-4, not a budget error: {:?}", r.event);
   assert!(r.steps < 100, "no residual stepping loop: steps={} must be < the 100 budget", r.steps);
-  assert_eq!(run_body(&body, "{}").err(), Some(CodeException::Fail));
+  assert_eq!(run_body(&body, "{}").err().map(|e| fail_code(e)), Some("I-4".to_string()));
 }
 
 // (b) nested terminate is SWALLOWED: the run completes ok and promptly (no budget loop). The
@@ -302,7 +302,7 @@ fn r1_root_fail_fails() {
   init();
   let m = op_match(0, "stop", &["a"], &[], Some(("fail", true)));
   let body = case(&[m], &[con(-1, "v", 0, "a")], &inp_decl(&["v"]), "", None);
-  assert_eq!(run_body(&body, "{\"v\":\"stop\"}").err(), Some(CodeException::Fail));
+  assert_eq!(run_body(&body, "{\"v\":\"stop\"}").err().map(|e| fail_code(e)), Some("fail".to_string()));
 }
 
 // nested stall ends the run promptly (no budget burn).
@@ -312,7 +312,7 @@ fn r1_nested_stall_is_a_prompt_error() {
   let r = report(&nested_stall_body(), "{}", 100);
   assert_eq!(r.event.get_string("type"), "stall", "a nested stall ends on a stall event, not a budget error: {:?}", r.event);
   assert!(r.steps < 100, "a nested stall must not burn the budget: steps={}", r.steps);
-  assert_eq!(run_body(&nested_stall_body(), "{}").err(), Some(CodeException::Fail));
+  assert_eq!(run_body(&nested_stall_body(), "{}").err().map(|e| fail_code(e)), Some("stall".to_string()));
 }
 
 // root stall is still a prompt stall error (regression).
@@ -322,7 +322,7 @@ fn r1_root_stall_is_a_prompt_error() {
   let r = report(&root_stall_body(), "{}", 100);
   assert_eq!(r.event.get_string("type"), "stall", "a root stall is a stall event: {:?}", r.event);
   assert!(r.steps < 100);
-  assert_eq!(run_body(&root_stall_body(), "{}").err(), Some(CodeException::Fail));
+  assert_eq!(run_body(&root_stall_body(), "{}").err().map(|e| fail_code(e)), Some("stall".to_string()));
 }
 
 // a primitive op fed nulls self-catches into an err envelope: the op completes, the run ends
@@ -342,4 +342,9 @@ fn r1_nested_primitive_completes_promptly() {
   let r = report(&nested_prim_body(), "{}", 100);
   assert!(r.steps < 100, "a nested primitive must not burn the budget: steps={}", r.steps);
   assert!(run_body(&nested_prim_body(), "{}").is_ok());
+}
+
+/// The code of a flow failure (`CodeException::Fail`'s FlowError).
+fn fail_code(e: CodeException) -> String {
+  match e { CodeException::Fail(f) => f.code, other => format!("not a Fail: {:?}", other) }
 }

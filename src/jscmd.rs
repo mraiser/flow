@@ -807,8 +807,10 @@ fn op_flowlang_call(
   let mut out = out.clone();
   if is_js(&command.lang) {
     let cast = values.clone();
-    if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| command.cast_params(cast))) {
-      return err("args", format!("arguments for {} do not match its declared parameter types: {}", target.label, panic_text(&p)));
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| command.try_cast_params(cast))) {
+      Ok(Ok(())) => {}
+      Ok(Err(m)) => return err("args", format!("arguments for {} do not match its declared parameter types: {}", target.label, m)),
+      Err(p) => return err("args", format!("arguments for {} do not match its declared parameter types: {}", target.label, panic_text(&p))),
     }
     let call = match JSCmd::prepare(&target.lib, &target.id, values) {
       Ok(c) => c,

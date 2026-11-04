@@ -1,6 +1,6 @@
 let cmd = Command::lookup(&lib, &ctl, &cmd);
 let ret = cmd.return_type.to_owned();
-let o = cmd.execute(params).unwrap();
+let o = match cmd.execute(params) { Ok(o) => o, Err(e) => panic!("{}", e) };
 
 if ret == "FLAT" { return o; }
 

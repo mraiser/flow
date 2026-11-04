@@ -1,5 +1,4 @@
 use ndata::dataobject::*;
-use ndata::dataarray::*;
 use ndata::data::Data;
 
 use crate::code::*;
@@ -148,31 +147,57 @@ impl Command {
     Command::new(lib, &id)
   }
   
-  pub fn cast_params(&self, mut params:DataObject) {
+  /// Cast `params` in place to this command's declared parameter types (Integer, Float,
+  /// Boolean, JSONObject, JSONArray; anything else becomes a string). A missing `Any`
+  /// parameter becomes null. Panics with `try_cast_params`'s message when a value does not fit.
+  pub fn cast_params(&self, params:DataObject) {
+    if let Err(e) = self.try_cast_params(params) { panic!("{}", e); }
+  }
+
+  /// `cast_params` without the panic: Err names the parameter, its declared type and the value
+  /// that does not fit. Parameters before the one at fault are already cast.
+  pub fn try_cast_params(&self, mut params:DataObject) -> Result<(), String> {
     for p in &self.params {
       let n = &p.0;
       let t = &p.1;
       if params.has(&n) {
         let d = params.get_property(&n);
+        let bad = |d: &Data| -> String {
+          let mut v = if d.is_string() { format!("{:?}", d.string()) } else { Data::as_string(d.clone()) };
+          if v.chars().count() > 60 { v = format!("{}...", v.chars().take(60).collect::<String>()); }
+          format!("parameter '{}' of {}:{} must be {} {}, not {}", n, self.lib, self.name, if t == "Integer" { "an" } else { "a" }, t, v)
+        };
         if t == "Integer" { 
           if d.is_int() { params.put_int(&n, d.int()); }
-          else { params.put_int(&n, Data::as_string(d).parse::<i64>().unwrap()); }
+          else { match Data::as_string(d.clone()).parse::<i64>() { Ok(v) => params.put_int(&n, v), Err(_) => return Err(bad(&d)) } }
         }
         else if t == "Float" { 
           if d.is_float() { params.put_float(&n, d.float()); }
-          else { params.put_float(&n, Data::as_string(d).parse::<f64>().unwrap()); }
+          else { match Data::as_string(d.clone()).parse::<f64>() { Ok(v) => params.put_float(&n, v), Err(_) => return Err(bad(&d)) } }
         }
         else if t == "Boolean" { 
           if d.is_boolean() { params.put_boolean(&n, d.boolean()); }
-          else { params.put_boolean(&n, Data::as_string(d).parse::<bool>().unwrap()); }
+          else { match Data::as_string(d.clone()).parse::<bool>() { Ok(v) => params.put_boolean(&n, v), Err(_) => return Err(bad(&d)) } }
         }
         else if t == "JSONObject" { 
           if d.is_object() { params.put_object(&n, d.object()); }
-          else { params.put_object(&n, DataObject::from_string(&Data::as_string(d))); }
+          else {
+            match DataObject::try_from_string(&Data::as_string(d.clone())) {
+              Ok(o) => params.put_object(&n, o),
+              Err(_) => return Err(bad(&d)),
+            }
+          }
         }
         else if t == "JSONArray" { 
           if d.is_array() { params.put_array(&n, d.array()); }
-          else { params.put_array(&n, DataArray::from_string(&Data::as_string(d))); }
+          else {
+            // ndata has no fallible array parser: parse it as the value of an object's key
+            let wrapped = DataObject::try_from_string(&format!("{{\"v\":{}}}", Data::as_string(d.clone())));
+            match wrapped {
+              Ok(o) if o.has("v") && o.get_property("v").is_array() => params.put_array(&n, o.get_array("v")),
+              _ => return Err(bad(&d)),
+            }
+          }
         }
         else { 
           if d.is_string() { params.put_string(&n, &d.string()); }
@@ -181,6 +206,7 @@ impl Command {
       }
       else if t == "Any" { params.put_null(&n); }
     }
+    Ok(())
   }
   
   pub fn execute(&self, args: DataObject) -> Result<DataObject, CodeException> {
