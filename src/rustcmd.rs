@@ -37,7 +37,7 @@ impl RustCmd {
 
       // Unsafely cast the integer back into a function pointer.
       unsafe {
-        let func_ptr: Transform = std::mem::transmute(ptr_val);
+        let func_ptr: Transform = std::mem::transmute::<usize, Transform>(ptr_val as usize);
 
         RustCmd {
             func: func_ptr,
